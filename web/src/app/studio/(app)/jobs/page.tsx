@@ -3,17 +3,24 @@ import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { Badge, Button, Card, Empty, formatDate, PageHeader } from "@/components/ui";
 import { JOB_STATUS } from "@/lib/labels";
-import { STAGE_INFO, type Stage } from "@/lib/pipeline";
+import { JOB_LABEL } from "@/lib/pipeline";
 import { artifactHref } from "@/lib/links";
 import { retryJob } from "../../actions";
 
 const TONE = { queued: "neutral", running: "indigo", done: "pine", failed: "plum", canceled: "neutral" } as const;
 
+function jobHref(j: typeof schema.jobs.$inferSelect, episodeNumber: number | null) {
+  if (j.seriesId) return artifactHref({ seriesId: j.seriesId, episodeNumber });
+  if (j.type === "scout") return "/studio/scout";
+  const sid = (j.payload as { source_id?: string }).source_id;
+  return sid ? `/studio/sources/${sid}` : "/studio/sources";
+}
+
 export default async function JobsPage() {
   const rows = await db
     .select({ j: schema.jobs, title: schema.series.title, episodeNumber: schema.episodes.number })
     .from(schema.jobs)
-    .innerJoin(schema.series, eq(schema.series.id, schema.jobs.seriesId))
+    .leftJoin(schema.series, eq(schema.series.id, schema.jobs.seriesId))
     .leftJoin(schema.episodes, eq(schema.episodes.id, schema.jobs.episodeId))
     .orderBy(desc(schema.jobs.createdAt))
     .limit(100);
@@ -31,13 +38,10 @@ export default async function JobsPage() {
           <ul className="divide-y divide-line">
             {rows.map(({ j, title, episodeNumber }) => (
               <li key={j.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
-                <Link href={artifactHref({ seriesId: j.seriesId, episodeNumber })} className="text-[14px] font-medium hover:text-indigo">
-                  {title}
-                  {episodeNumber ? ` ${episodeNumber}화` : ""}
+                <Link href={jobHref(j, episodeNumber)} className="text-[14px] font-medium hover:text-indigo">
+                  {j.seriesId ? `${title ?? ""}${episodeNumber ? ` ${episodeNumber}화` : ""}` : j.type === "scout" ? "소재 발굴함" : "소재 라이브러리"}
                 </Link>
-                <span className="text-[13px] text-ink-soft">
-                  {STAGE_INFO[j.type as Stage].no} {STAGE_INFO[j.type as Stage].label}
-                </span>
+                <span className="text-[13px] text-ink-soft">{JOB_LABEL[j.type]}</span>
                 <Badge tone={TONE[j.status]}>{JOB_STATUS[j.status]}</Badge>
                 {j.attempts > 1 ? <span className="text-[11px] text-ink-faint">{j.attempts}회 시도</span> : null}
                 <span className="ml-auto text-[12px] text-ink-faint">{formatDate(j.createdAt)}</span>

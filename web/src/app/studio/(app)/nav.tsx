@@ -6,9 +6,11 @@ import { usePathname } from "next/navigation";
 const ITEMS = [
   { href: "/studio", label: "대시보드", exact: true },
   { href: "/studio/series", label: "작품 제작" },
+  { href: "/studio/scout", label: "소재 발굴" },
   { href: "/studio/sources", label: "소재 라이브러리" },
   { href: "/studio/guidelines", label: "지침 관리" },
   { href: "/studio/jobs", label: "작업 큐" },
+  { href: "/studio/guide", label: "사용 안내" },
 ];
 
 export function StudioNav() {
