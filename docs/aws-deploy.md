@@ -14,14 +14,26 @@ cd infra && npm ci
 npx cdk bootstrap          # 계정에 CDK 준비 자원 생성 (한 번만)
 ```
 
-## 3. 배포
-```bash
-npx cdk deploy -c stage=staging   # 시험 환경
-npx cdk deploy -c stage=prod      # 운영 환경 (나중에)
-```
-웹과 제작 서버 컨테이너는 Docker로 빌드되므로 배포하는 컴퓨터에 Docker가 켜져 있어야 해요.
+## 3. 도메인 사기 (Route 53)
+1. AWS 콘솔 → **Route 53 → 도메인 → 도메인 등록**에서 도메인(예: `noriva.app`)을 사요. 자동 갱신을 켜 둬요.
+2. 등록이 끝나면 같은 이름의 **호스팅 영역**이 자동으로 만들어져요. 따로 할 일은 없어요.
+3. 다른 곳(가비아 등)에서 산 도메인이라면 Route 53에 호스팅 영역을 만들고, 산 곳의 네임서버를 호스팅 영역의 NS 4개로 바꿔요.
 
-## 4. 비밀 값 채우기
+도메인 없이도 배포는 돼요. 그때는 CloudFront 임시 주소로만 접속돼요(Apple 로그인은 안 돼요).
+
+## 4. 배포
+```bash
+npx cdk bootstrap aws://<계정번호>/us-east-1        # 인증서용 버지니아 리전 준비 (도메인을 쓸 때 한 번만)
+npx cdk deploy --all -c stage=staging -c domain=noriva.app   # 시험 환경
+npx cdk deploy --all -c stage=prod -c domain=noriva.app      # 운영 환경 (나중에)
+```
+- `Noriva-staging-Cert`(버지니아, CloudFront용 인증서)와 `Noriva-staging`(서울) 두 묶음이 만들어져요. 인증서 확인 레코드와 `noriva.app`, `www.noriva.app` 주소 레코드도 Route 53에 자동으로 들어가요. `www`로 들어오면 `noriva.app`으로 넘어가요.
+- 서비스 주소(`APP_URL`)는 도메인이 있으면 `https://noriva.app`, 없으면 CloudFront 주소로 자동 설정돼요.
+- 처음 배포는 인증서 확인과 CloudFront 생성 때문에 20~40분 걸릴 수 있어요.
+- 웹과 제작 서버 컨테이너는 Docker로 빌드되므로 배포하는 컴퓨터에 Docker가 켜져 있어야 해요.
+- NORIVA의 자원은 모두 이 묶음(CloudFormation 스택) 안에 새로 만들어져서, 같은 계정의 다른 프로젝트와 섞이지 않아요. 서울 리전 VPC 한도(기본 5개)만 확인해요.
+
+## 5. 비밀 값 채우기
 배포가 끝나면 출력에 `AppSecretName`이 나와요. Secrets Manager에서 그 비밀을 열어 값을 채워요.
 
 | 키 | 값 |
@@ -31,12 +43,12 @@ npx cdk deploy -c stage=prod      # 운영 환경 (나중에)
 | `ANTHROPIC_API_KEY` | Claude API 키 |
 | `FAL_KEY` | fal.ai 키 (작화 단계, 회차당 대략 60컷 x 후보 1~2장) |
 | `SESSION_SECRET` | 자동 생성됨, 그대로 두기 |
-| `APP_URL`, `KAKAO_*`, `NAVER_*`, `GOOGLE_*`, `APPLE_*` | 독자 로그인. 등록 방법은 [login-setup.md](login-setup.md). 비워 두면 그 로그인 버튼이 안 나와요 |
+| `KAKAO_*`, `NAVER_*`, `GOOGLE_*`, `APPLE_*` | 독자 로그인. 등록 방법은 [login-setup.md](login-setup.md). 비워 두면 그 로그인 버튼이 안 나와요 |
 
 값을 바꾼 뒤 ECS 서비스(Web, Worker)를 "새 배포 강제"로 다시 시작하면 적용돼요.
 
-## 5. 접속
-출력의 `Url`(CloudFront 주소) 뒤에 `/studio`를 붙여 로그인해요. 도메인(예: noriva.kr)은 Route 53과 ACM 인증서를 연결하는 작업을 다음에 추가해요.
+## 6. 접속
+출력의 `Url`(도메인이 있으면 `https://noriva.app`) 뒤에 `/studio`를 붙여 로그인해요. `CloudFrontUrl`은 도메인 연결이 끝나기 전 확인용 주소예요.
 
 ## 구성과 비용 (staging 기준, 월)
 

@@ -2,7 +2,7 @@
 
 독자 로그인은 카카오, 네이버, Google, Apple 네 가지예요. 대표님이 각 회사 개발자 센터에 NORIVA를 등록하고, 받은 키를 AWS 비밀 값(Secrets Manager)에 넣으면 로그인 화면에 버튼이 나타나요. **키가 없는 로그인 수단은 화면에 나오지 않으니**, 한 곳씩 차례로 등록해도 돼요.
 
-> 키(Client Secret, .p8 파일)는 채팅이나 저장소에 올리지 말고 AWS 비밀 값에만 넣어 주세요. 넣는 방법은 [aws-deploy.md](aws-deploy.md)의 "4. 비밀 값 채우기"와 같아요.
+> 키(Client Secret, .p8 파일)는 채팅이나 저장소에 올리지 말고 AWS 비밀 값에만 넣어 주세요. 넣는 방법은 [aws-deploy.md](aws-deploy.md)의 "5. 비밀 값 채우기"와 같아요.
 
 ## 먼저 정할 것: 서비스 주소
 
@@ -15,7 +15,7 @@
 | Google | `https://noriva.app/auth/google/callback` |
 | Apple | `https://noriva.app/auth/apple/callback` |
 
-비밀 값 `APP_URL`에는 끝에 `/` 없이 `https://noriva.app`처럼 넣어요. 도메인을 아직 사지 않았다면 먼저 구매해 두는 게 좋아요. Apple은 `localhost`나 CloudFront 임시 주소를 받지 않아요. 도메인을 CloudFront에 연결하는 인프라 작업(Route 53, 인증서)은 따로 추가해요.
+서비스 주소는 도메인을 붙여 배포하면 자동으로 정해져요([aws-deploy.md](aws-deploy.md)의 "3. 도메인 사기", "4. 배포"). 그래서 **도메인을 사고 한 번 배포한 뒤에** 아래 등록을 하는 순서가 좋아요. Apple은 `localhost`나 CloudFront 임시 주소를 받지 않아요.
 
 로컬 개발에서는 카카오, 네이버, Google에 `http://localhost:3000/auth/<수단>/callback`을 추가로 등록하면 내 컴퓨터에서도 시험할 수 있어요.
 
@@ -63,7 +63,6 @@ iOS 앱에 카카오·네이버·Google 로그인을 넣으면 **Apple 로그인
 
 | 이름 | 어디서 |
 | --- | --- |
-| `APP_URL` | 서비스 주소 |
 | `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET` | 카카오 REST API 키, Client Secret(선택) |
 | `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET` | 네이버 Client ID, Secret |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google 웹 클라이언트 |
