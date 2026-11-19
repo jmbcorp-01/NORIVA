@@ -29,6 +29,11 @@ class Store:
 
     # ── 작업 꺼내기 ──
 
+    def has_pending(self) -> bool:
+        """대기 중(재시도 예약 포함)이거나 실행 중인 작업이 있는지 봐요. 오래 멈춘 실행 중 작업은 세지 않아요."""
+        row = self.conn.execute("select 1 from jobs where status = 'queued' or (status = 'running' and updated_at > now() - interval '2 hours') limit 1").fetchone()
+        return row is not None
+
     def claim_next(self, worker_id: str) -> dict[str, Any] | None:
         """대기 중인 작업 하나를 잠그고 실행 중으로 바꿔요 (여러 실행기가 동시에 돌아도 겹치지 않음)."""
         with self.conn.transaction():

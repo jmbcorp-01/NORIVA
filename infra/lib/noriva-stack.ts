@@ -6,7 +6,11 @@ import {
   Stack,
   Token,
   type StackProps,
+  aws_applicationautoscaling as appscaling,
   aws_certificatemanager as acm,
+  aws_cloudwatch as cloudwatch,
+  aws_cloudwatch_actions as cwActions,
+  aws_iam as iam,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_ec2 as ec2,
@@ -124,6 +128,9 @@ export class NorivaStack extends Stack {
 
     /* ─── 컨테이너 ─── */
     const cluster = new ecs.Cluster(this, "Cluster", { vpc, containerInsightsV2: ecs.ContainerInsights.DISABLED });
+    // 작업 서버 이름을 고정해서 웹과 작업 서버가 서로 순환 참조 없이 가리킬 수 있게 해요
+    const workerServiceName = `noriva-${props.stage}-worker`;
+    const workerServiceArn = `arn:${this.partition}:ecs:${this.region}:${this.account}:service/${cluster.clusterName}/${workerServiceName}`;
     const dbSecret = db.secret!;
     const dbEnvSecrets = {
       DB_HOST: ecs.Secret.fromSecretsManager(dbSecret, "host"),
@@ -152,6 +159,9 @@ export class NorivaStack extends Stack {
         SQS_QUEUE_URL: queue.queueUrl,
         AWS_REGION: this.region,
         ASSETS_BUCKET: assets.bucketName,
+        // 작업을 넣을 때 꺼져 있는 작업 서버를 깨워요 (web/src/lib/queue.ts)
+        WORKER_CLUSTER: cluster.clusterName,
+        WORKER_SERVICE: workerServiceName,
       },
       secrets: {
         ...dbEnvSecrets,
@@ -170,6 +180,9 @@ export class NorivaStack extends Stack {
     });
     queue.grantSendMessages(webTask.taskRole);
     assets.grantReadWrite(webTask.taskRole);
+    webTask.addToTaskRolePolicy(
+      new iam.PolicyStatement({ actions: ["ecs:DescribeServices", "ecs:UpdateService"], resources: [workerServiceArn] }),
+    );
 
     const webSg = new ec2.SecurityGroup(this, "WebSg", { vpc, description: "NORIVA web tasks" });
     const web = new ecs.FargateService(this, "Web", {
@@ -218,6 +231,10 @@ export class NorivaStack extends Stack {
         SQS_QUEUE_URL: queue.queueUrl,
         AWS_REGION: this.region,
         ASSETS_BUCKET: assets.bucketName,
+        // 할 일이 없는 상태가 15분 이어지면 스스로 0대로 줄어요 (worker/noriva_worker/main.py)
+        WORKER_IDLE_MINUTES: "15",
+        ECS_CLUSTER: cluster.clusterName,
+        ECS_SERVICE: workerServiceName,
       },
       secrets: {
         ...dbEnvSecrets,
@@ -229,16 +246,39 @@ export class NorivaStack extends Stack {
     assets.grantReadWrite(workerTask.taskRole);
     const workerSg = new ec2.SecurityGroup(this, "WorkerSg", { vpc, description: "NORIVA worker (outbound only)" });
     dbSg.addIngressRule(workerSg, ec2.Port.tcp(5432), "worker to db");
-    new ecs.FargateService(this, "Worker", {
+    workerTask.addToTaskRolePolicy(new iam.PolicyStatement({ actions: ["ecs:UpdateService"], resources: [workerServiceArn] }));
+    // 대수는 템플릿에 적지 않아요. 웹이 깨우고(1대) 작업 서버가 스스로 끄기(0대) 때문에, 배포가 그 값을 덮어쓰면 안 돼요.
+    const worker = new ecs.FargateService(this, "Worker", {
       cluster,
+      serviceName: workerServiceName,
       taskDefinition: workerTask,
-      desiredCount: 1,
       assignPublicIp: true,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       securityGroups: [workerSg],
       minHealthyPercent: 0,
       circuitBreaker: { rollback: true },
     });
+    // 예비 장치: 대기열에 작업이 3분 넘게 남아 있으면 작업 서버를 1대로 켜요 (웹의 깨우기가 실패했을 때)
+    const workerScaling = new appscaling.ScalableTarget(this, "WorkerScaling", {
+      serviceNamespace: appscaling.ServiceNamespace.ECS,
+      scalableDimension: "ecs:service:DesiredCount",
+      resourceId: `service/${cluster.clusterName}/${worker.serviceName}`,
+      minCapacity: 0,
+      maxCapacity: 1,
+    });
+    const wake = new appscaling.StepScalingAction(this, "WorkerWake", {
+      scalingTarget: workerScaling,
+      adjustmentType: appscaling.AdjustmentType.EXACT_CAPACITY,
+    });
+    wake.addAdjustment({ lowerBound: 0, adjustment: 1 });
+    new cloudwatch.Alarm(this, "WorkerBacklog", {
+      metric: queue.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1), statistic: "Maximum" }),
+      threshold: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      evaluationPeriods: 3,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      alarmDescription: "NORIVA 작업 대기열에 작업이 남아 있어 작업 서버를 켜요",
+    }).addAlarmAction(new cwActions.ApplicationScalingAction(wake));
 
     /* ─── CloudFront ─── */
     const domain = props.domain;

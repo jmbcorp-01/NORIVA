@@ -15,6 +15,7 @@ import {
 } from "@/lib/studio";
 import { ALL_STAGES, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
+import { notifyWorker } from "@/lib/queue";
 import type { GuidelineBody } from "@/db/schema";
 
 const lines = (v: FormDataEntryValue | null) =>
@@ -330,12 +331,7 @@ export async function retryJob(formData: FormData) {
   if (job?.artifactId) {
     await db.update(schema.artifacts).set({ status: "generating" }).where(eq(schema.artifacts.id, job.artifactId));
   }
-  if (process.env.SQS_QUEUE_URL && job) {
-    const { SQSClient, SendMessageCommand } = await import("@aws-sdk/client-sqs");
-    await new SQSClient({ region: process.env.AWS_REGION ?? "ap-northeast-2" }).send(
-      new SendMessageCommand({ QueueUrl: process.env.SQS_QUEUE_URL, MessageBody: JSON.stringify({ jobId: id }) }),
-    );
-  }
+  if (job) await notifyWorker(id);
   revalidatePath("/studio/jobs");
   redirect("/studio/jobs");
 }

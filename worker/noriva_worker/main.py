@@ -71,6 +71,33 @@ def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
         store.fail(job, f"{type(e).__name__}: {e}", cfg.max_attempts, retryable=True)
 
 
+class IdleTimer:
+    """마지막으로 일한 뒤 얼마나 지났는지 재요."""
+
+    def __init__(self, minutes: float, clock=time.monotonic):
+        self.limit = minutes * 60
+        self.clock = clock
+        self.last = clock()
+
+    def worked(self) -> None:
+        self.last = self.clock()
+
+    def expired(self) -> bool:
+        return self.limit > 0 and self.clock() - self.last >= self.limit
+
+
+def scale_to_zero(cfg: Config) -> bool:
+    """작업 서버 서비스를 0대로 줄여요. 웹이 다음 작업을 넣을 때 다시 1대로 켜요."""
+    if not (cfg.ecs_cluster and cfg.ecs_service):
+        return False
+    import boto3
+
+    boto3.client("ecs", region_name=cfg.aws_region).update_service(
+        cluster=cfg.ecs_cluster, service=cfg.ecs_service, desiredCount=0
+    )
+    return True
+
+
 def main() -> None:
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
     cfg = Config.from_env()
@@ -86,20 +113,34 @@ def main() -> None:
 
         sqs = boto3.client("sqs", region_name=cfg.aws_region)
     log.info("실행기 시작 (%s, 큐: %s)", worker_id, "SQS" if sqs else "DB")
+    idle = IdleTimer(cfg.idle_minutes if sqs else 0)
 
     while not _stop:
         if sqs:
             res = sqs.receive_message(QueueUrl=cfg.sqs_queue_url, MaxNumberOfMessages=1, WaitTimeSeconds=20)
             for m in res.get("Messages", []):
+                idle.worked()
                 job_id = json.loads(m["Body"]).get("jobId")
                 job = store.claim_by_id(job_id, worker_id) if job_id else None
                 if job:
                     process(store, job, tools, cfg)
                 sqs.delete_message(QueueUrl=cfg.sqs_queue_url, ReceiptHandle=m["ReceiptHandle"])
+                idle.worked()
             # 재시도 대기 중인 작업은 SQS 메시지가 없으므로 DB에서도 확인해요
             job = store.claim_next(worker_id)
             if job:
                 process(store, job, tools, cfg)
+                idle.worked()
+            elif store.has_pending():
+                idle.worked()  # 재시도 예약이 남아 있으면 꺼지지 않아요
+            elif idle.expired():
+                log.info("%s분 동안 할 일이 없어 작업 서버를 끕니다", cfg.idle_minutes)
+                try:
+                    if scale_to_zero(cfg):
+                        break
+                except Exception:
+                    log.exception("작업 서버 끄기 실패, 계속 대기해요")
+                idle.worked()
         else:
             job = store.claim_next(worker_id)
             if job:
