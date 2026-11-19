@@ -2,7 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { Cover } from "@/components/reader/cover";
-import { IconChevron } from "@/components/reader/icons";
+import { IconBookmark, IconChevron } from "@/components/reader/icons";
+import { isBookmarked } from "@/lib/library";
+import { currentReader } from "@/lib/reader-auth";
+import { toggleBookmark } from "@/app/reader-actions";
 import { DAY_LABEL, DICT, genreLabel, getLocale, ROOT_CATEGORY } from "@/lib/i18n";
 import { getSeries } from "@/lib/reader";
 
@@ -19,6 +22,8 @@ export default async function SeriesPage({ params }: { params: Promise<{ slug: s
   const t = DICT[locale];
   const s = await getSeries(slug, locale);
   if (!s) notFound();
+  const reader = await currentReader();
+  const saved = reader ? await isBookmarked(reader.id, s.id) : false;
   const latest = s.episodes[s.episodes.length - 1];
   const dateFmt = new Intl.DateTimeFormat(locale === "ko" ? "ko-KR" : "en-US", { timeZone: "Asia/Seoul", month: "short", day: "numeric" });
   const days = s.days.map((d) => DAY_LABEL[locale][d]).join(locale === "ko" ? "·" : ", ");
@@ -63,6 +68,19 @@ export default async function SeriesPage({ params }: { params: Promise<{ slug: s
               {t.latest} {t.episodes(latest.number)}
             </Link>
           ) : null}
+          <form action={toggleBookmark}>
+            <input type="hidden" name="seriesId" value={s.id} />
+            <input type="hidden" name="back" value={`/series/${s.slug}`} />
+            <button
+              type="submit"
+              aria-pressed={saved}
+              aria-label={saved ? t.bookmarked : t.bookmark}
+              title={saved ? t.bookmarked : t.bookmark}
+              className={`grid h-12 w-12 place-items-center rounded-[5px] border ${saved ? "border-ink text-ink" : "border-line bg-paper-raised text-ink-soft"}`}
+            >
+              <IconBookmark filled={saved} />
+            </button>
+          </form>
         </div>
       </section>
 

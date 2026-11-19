@@ -77,6 +77,7 @@ export async function getSeries(slug: string, locale: Locale) {
   ]);
   if (eps.length === 0) return null; // 공개된 회차가 없으면 독자에게 보이지 않아요
   return {
+    id: s.id,
     slug: s.slug,
     title: pick(s.title, s.titleEn, locale),
     altTitle: locale === "en" ? s.title : s.titleEn,

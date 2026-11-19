@@ -31,6 +31,7 @@ npx cdk deploy -c stage=prod      # 운영 환경 (나중에)
 | `ANTHROPIC_API_KEY` | Claude API 키 |
 | `FAL_KEY` | fal.ai 키 (작화 단계, 회차당 대략 60컷 x 후보 1~2장) |
 | `SESSION_SECRET` | 자동 생성됨, 그대로 두기 |
+| `APP_URL`, `KAKAO_*`, `NAVER_*`, `GOOGLE_*`, `APPLE_*` | 독자 로그인. 등록 방법은 [login-setup.md](login-setup.md). 비워 두면 그 로그인 버튼이 안 나와요 |
 
 값을 바꾼 뒤 ECS 서비스(Web, Worker)를 "새 배포 강제"로 다시 시작하면 적용돼요.
 

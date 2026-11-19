@@ -88,13 +88,25 @@ export class NorivaStack extends Stack {
 
     /* ─── 비밀 값: 배포 뒤 콘솔에서 값을 채워요 (docs/aws-deploy.md) ─── */
     const appSecret = new secretsmanager.Secret(this, "AppSecret", {
-      description: "NORIVA 앱 비밀 값: SESSION_SECRET, STUDIO_OWNER_EMAIL, STUDIO_OWNER_PASSWORD_HASH, ANTHROPIC_API_KEY, FAL_KEY",
+      description: "NORIVA 앱 비밀 값: SESSION_SECRET, STUDIO_OWNER_EMAIL, STUDIO_OWNER_PASSWORD_HASH, ANTHROPIC_API_KEY, FAL_KEY, 독자 로그인 키",
       generateSecretString: {
         secretStringTemplate: JSON.stringify({
           STUDIO_OWNER_EMAIL: "",
           STUDIO_OWNER_PASSWORD_HASH: "",
           ANTHROPIC_API_KEY: "",
           FAL_KEY: "",
+          // 독자 로그인 (docs/login-setup.md). APP_URL은 서비스 주소, 예: https://noriva.app
+          APP_URL: "",
+          KAKAO_CLIENT_ID: "",
+          KAKAO_CLIENT_SECRET: "",
+          NAVER_CLIENT_ID: "",
+          NAVER_CLIENT_SECRET: "",
+          GOOGLE_CLIENT_ID: "",
+          GOOGLE_CLIENT_SECRET: "",
+          APPLE_CLIENT_ID: "",
+          APPLE_TEAM_ID: "",
+          APPLE_KEY_ID: "",
+          APPLE_PRIVATE_KEY: "",
         }),
         generateStringKey: "SESSION_SECRET",
         passwordLength: 48,
@@ -136,6 +148,9 @@ export class NorivaStack extends Stack {
         SESSION_SECRET: ecs.Secret.fromSecretsManager(appSecret, "SESSION_SECRET"),
         STUDIO_OWNER_EMAIL: ecs.Secret.fromSecretsManager(appSecret, "STUDIO_OWNER_EMAIL"),
         STUDIO_OWNER_PASSWORD_HASH: ecs.Secret.fromSecretsManager(appSecret, "STUDIO_OWNER_PASSWORD_HASH"),
+        ...Object.fromEntries(
+          ["APP_URL", "KAKAO_CLIENT_ID", "KAKAO_CLIENT_SECRET", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "APPLE_CLIENT_ID", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY"].map((k) => [k, ecs.Secret.fromSecretsManager(appSecret, k)]),
+        ),
       },
       healthCheck: {
         command: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"],

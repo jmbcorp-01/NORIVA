@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import type { PublishedPanel } from "@/db/schema";
 import { IconBack } from "@/components/reader/icons";
 import { LangToggle } from "@/components/reader/lang-toggle";
+import { ProgressTracker } from "@/components/reader/progress-tracker";
 import { DICT, getLocale } from "@/lib/i18n";
 import { mediaUrl } from "@/lib/media";
 import { getEpisode } from "@/lib/reader";
@@ -56,8 +57,9 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
           {s.title} {t.epNo(episode.number)} {episode.title}
         </h1>
         {panels.map((p, i) => (
-          <Panel key={p.index} p={p} first={i === 0} />
+          <Panel key={p.index} p={p} first={i === 0} n={i + 1} />
         ))}
+        <ProgressTracker slug={s.slug} ep={episode.number} panelCount={panels.length} />
 
         <div className="px-4 py-14 text-center">
           <p className="font-serif text-[16px] text-ink-soft">{next ? t.endOfEpisode : t.nextComing}</p>
@@ -83,9 +85,9 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
   );
 }
 
-function Panel({ p, first }: { p: PublishedPanel; first: boolean }) {
+function Panel({ p, first, n }: { p: PublishedPanel; first: boolean; n: number }) {
   return (
-    <figure className={`relative ${first ? "" : GAP[p.gapBefore]}`}>
+    <figure data-panel={n} className={`relative ${first ? "" : GAP[p.gapBefore]}`}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={mediaUrl(p.image)} alt="" className="block w-full" loading={first ? "eager" : "lazy"} />
       {p.bubbles.map((b, i) => (

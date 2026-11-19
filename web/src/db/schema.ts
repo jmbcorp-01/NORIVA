@@ -312,3 +312,65 @@ export const bannedTerms = pgTable("banned_terms", {
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/* ─── 독자 회원 (05번 3.1) ─── */
+
+export const readers = pgTable("readers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  nickname: text("nickname").notNull(),
+  email: text("email"),
+  locale: text("locale").notNull().default("ko"),
+  // 올리면 이전에 발급한 로그인이 모두 끊겨요 (전체 로그아웃, 탈퇴)
+  sessionVersion: integer("session_version").notNull().default(1),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  ...ts(),
+});
+
+export const readerIdentities = pgTable(
+  "reader_identities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    readerId: uuid("reader_id")
+      .notNull()
+      .references(() => readers.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(), // kakao | naver | google | apple | dev
+    providerUserId: text("provider_user_id").notNull(),
+    email: text("email"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("reader_identities_provider_user").on(t.provider, t.providerUserId)],
+);
+
+export const bookmarks = pgTable(
+  "bookmarks",
+  {
+    readerId: uuid("reader_id")
+      .notNull()
+      .references(() => readers.id, { onDelete: "cascade" }),
+    seriesId: uuid("series_id")
+      .notNull()
+      .references(() => series.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.readerId, t.seriesId] })],
+);
+
+/** 어디까지 봤는지. 이어보기와 내 서재, 이탈 컷 분석에 써요. */
+export const readingProgress = pgTable(
+  "reading_progress",
+  {
+    readerId: uuid("reader_id")
+      .notNull()
+      .references(() => readers.id, { onDelete: "cascade" }),
+    episodeId: uuid("episode_id")
+      .notNull()
+      .references(() => episodes.id, { onDelete: "cascade" }),
+    seriesId: uuid("series_id")
+      .notNull()
+      .references(() => series.id, { onDelete: "cascade" }),
+    maxPanel: integer("max_panel").notNull().default(0),
+    panelCount: integer("panel_count").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.readerId, t.episodeId] }), index("reading_progress_reader_updated").on(t.readerId, t.updatedAt)],
+);
