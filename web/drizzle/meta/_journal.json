@@ -22,6 +22,13 @@
       "when": 1795071312051,
       "tag": "0002_readers",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795088176974,
+      "tag": "0003_scout",
+      "breakpoints": true
     }
   ]
 }

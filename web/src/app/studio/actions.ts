@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { and, eq, max } from "drizzle-orm";
+import { and, eq, inArray, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { checkCredentials, endSession, requireOwner, startSession } from "@/lib/auth";
@@ -15,7 +15,7 @@ import {
 } from "@/lib/studio";
 import { ALL_STAGES, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
-import { notifyWorker } from "@/lib/queue";
+import { enqueueJob, notifyWorker } from "@/lib/queue";
 import type { GuidelineBody } from "@/db/schema";
 
 const lines = (v: FormDataEntryValue | null) =>
@@ -81,11 +81,28 @@ export async function saveSource(formData: FormData) {
       const [row] = await db.insert(schema.sources).values(values).returning({ id: schema.sources.id });
       savedId = row.id;
     }
+    if (formData.get("ai") === "1") await queueSourceFill(savedId);
   } catch (e) {
     back(path, e);
   }
   revalidatePath("/studio/sources");
-  redirect(`/studio/sources/${savedId}?saved=1`);
+  redirect(`/studio/sources/${savedId}?${formData.get("ai") === "1" ? "filling=1" : "saved=1"}`);
+}
+
+/** 소재 이름을 보고 빈 칸을 AI가 조사해 채워요. 대표가 쓴 칸은 덮지 않아요. */
+async function queueSourceFill(sourceId: string) {
+  const busy = await db
+    .select({ id: schema.jobs.id })
+    .from(schema.jobs)
+    .where(
+      and(
+        eq(schema.jobs.type, "source_fill"),
+        inArray(schema.jobs.status, ["queued", "running"]),
+        sql`${schema.jobs.payload}->>'source_id' = ${sourceId}`,
+      ),
+    );
+  if (busy.length) return;
+  await enqueueJob({ type: "source_fill", payload: { source_id: sourceId } });
 }
 
 /* ─── 지침 ─── */
@@ -331,6 +348,9 @@ export async function retryJob(formData: FormData) {
   if (job?.artifactId) {
     await db.update(schema.artifacts).set({ status: "generating" }).where(eq(schema.artifacts.id, job.artifactId));
   }
+  if (job?.type === "scout") {
+    await db.update(schema.scoutRuns).set({ status: "running", error: null, updatedAt: new Date() }).where(eq(schema.scoutRuns.jobId, id));
+  }
   if (job) await notifyWorker(id);
   revalidatePath("/studio/jobs");
   redirect("/studio/jobs");
@@ -399,4 +419,81 @@ export async function saveEpisodeInfo(formData: FormData) {
     .where(eq(schema.episodes.id, String(formData.get("episodeId"))));
   revalidatePath(path);
   redirect(path);
+}
+
+/* ─── 소재 발굴 (시장 분석 → 소재 후보) ─── */
+
+export async function startScout(formData: FormData) {
+  await requireOwner();
+  const focus = String(formData.get("focus") ?? "").trim().slice(0, 500);
+  try {
+    const running = await db
+      .select({ id: schema.scoutRuns.id })
+      .from(schema.scoutRuns)
+      .where(eq(schema.scoutRuns.status, "running"));
+    if (running.length) throw new StudioError("이미 조사가 진행 중이에요. 끝나면 다시 실행해 주세요.");
+    const [job] = await db.insert(schema.jobs).values({ type: "scout", payload: { focus } }).returning({ id: schema.jobs.id });
+    const [run] = await db.insert(schema.scoutRuns).values({ jobId: job.id, trigger: "manual", focus }).returning({ id: schema.scoutRuns.id });
+    await db.update(schema.jobs).set({ payload: { focus, run_id: run.id } }).where(eq(schema.jobs.id, job.id));
+    await notifyWorker(job.id);
+  } catch (e) {
+    back("/studio/scout", e);
+  }
+  revalidatePath("/studio/scout");
+  redirect("/studio/scout?started=1");
+}
+
+async function adopt(candidateId: string): Promise<string> {
+  const [c] = await db.select().from(schema.sourceCandidates).where(eq(schema.sourceCandidates.id, candidateId));
+  if (!c) throw new StudioError("후보를 찾지 못했어요");
+  if (c.sourceId) return c.sourceId;
+  const b = c.body;
+  const [src] = await db
+    .insert(schema.sources)
+    .values({
+      name: b.name,
+      category: b.category,
+      era: b.era,
+      summary: b.summary,
+      rules: b.rules,
+      visualNotes: b.visualNotes,
+      references: [...b.references, ...b.evidence.map((e) => e.url)].filter((v, i, a) => v && a.indexOf(v) === i),
+      caution: [b.caution, ...b.factCheck].filter(Boolean).join("\n"),
+      overlapWorks: [...b.overlapWorks, ...b.similarHits].filter((v, i, a) => v && a.indexOf(v) === i),
+    })
+    .returning({ id: schema.sources.id });
+  await db
+    .update(schema.sourceCandidates)
+    .set({ status: "adopted", sourceId: src.id, updatedAt: new Date() })
+    .where(eq(schema.sourceCandidates.id, candidateId));
+  return src.id;
+}
+
+/** 후보를 소재 라이브러리에 넣어요. plan=1이면 바로 새 작품 기획 화면으로 가요. */
+export async function adoptCandidate(formData: FormData) {
+  await requireOwner();
+  const id = String(formData.get("id"));
+  const plan = formData.get("plan") === "1";
+  let sourceId = "";
+  try {
+    sourceId = await adopt(id);
+  } catch (e) {
+    back("/studio/scout", e);
+  }
+  revalidatePath("/studio/scout");
+  revalidatePath("/studio/sources");
+  redirect(plan ? `/studio/series/new?candidate=${id}` : `/studio/scout?adopted=${sourceId}`);
+}
+
+/** 넘긴 이유는 다음 조사에 전달돼서 비슷한 후보가 덜 나와요. */
+export async function dismissCandidate(formData: FormData) {
+  await requireOwner();
+  const id = String(formData.get("id"));
+  const reason = String(formData.get("reason") ?? "").trim().slice(0, 300);
+  await db
+    .update(schema.sourceCandidates)
+    .set({ status: "dismissed", dismissReason: reason, updatedAt: new Date() })
+    .where(and(eq(schema.sourceCandidates.id, id), eq(schema.sourceCandidates.status, "pending")));
+  revalidatePath("/studio/scout");
+  redirect("/studio/scout");
 }

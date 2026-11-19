@@ -1,6 +1,6 @@
 import { Button, Card, formatDate, Input, Textarea } from "@/components/ui";
 import { StageBadge } from "@/components/stage-badge";
-import { canStart, STAGE_INFO, stageStates, type LatestArtifact, type Stage } from "@/lib/pipeline";
+import { canStart, STAGE_HELP, STAGE_INFO, stageStates, type LatestArtifact, type Stage } from "@/lib/pipeline";
 import type { Artifact } from "@/lib/studio";
 import { decideArtifact, runStage } from "../../actions";
 import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views";
@@ -49,6 +49,7 @@ export function StageBoard({ stages, latest, seriesId, episodeId, back }: Props)
                   </span>
                 </summary>
                 <div className="border-t border-line px-4 py-4">
+                  <StageHelp stage={stage} open={!a} />
                   {state === "locked" ? (
                     <p className="text-[13px] text-ink-faint">앞 단계가 승인되면 시작할 수 있어요.</p>
                   ) : null}
@@ -156,6 +157,30 @@ export function StageBoard({ stages, latest, seriesId, episodeId, back }: Props)
         );
       })}
     </ol>
+  );
+}
+
+/** 이 단계에서 AI가 하는 일, 대표가 볼 것, 승인 기준. 아직 결과가 없을 때는 펼쳐 둬요. */
+function StageHelp({ stage, open }: { stage: Stage; open: boolean }) {
+  const h = STAGE_HELP[stage];
+  return (
+    <details open={open} className="mb-4 rounded-[5px] bg-paper-sunk px-3.5 py-2.5 text-[13px] leading-relaxed">
+      <summary className="cursor-pointer text-[12px] font-medium text-ink-soft">이 단계 안내</summary>
+      <dl className="mt-2 space-y-1.5">
+        <div>
+          <dt className="inline font-medium">AI가 하는 일 </dt>
+          <dd className="inline text-ink-soft">{h.ai}</dd>
+        </div>
+        <div>
+          <dt className="inline font-medium">대표가 볼 것 </dt>
+          <dd className="inline text-ink-soft">{h.look}</dd>
+        </div>
+        <div>
+          <dt className="inline font-medium">승인 </dt>
+          <dd className="inline text-ink-soft">{h.approve}</dd>
+        </div>
+      </dl>
+    </details>
   );
 }
 

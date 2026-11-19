@@ -1,10 +1,10 @@
 import "server-only";
 import { db, schema } from "@/db";
-import type { Stage } from "./pipeline";
+import type { JobType } from "./pipeline";
 
 export type EnqueueInput = {
-  type: Stage;
-  seriesId: string;
+  type: JobType;
+  seriesId?: string | null;
   episodeId?: string | null;
   artifactId?: string | null;
   payload?: Record<string, unknown>;
@@ -19,7 +19,7 @@ export async function enqueueJob(input: EnqueueInput): Promise<string> {
     .insert(schema.jobs)
     .values({
       type: input.type,
-      seriesId: input.seriesId,
+      seriesId: input.seriesId ?? null,
       episodeId: input.episodeId ?? null,
       artifactId: input.artifactId ?? null,
       payload: input.payload ?? {},

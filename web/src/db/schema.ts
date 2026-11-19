@@ -220,6 +220,9 @@ export const stage = pgEnum("stage", [
   "art", // ⑦ 작화
   "lettering", // ⑧ 말풍선
   "review", // ⑨ 검수
+  // 작품 밖 작업 (작품 없이 돌아요, jobs.type에만 써요)
+  "scout", // 시장 분석 소재 발굴
+  "source_fill", // 소재 이름만 보고 나머지 칸 채우기
 ]);
 
 export const artifactStatus = pgEnum("artifact_status", [
@@ -261,9 +264,8 @@ export const jobs = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     type: stage("type").notNull(),
-    seriesId: uuid("series_id")
-      .notNull()
-      .references(() => series.id, { onDelete: "cascade" }),
+    // 소재 발굴처럼 작품과 상관없는 작업은 비어 있어요
+    seriesId: uuid("series_id").references(() => series.id, { onDelete: "cascade" }),
     episodeId: uuid("episode_id").references(() => episodes.id, { onDelete: "cascade" }),
     artifactId: uuid("artifact_id").references(() => artifacts.id, { onDelete: "set null" }),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
@@ -277,6 +279,70 @@ export const jobs = pgTable(
     ...ts(),
   },
   (t) => [index("jobs_status_run_after").on(t.status, t.runAfter)],
+);
+
+/* ─── 소재 발굴 (시장 분석 → 소재 후보) ─── */
+
+export const scoutRunStatus = pgEnum("scout_run_status", ["running", "done", "failed"]);
+
+export type MarketReport = {
+  summary: string;
+  trends: { title: string; detail: string; region: "kr" | "global" | "both" }[];
+  hits: { title: string; platform: string; why: string }[];
+  /** 지난 실행 대비 바뀐 점 */
+  changes: string;
+  links: { title: string; url: string }[];
+};
+
+export const scoutRuns = pgTable("scout_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  trigger: text("trigger").notNull().default("manual"), // manual | weekly
+  focus: text("focus").notNull().default(""),
+  status: scoutRunStatus("status").notNull().default("running"),
+  report: jsonb("report").$type<MarketReport | null>(),
+  error: text("error"),
+  ...ts(),
+});
+
+export const candidateStatus = pgEnum("candidate_status", ["pending", "adopted", "dismissed"]);
+
+export type CandidateBody = {
+  name: string;
+  category: (typeof sourceCategory.enumValues)[number];
+  era: string;
+  summary: string;
+  rules: string[];
+  visualNotes: string;
+  references: string[];
+  caution: string;
+  overlapWorks: string[];
+  whyNow: string;
+  evidence: { claim: string; url: string }[];
+  similarHits: string[];
+  difference: string;
+  loglines: string[];
+  combo: string;
+  genre: string;
+  globalAppeal: number;
+  score: number;
+  factCheck: string[];
+};
+
+export const sourceCandidates = pgTable(
+  "source_candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => scoutRuns.id, { onDelete: "cascade" }),
+    status: candidateStatus("status").notNull().default("pending"),
+    body: jsonb("body").$type<CandidateBody>().notNull(),
+    dismissReason: text("dismiss_reason").notNull().default(""),
+    sourceId: uuid("source_id").references(() => sources.id, { onDelete: "set null" }),
+    ...ts(),
+  },
+  (t) => [index("source_candidates_status").on(t.status, t.createdAt)],
 );
 
 export const costLedger = pgTable("cost_ledger", {

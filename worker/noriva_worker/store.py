@@ -116,7 +116,124 @@ class Store:
                     "update artifacts set status = 'failed', body = %s, updated_at = now() where id = %s",
                     (Jsonb({"error": error[:2000]}), job["artifact_id"]),
                 )
+            if job["type"] == "scout":
+                self.conn.execute(
+                    "update scout_runs set status = 'failed', error = %s, updated_at = now() where job_id = %s",
+                    (error[:2000], job["id"]),
+                )
         return False
+
+    # ── 소재 발굴 ──
+
+    def create_scout(self, trigger: str, focus: str = "", skip_if_recent_days: int = 0) -> dict[str, Any] | None:
+        """소재 발굴 작업과 실행 기록을 만들어요. 최근에 이미 돌았으면(주간 예약 중복) 만들지 않아요."""
+        with self.conn.transaction():
+            if skip_if_recent_days:
+                recent = self.conn.execute(
+                    "select 1 from scout_runs where trigger = %s and status <> 'failed' and created_at > now() - %s limit 1",
+                    (trigger, timedelta(days=skip_if_recent_days)),
+                ).fetchone()
+                if recent:
+                    return None
+            job = self.conn.execute(
+                "insert into jobs (type, payload) values ('scout', %s) returning *", (Jsonb({"focus": focus}),)
+            ).fetchone()
+            run = self.conn.execute(
+                "insert into scout_runs (job_id, trigger, focus) values (%s, %s, %s) returning id",
+                (job["id"], trigger, focus),
+            ).fetchone()
+            payload = {"focus": focus, "run_id": str(run["id"])}
+            return self.conn.execute(
+                "update jobs set payload = %s where id = %s returning *", (Jsonb(payload), job["id"])
+            ).fetchone()
+
+    def scout_context(self, job: dict[str, Any]) -> dict[str, Any]:
+        c = self.conn
+        payload = job["payload"] or {}
+        run = c.execute("select * from scout_runs where job_id = %s", (job["id"],)).fetchone()
+        sources = [r["name"] for r in c.execute("select name from sources order by name").fetchall()]
+        pending = [
+            r["name"]
+            for r in c.execute(
+                "select body->>'name' as name from source_candidates where status = 'pending' order by created_at desc limit 40"
+            ).fetchall()
+        ]
+        dismissed = c.execute(
+            """select body->>'name' as name, dismiss_reason as reason from source_candidates
+               where status = 'dismissed' order by updated_at desc limit 30"""
+        ).fetchall()
+        adopted = [
+            r["name"]
+            for r in c.execute(
+                "select body->>'name' as name from source_candidates where status = 'adopted' order by updated_at desc limit 20"
+            ).fetchall()
+        ]
+        titles = [r["title"] for r in c.execute("select title from series order by created_at desc limit 30").fetchall()]
+        last = c.execute(
+            "select report from scout_runs where status = 'done' and report is not null order by created_at desc limit 1"
+        ).fetchone()
+        return {
+            "run_id": str(run["id"]) if run else payload.get("run_id"),
+            "focus": payload.get("focus") or (run["focus"] if run else ""),
+            # 라이브러리와 아직 검토 안 한 후보 모두와 겹치지 않게 해요
+            "existing_sources": sources + pending,
+            "dismissed": [dict(d) for d in dismissed],
+            "adopted": adopted,
+            "series_titles": titles,
+            "last_summary": (last["report"] or {}).get("summary", "") if last else "",
+            "count": int(payload.get("count") or 8),
+        }
+
+    def finish_scout(self, job: dict[str, Any], report: dict[str, Any], candidates: list[dict[str, Any]], costs: list[dict[str, Any]]) -> None:
+        with self.conn.transaction():
+            run = self.conn.execute(
+                "update scout_runs set status = 'done', report = %s, error = null, updated_at = now() where job_id = %s returning id",
+                (Jsonb(report), job["id"]),
+            ).fetchone()
+            if run is None:  # 실행 기록 없이 들어온 작업이면 새로 만들어요
+                run = self.conn.execute(
+                    "insert into scout_runs (job_id, status, report) values (%s, 'done', %s) returning id",
+                    (job["id"], Jsonb(report)),
+                ).fetchone()
+            for cand in candidates:
+                self.conn.execute(
+                    "insert into source_candidates (run_id, body) values (%s, %s)", (run["id"], Jsonb(cand))
+                )
+            self.finish(job, {}, costs)
+
+    def source_for_fill(self, job: dict[str, Any]) -> dict[str, Any] | None:
+        sid = (job["payload"] or {}).get("source_id")
+        if not sid:
+            return None
+        return self.conn.execute("select * from sources where id = %s", (sid,)).fetchone()
+
+    def finish_source_fill(self, job: dict[str, Any], source: dict[str, Any], values: dict[str, Any], costs: list[dict[str, Any]]) -> list[str]:
+        """비어 있는 칸만 채워요. 대표가 쓴 내용은 덮지 않아요. 채운 칸 이름을 돌려줘요."""
+        filled: list[str] = []
+        sets: list[str] = []
+        params: list[Any] = []
+        for col in ("era", "summary", "visual_notes", "caution"):
+            if not (source.get(col) or "").strip() and values.get(col):
+                sets.append(f"\"{col}\" = %s")
+                params.append(values[col])
+                filled.append(col)
+        for col in ("rules", "references", "overlap_works"):
+            if not source.get(col) and values.get(col):
+                sets.append(f"\"{col}\" = %s")
+                params.append(Jsonb(values[col]))
+                filled.append(col)
+        # 분류는 새 항목을 만들 때 대표가 골랐으면 그대로 둬요 (payload.category_unknown일 때만 바꿈)
+        if (job["payload"] or {}).get("category_unknown") and values.get("category"):
+            sets.append("category = %s")
+            params.append(values["category"])
+            filled.append("category")
+        with self.conn.transaction():
+            if sets:
+                self.conn.execute(
+                    f"update sources set {', '.join(sets)}, updated_at = now() where id = %s", (*params, source["id"])
+                )
+            self.finish(job, {}, costs)
+        return filled
 
     # ── 에이전트에게 줄 맥락 ──
 

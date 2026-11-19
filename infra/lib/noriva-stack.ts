@@ -4,6 +4,7 @@ import {
   Duration,
   RemovalPolicy,
   Stack,
+  TimeZone,
   Token,
   type StackProps,
   aws_applicationautoscaling as appscaling,
@@ -21,6 +22,8 @@ import {
   aws_route53 as route53,
   aws_route53_targets as targets,
   aws_s3 as s3,
+  aws_scheduler as scheduler,
+  aws_scheduler_targets as schedulerTargets,
   aws_secretsmanager as secretsmanager,
   aws_sqs as sqs,
 } from "aws-cdk-lib";
@@ -279,6 +282,17 @@ export class NorivaStack extends Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       alarmDescription: "NORIVA 작업 대기열에 작업이 남아 있어 작업 서버를 켜요",
     }).addAlarmAction(new cwActions.ApplicationScalingAction(wake));
+
+    // 매주 월요일 오전 9시(서울)에 소재 발굴(시장 리포트)을 대기열에 넣어요.
+    // 꺼져 있던 작업 서버는 위 경보가 3분 안에 켜고, 작업 서버가 jobs 행을 만들어 실행해요.
+    new scheduler.Schedule(this, "WeeklyScout", {
+      description: "NORIVA 주간 시장 리포트와 소재 후보",
+      schedule: scheduler.ScheduleExpression.cron({ minute: "0", hour: "9", weekDay: "MON", timeZone: TimeZone.ASIA_SEOUL }),
+      target: new schedulerTargets.SqsSendMessage(queue, {
+        input: scheduler.ScheduleTargetInput.fromObject({ kind: "scout", trigger: "weekly" }),
+        retryAttempts: 2,
+      }),
+    });
 
     /* ─── CloudFront ─── */
     const domain = props.domain;

@@ -53,10 +53,16 @@ export function SourceForm({ source }: { source?: Source }) {
         <Label hint="한 줄에 하나. 기획 에이전트가 겹침을 피해요">이미 쓴 유명 작품</Label>
         <Textarea name="overlapWorks" rows={2} defaultValue={source?.overlapWorks.join("\n")} />
       </label>
-      <div className="md:col-span-2">
+      <div className="flex flex-wrap items-center gap-2 md:col-span-2">
         <Button variant="primary" type="submit">
           저장
         </Button>
+        <Button type="submit" name="ai" value="1">
+          저장하고 AI로 빈 칸 채우기
+        </Button>
+        <span className="text-[12px] text-ink-faint">
+          이름과 분류만 적어도 돼요. AI가 웹에서 원전과 고증 자료를 찾아 비어 있는 칸만 채워요 (1~3분, 약 $0.2~0.5).
+        </span>
       </div>
     </form>
   );

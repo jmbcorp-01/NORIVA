@@ -21,6 +21,7 @@ from .handlers import Tools, run_stage
 from .images import FalImage, ImageNotConfiguredError
 from .llm import RefusedError, TextModel, TruncatedError
 from .media import media_from_env
+from .scout import run_scout, run_source_fill
 from .store import Store
 from .visual import ArtSettings, StageInputError
 
@@ -50,9 +51,20 @@ def tools_from_config(cfg: Config) -> Tools:
 def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
     log.info("작업 시작 %s %s (시도 %s)", job["id"], job["type"], job["attempts"])
     try:
-        ctx = store.context(job)
-        body, costs = run_stage(job["type"], ctx, tools)
-        store.finish(job, body, costs)
+        if job["type"] == "scout":
+            report, candidates, costs = run_scout(store.scout_context(job), tools.writer)
+            store.finish_scout(job, report, candidates, costs)
+        elif job["type"] == "source_fill":
+            source = store.source_for_fill(job)
+            if source is None:
+                raise StageInputError("채울 소재를 찾지 못했어요 (지워졌을 수 있어요)")
+            values, costs = run_source_fill(source, tools.writer)
+            filled = store.finish_source_fill(job, source, values, costs)
+            log.info("소재 채움 %s: %s", source["name"], ", ".join(filled) or "채울 빈 칸 없음")
+        else:
+            ctx = store.context(job)
+            body, costs = run_stage(job["type"], ctx, tools)
+            store.finish(job, body, costs)
         log.info("작업 완료 %s 비용 $%.4f", job["id"], sum(c["cost_usd"] for c in costs))
     except (RefusedError, TruncatedError, StageInputError, ImageNotConfiguredError) as e:
         store.fail(job, str(e), cfg.max_attempts, retryable=False)
@@ -69,6 +81,25 @@ def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
     except Exception as e:  # 마지막 안전망: 작업이 '실행 중'에 묶이지 않게
         log.exception("처리 실패 %s", job["id"])
         store.fail(job, f"{type(e).__name__}: {e}", cfg.max_attempts, retryable=True)
+
+
+def claim_from_message(store: Store, raw: str, worker_id: str) -> dict | None:
+    """SQS 메시지로 작업을 잡아요. 웹이 넣은 {"jobId"} 또는 주간 예약이 넣은 {"kind": "scout"}."""
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        log.warning("읽을 수 없는 메시지를 버려요: %s", raw[:200])
+        return None
+    if msg.get("jobId"):
+        return store.claim_by_id(msg["jobId"], worker_id)
+    if msg.get("kind") == "scout":
+        # 예약이 두 번 오거나 재전송돼도 한 주에 한 번만 돌아요
+        job = store.create_scout(msg.get("trigger") or "weekly", msg.get("focus") or "", skip_if_recent_days=5)
+        if job is None:
+            log.info("이번 주 소재 발굴은 이미 돌았어요")
+            return None
+        return store.claim_by_id(str(job["id"]), worker_id)
+    return None
 
 
 class IdleTimer:
@@ -120,8 +151,7 @@ def main() -> None:
             res = sqs.receive_message(QueueUrl=cfg.sqs_queue_url, MaxNumberOfMessages=1, WaitTimeSeconds=20)
             for m in res.get("Messages", []):
                 idle.worked()
-                job_id = json.loads(m["Body"]).get("jobId")
-                job = store.claim_by_id(job_id, worker_id) if job_id else None
+                job = claim_from_message(store, m["Body"], worker_id)
                 if job:
                     process(store, job, tools, cfg)
                 sqs.delete_message(QueueUrl=cfg.sqs_queue_url, ReceiptHandle=m["ReceiptHandle"])

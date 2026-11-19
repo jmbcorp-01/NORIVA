@@ -32,6 +32,33 @@ class JSONResult:
     result: LLMResult
 
 
+@dataclass
+class ResearchResult:
+    """웹 검색으로 조사한 글과 근거 링크."""
+
+    text: str
+    links: list[dict[str, str]]
+    searches: int
+    results: list[LLMResult]
+
+    def cost_entries(self) -> list[dict[str, Any]]:
+        entries = [r.cost_entry() for r in self.results]
+        if self.searches:
+            entries.append(
+                {
+                    "provider": "anthropic",
+                    "model": "web_search",
+                    "units": {"searches": self.searches},
+                    "cost_usd": round(self.searches * WEB_SEARCH_PRICE, 4),
+                }
+            )
+        return entries
+
+
+# 웹 검색 1회 요금 (1,000회에 10달러)
+WEB_SEARCH_PRICE = 0.01
+
+
 class RefusedError(Exception):
     pass
 
@@ -81,6 +108,61 @@ class TextModel:
             raise TruncatedError(f"JSON 결과가 잘렸거나 깨졌어요: {e}") from e
         return JSONResult(data=data, result=r)
 
+    def research(self, system: str, task: str, max_searches: int = 15, max_rounds: int = 6) -> ResearchResult:
+        """웹 검색을 켜고 조사 글을 받아요. 인용한 페이지 주소를 모아 근거 링크로 돌려줘요.
+
+        서버 쪽 검색이 길어지면 pause_turn으로 멈추는데, 받은 내용을 그대로 붙여 다시 보내면 이어서 해요.
+        """
+        messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
+        results: list[LLMResult] = []
+        texts: list[str] = []
+        links: dict[str, str] = {}
+        searches = 0
+        for _ in range(max_rounds):
+            with self.client.beta.messages.stream(
+                model=self.model,
+                max_tokens=32000,
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+                thinking={"type": "adaptive"},
+                output_config={"effort": self.effort},
+                system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+                tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": max_searches}],
+                messages=messages,
+            ) as stream:
+                msg = stream.get_final_message()
+            if msg.stop_reason == "refusal":
+                raise RefusedError("모델이 조사 요청을 거절했어요. 조사 방향을 바꿔 다시 실행해 주세요.")
+            usage = _usage(msg.usage)
+            results.append(LLMResult(text="", model=msg.model, usage=usage, cost_usd=cost_of(self.model, usage)))
+            stu = getattr(msg.usage, "server_tool_use", None)
+            searches += (getattr(stu, "web_search_requests", 0) or 0) if stu else 0
+            for b in msg.content:
+                if b.type != "text":
+                    continue
+                texts.append(b.text)
+                for c in getattr(b, "citations", None) or []:
+                    url = getattr(c, "url", None)
+                    if url and url not in links:
+                        links[url] = getattr(c, "title", None) or url
+            if msg.stop_reason != "pause_turn":
+                break
+            # 멈춘 지점까지 받은 내용을 assistant 차례에 이어 붙여 다시 보내요 (계속하라는 말은 덧붙이지 않아요)
+            kept = [b for b in msg.content if b.type != "fallback"]
+            if messages[-1]["role"] == "assistant":
+                messages[-1] = {"role": "assistant", "content": [*messages[-1]["content"], *kept]}
+            else:
+                messages.append({"role": "assistant", "content": kept})
+        text = "".join(texts).strip()
+        if not text:
+            raise TruncatedError("조사 결과가 비어 있어요. 다시 실행해 주세요.")
+        return ResearchResult(
+            text=text,
+            links=[{"title": t, "url": u} for u, t in links.items()],
+            searches=searches,
+            results=results,
+        )
+
     def _call(
         self, system: str, content: list[dict[str, Any]], schema: dict[str, Any] | None, effort: str, max_tokens: int
     ) -> LLMResult:
@@ -108,18 +190,21 @@ class TextModel:
             if schema is not None:
                 raise TruncatedError("결과가 길이 한도에서 잘렸어요. 컷 수를 줄이거나 나눠서 다시 생성해 주세요.")
             text += "\n\n> (출력이 길이 한도에서 잘렸어요. 범위를 나눠 다시 생성해 주세요.)"
-        u = msg.usage
-        usage = {
-            "input_tokens": u.input_tokens or 0,
-            "output_tokens": u.output_tokens or 0,
-            "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
-            "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
-        }
+        usage = _usage(msg.usage)
         return LLMResult(text=text, model=msg.model, usage=usage, cost_usd=cost_of(self.model, usage))
 
 
 class TruncatedError(Exception):
     pass
+
+
+def _usage(u: Any) -> dict[str, int]:
+    return {
+        "input_tokens": u.input_tokens or 0,
+        "output_tokens": u.output_tokens or 0,
+        "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
+        "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
+    }
 
 
 def _media_type(data: bytes) -> str:
