@@ -244,12 +244,17 @@ export async function createEpisode(formData: FormData) {
     .from(schema.episodes)
     .where(eq(schema.episodes.seriesId, seriesId));
   const number = (n ?? 0) + 1;
-  await db.insert(schema.episodes).values({
-    seriesId,
-    number,
-    title: String(formData.get("title") ?? "").trim(),
-    logline: String(formData.get("logline") ?? "").trim(),
-  });
+  const [ep] = await db
+    .insert(schema.episodes)
+    .values({
+      seriesId,
+      number,
+      title: String(formData.get("title") ?? "").trim(),
+      logline: String(formData.get("logline") ?? "").trim(),
+    })
+    .returning({ id: schema.episodes.id });
+  // 승인된 스토리의 회차 요약에서 제목(한·영)과 한 줄 요약을 기본값으로 가져와요 (빈 칸만)
+  await enqueueJob({ type: "episode_meta", seriesId, episodeId: ep.id });
   redirect(`/studio/series/${seriesId}/episodes/${number}`);
 }
 
@@ -418,6 +423,21 @@ export async function saveEpisodeInfo(formData: FormData) {
       updatedAt: new Date(),
     })
     .where(eq(schema.episodes.id, String(formData.get("episodeId"))));
+  revalidatePath(path);
+  redirect(path);
+}
+
+/** 회차 제목·요약을 승인된 스토리에서 다시 가져와요 (빈 칸만). */
+export async function fillEpisodeMeta(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back"));
+  const seriesId = String(formData.get("seriesId"));
+  const episodeId = String(formData.get("episodeId"));
+  const busy = await db
+    .select({ id: schema.jobs.id })
+    .from(schema.jobs)
+    .where(and(eq(schema.jobs.type, "episode_meta"), eq(schema.jobs.episodeId, episodeId), inArray(schema.jobs.status, ["queued", "running"])));
+  if (!busy.length) await enqueueJob({ type: "episode_meta", seriesId, episodeId });
   revalidatePath(path);
   redirect(path);
 }

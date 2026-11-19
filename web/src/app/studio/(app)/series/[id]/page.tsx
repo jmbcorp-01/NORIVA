@@ -116,7 +116,7 @@ export default async function SeriesPage({
             <form action={createEpisode} className="mt-4 space-y-2">
               <input type="hidden" name="seriesId" value={id} />
               <label className="block">
-                <Label hint="스토리의 회차 요약에서 가져와도 돼요">다음 회차 한 줄 요약</Label>
+                <Label hint="비워 두면 승인된 스토리에서 제목과 함께 자동으로 가져와요">다음 회차 한 줄 요약</Label>
                 <Input name="logline" />
               </label>
               <Button type="submit" variant="primary" className="w-full">

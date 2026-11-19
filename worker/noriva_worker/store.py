@@ -277,6 +277,34 @@ class Store:
             self.finish(job, {}, costs)
         return filled
 
+    def episode_meta_context(self, job: dict[str, Any]) -> dict[str, Any] | None:
+        c = self.conn
+        ep = c.execute("select * from episodes where id = %s", (job["episode_id"],)).fetchone()
+        series = c.execute("select title from series where id = %s", (job["series_id"],)).fetchone()
+        if not ep or not series:
+            return None
+        story = c.execute(
+            """select body from artifacts where series_id = %s and episode_id is null and stage = 'story'
+               and status in ('approved','edited') order by updated_at desc limit 1""",
+            (job["series_id"],),
+        ).fetchone()
+        return {"episode": ep, "number": ep["number"], "series_title": series["title"], "story": body_text(story["body"]) if story else ""}
+
+    def finish_episode_meta(self, job: dict[str, Any], ep: dict[str, Any], values: dict[str, str], costs: list[dict[str, Any]]) -> list[str]:
+        """비어 있는 칸만 채워요."""
+        cols = {"title": "title", "titleEn": "title_en", "logline": "logline"}
+        sets, params, filled = [], [], []
+        for key, col in cols.items():
+            if not (ep.get(col) or "").strip() and values.get(key):
+                sets.append(f'"{col}" = %s')
+                params.append(values[key])
+                filled.append(col)
+        with self.conn.transaction():
+            if sets:
+                self.conn.execute(f"update episodes set {', '.join(sets)}, updated_at = now() where id = %s", (*params, ep["id"]))
+            self.finish(job, {}, costs)
+        return filled
+
     # ── 에이전트에게 줄 맥락 ──
 
     def context(self, job: dict[str, Any]) -> dict[str, Any]:

@@ -52,3 +52,24 @@ def run_series_meta(ctx: dict[str, Any], model: Any) -> tuple[dict[str, str], li
     limits = {"title": 100, "titleEn": 150, "logline": 400, "loglineEn": 600, "rootNote": 800, "rootNoteEn": 1200}
     values = {k: (d.get(k) or "").strip()[:n] for k, n in limits.items()}
     return values, [r.result.cost_entry()]
+
+
+# ── 회차 제목·요약 (승인된 스토리의 회차 요약에서) ──
+
+EPISODE_SYSTEM = """\
+당신은 NORIVA의 연재 편집자예요. 승인된 스토리 문서에서 지정한 회차의 정보를 찾아 옮겨요.
+- 제목: 스토리의 회차 요약에 그 회차 제목이 있으면 그대로 써요. 없으면 회차 요약을 바탕으로 스포일러 없는 짧은 제목(15자 안팎)을 지어요.
+- 영어 제목: 직역하지 말고 영어권 독자에게 자연스러운 짧은 제목으로 써요.
+- 한 줄 요약: 스토리의 그 회차 한 줄 요약을 그대로 옮겨요 (대본 에이전트가 이 방향으로 써요).
+- 스토리에 그 회차가 없으면(요약 범위를 넘음) 세 칸을 모두 빈 문자열로 두세요.
+"""
+
+EPISODE_SCHEMA = _obj({"title": _STR, "titleEn": _STR, "logline": _STR})
+
+
+def run_episode_meta(ctx: dict[str, Any], model: Any) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    task = f"작품: {ctx['series_title']}\n찾을 회차: {ctx['number']}화\n\n## 승인된 스토리\n{ctx['story'][:30000]}"
+    r = model.json(EPISODE_SYSTEM, task, EPISODE_SCHEMA, effort="low", max_tokens=2000)
+    d = r.data
+    values = {"title": (d.get("title") or "").strip()[:100], "titleEn": (d.get("titleEn") or "").strip()[:150], "logline": (d.get("logline") or "").strip()[:500]}
+    return values, [r.result.cost_entry()]

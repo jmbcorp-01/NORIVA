@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { Badge, Button, Card, Input, Notice, PageHeader } from "@/components/ui";
-import { publishEpisodeAction, saveEpisodeInfo } from "../../../../../actions";
+import { fillEpisodeMeta, publishEpisodeAction, saveEpisodeInfo } from "../../../../../actions";
 import { latestArtifacts } from "@/lib/studio";
 import { EPISODE_STAGES, isApproved, SERIES_STAGES, stageStates, STAGE_INFO, type LatestArtifact, type Stage } from "@/lib/pipeline";
 import { StageBadge } from "@/components/stage-badge";
@@ -30,6 +30,12 @@ export default async function EpisodePage({
   for (const [k, v] of Object.entries(latest)) if (v) l[k as Stage] = { id: v.id, stage: k as Stage, status: v.status };
   const seriesStates = stageStates(SERIES_STAGES, l);
   const back = `/studio/series/${id}/episodes/${ep.number}`;
+  const [metaJob] = await db
+    .select({ status: schema.jobs.status, error: schema.jobs.error })
+    .from(schema.jobs)
+    .where(and(eq(schema.jobs.type, "episode_meta"), eq(schema.jobs.episodeId, ep.id)))
+    .orderBy(desc(schema.jobs.createdAt))
+    .limit(1);
 
   return (
     <>
@@ -61,6 +67,9 @@ export default async function EpisodePage({
         publishAt={ep.publishAt}
         ready={isApproved(l.review) && isApproved(l.lettering)}
         back={back}
+        seriesId={id}
+        metaStatus={metaJob?.status}
+        metaError={metaJob?.error ?? null}
       />
       <StageBoard stages={EPISODE_STAGES} latest={latest} seriesId={id} episodeId={ep.id} back={back} />
     </>
@@ -75,6 +84,9 @@ function PublishCard({
   publishAt,
   ready,
   back,
+  seriesId,
+  metaStatus,
+  metaError,
 }: {
   title: string;
   titleEn: string;
@@ -83,7 +95,11 @@ function PublishCard({
   publishAt: Date | null;
   ready: boolean;
   back: string;
+  seriesId: string;
+  metaStatus?: string;
+  metaError: string | null;
 }) {
+  const metaBusy = metaStatus === "queued" || metaStatus === "running";
   const live = status === "published" || status === "scheduled";
   const when = publishAt ? publishAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "medium", timeStyle: "short" }) : "";
   return (
@@ -132,6 +148,18 @@ function PublishCard({
         <Input name="title" defaultValue={title} placeholder="회차 제목" aria-label="회차 제목" className="min-w-[160px] flex-1" />
         <Input name="titleEn" defaultValue={titleEn} placeholder="Episode title (English)" aria-label="회차 영어 제목" className="min-w-[160px] flex-1" />
         <Button type="submit">제목 저장</Button>
+      </form>
+      <form action={fillEpisodeMeta} className="mt-2 flex flex-wrap items-center gap-2">
+        <input type="hidden" name="episodeId" value={episodeId} />
+        <input type="hidden" name="seriesId" value={seriesId} />
+        <input type="hidden" name="back" value={back} />
+        <Button type="submit" disabled={metaBusy}>
+          {metaBusy ? "스토리에서 가져오는 중… (1분 뒤 새로고침)" : "스토리에서 제목·요약 가져오기"}
+        </Button>
+        <span className="text-[12px] text-ink-faint">
+          회차를 만들면 승인된 스토리의 회차 요약에서 자동으로 가져와요. 비어 있는 칸만 채우니, 다시 가져오려면 칸을 비우고 저장한 뒤 누르세요.
+        </span>
+        {metaStatus === "failed" ? <span className="w-full text-[12px] text-plum">가져오기 실패: {metaError}</span> : null}
       </form>
     </Card>
   );

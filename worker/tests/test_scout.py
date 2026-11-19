@@ -191,3 +191,26 @@ def test_series_meta_fills_empty_fields_only(store):
     s = c.execute("select * from series where id=%s", (sid,)).fetchone()
     assert s["title"] == "소금과 향" and s["title_en"] == "Salt & Incense" and s["root_note"] == "대표가 쓴 뿌리"
     assert c.execute("select status from jobs where id=%s", (job["id"],)).fetchone()["status"] == "done"
+
+
+class FakeEpisodeMeta:
+    def json(self, system, task, schema, images=None, effort=None, max_tokens=32000):
+        assert "찾을 회차: 1화" in task
+        return JSONResult(data={"title": "묵향", "titleEn": "Ink Scent", "logline": "AI 요약"}, result=R)
+
+
+def test_episode_meta_fills_empty_fields_only(store):
+    c = store.conn
+    sid = c.execute(
+        "insert into series (slug, title, genre, brief) values (%s, '시험', '무협·액션', %s) returning id",
+        (f"e-{uuid.uuid4().hex[:8]}", Jsonb({"ageRating": "15"})),
+    ).fetchone()["id"]
+    c.execute("insert into artifacts (series_id, stage, status, body) values (%s, 'story', 'approved', %s)", (sid, Jsonb({"markdown": "1화 묵향: ..."})))
+    eid = c.execute("insert into episodes (series_id, number, logline) values (%s, 1, '대표 요약') returning id", (sid,)).fetchone()["id"]
+    job = c.execute(
+        "insert into jobs (type, series_id, episode_id, status, attempts) values ('episode_meta', %s, %s, 'running', 1) returning *",
+        (sid, eid),
+    ).fetchone()
+    process(store, job, Tools(writer=FakeEpisodeMeta()), cfg())
+    e = c.execute("select * from episodes where id=%s", (eid,)).fetchone()
+    assert e["title"] == "묵향" and e["title_en"] == "Ink Scent" and e["logline"] == "대표 요약"
