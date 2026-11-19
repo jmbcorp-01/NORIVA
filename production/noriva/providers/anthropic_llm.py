@@ -4,7 +4,7 @@ import base64
 
 import anthropic
 
-from ..config import Settings
+from ..config import Settings, anthropic_api_key
 from . import T
 
 
@@ -25,7 +25,7 @@ class AnthropicLLM:
 
     def __init__(self, settings: Settings, client: anthropic.Anthropic | None = None):
         self.settings = settings
-        self.client = client or anthropic.Anthropic()
+        self.client = client or anthropic.Anthropic(api_key=anthropic_api_key())
 
     def structured(self, system: str, prompt: str, schema: type[T], images: list[bytes] | None = None):
         content: list[dict] = [

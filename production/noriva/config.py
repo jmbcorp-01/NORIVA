@@ -45,4 +45,10 @@ class Settings:
 def missing_keys() -> list[str]:
     """API keys the real providers need that are not set."""
     needed = ["ANTHROPIC_API_KEY", "FAL_KEY", "ELEVENLABS_API_KEY"]
-    return [k for k in needed if not os.environ.get(k)]
+    return [k for k in needed if not (os.environ.get(k) or os.environ.get(f"NORIVA_{k}"))]
+
+
+def anthropic_api_key() -> str | None:
+    """Claude Code cloud sessions hide ANTHROPIC_API_KEY from child processes,
+    so the key can also be stored as NORIVA_ANTHROPIC_API_KEY."""
+    return os.environ.get("NORIVA_ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")

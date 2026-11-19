@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 
 import httpx
@@ -21,7 +22,7 @@ class FalImage:
         self.headers = {"Authorization": f"Key {os.environ['FAL_KEY']}"}
 
     def generate(self, prompt: str, seed: int | None = None) -> tuple[bytes, float]:
-        body: dict = {"prompt": prompt, "image_size": "portrait_4_3", "num_images": 1}
+        body: dict = {"prompt": prompt, "image_size": "portrait_4_3", "num_images": 1, "sync_mode": True}
         if seed is not None:
             body["seed"] = seed
         if self.loras:
@@ -29,6 +30,9 @@ class FalImage:
         r = self.http.post(f"https://fal.run/{self.settings.image_model}", json=body, headers=self.headers)
         r.raise_for_status()
         url = r.json()["images"][0]["url"]
+        # sync_mode returns the image inline as a data URI, so no download from fal's CDN is needed
+        if url.startswith("data:"):
+            return base64.b64decode(url.split(",", 1)[1]), self.settings.prices.image_each
         img = self.http.get(url)
         img.raise_for_status()
         return img.content, self.settings.prices.image_each
