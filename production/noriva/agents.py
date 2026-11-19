@@ -4,6 +4,7 @@ with fakes and its prompt read in one place."""
 from __future__ import annotations
 
 from .models import (
+    PanelLayout,
     DialogueReview,
     EpisodeScript,
     Panel,
@@ -156,3 +157,20 @@ Earlier episodes: {previously}
 Final storyboard:
 {board.model_dump_json(indent=2)}"""
     return llm.structured(QA_EPISODE_SYSTEM, prompt, QAReport)
+
+
+# --- Lettering (bubble placement) -----------------------------------------------
+
+LETTERING_SYSTEM = """You are a webtoon letterer. Given a finished panel image and its lines, place each
+speech bubble where it covers no face, hand, or key story object, preferring empty sky, walls,
+dark areas or the panel's top. Keep reading order top-to-bottom, then left-to-right. Aim each
+tail at the speaker's mouth or head; if the speaker is off-screen (phone, inside a jar) or the
+line is narration, leave the tail null. Size bubbles so a 25-word line fits; keep bubbles inside
+the panel with a margin of 3%. Place the sound effect, if any, near its source without covering
+faces. All coordinates are percentages of the panel width and height, origin top-left."""
+
+
+def letter_panel(llm: LLM, panel_bubbles: list[dict], sfx: str | None, image: bytes) -> tuple[PanelLayout, float]:
+    lines = "\n".join(f"{i}. [{b['speaker']}] {b['text']['en']}" for i, b in enumerate(panel_bubbles))
+    prompt = f"Lines:\n{lines or '(none)'}\nSound effect: {sfx or '(none)'}"
+    return llm.structured(LETTERING_SYSTEM, prompt, PanelLayout, images=[image])

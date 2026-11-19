@@ -11,6 +11,7 @@ from noriva import pipeline
 from noriva.agents import image_prompt
 from noriva.config import Settings
 from noriva.ledger import Ledger
+from noriva.models import BubblePlacement, PanelLayout
 from noriva.models import (
     Character,
     DialogueIssue,
@@ -68,6 +69,8 @@ class FakeLLM:
             return QAReport(passed=score >= 80, score=score, issues=[] if score >= 80 else ["hands"]), 0.003
         if schema is QAReport:
             return QAReport(passed=self.episode_pass, score=90 if self.episode_pass else 40, issues=[]), 0.004
+        if schema is PanelLayout:
+            return PanelLayout(bubbles=[BubblePlacement(line_index=0, x=30, y=15, width=40, tail_x=50, tail_y=40)]), 0.002
         raise AssertionError(schema)
 
 
@@ -191,3 +194,13 @@ def test_character_references_are_passed_to_image_generation(tmp_path):
     with_cast = [r for r in image.references if r]
     assert with_cast and all(ref.startswith(b"sheet-") for r in with_cast for ref in r)
     assert any("Reference image 1 is the design sheet" in p for p in image.prompts)
+
+
+def test_lettering_adds_layout_to_panels_with_lines(tmp_path):
+    run = _plan_and_approve(tmp_path, FakeLLM())
+    pipeline.produce_episode(BIBLE, [], FakeLLM(), FakeImage(), FakeVoice(), SETTINGS, run)
+    status = pipeline.letter_episode(FakeLLM(), run)
+    episode = json.loads((run / "episode.json").read_text())
+    assert status["status"] == "lettered"
+    assert episode["panels"][0]["layout"]["bubbles"][0]["tail_x"] == 50
+    assert "layout" not in episode["panels"][1]

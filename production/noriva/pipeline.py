@@ -166,3 +166,20 @@ def produce_episode(
     _write(run_dir / "episode.json", episode)
     status = "needs_owner" if flagged else "ready"
     return _status(run_dir, status, flagged_panels=flagged, missing_voices=missing_voices, cost_total_usd=ledger.total_cost())
+
+
+def letter_episode(llm: LLM, run_dir: Path) -> dict:
+    """Place bubbles and sound effects on each finished panel. Layout is language-independent,
+    so every translation reuses it."""
+    ledger = Ledger(run_dir)
+    path = run_dir / "episode.json"
+    episode = json.loads(path.read_text())
+    for panel in episode["panels"]:
+        if not panel["bubbles"] and not panel.get("sfx"):
+            continue
+        image = (run_dir / panel["image"]).read_bytes()
+        layout, cost = agents.letter_panel(llm, panel["bubbles"], panel.get("sfx"), image)
+        panel["layout"] = layout.model_dump()
+        ledger.record("lettering", "agent:letterer", f"panel {panel['index']}", panel["layout"], cost)
+    _write(path, episode)
+    return _status(run_dir, "lettered", cost_total_usd=ledger.total_cost())

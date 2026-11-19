@@ -109,3 +109,24 @@ class ReviewDecision(BaseModel):
         default_factory=list, description="Owner's own rewrites; suggestion = new text"
     )
     note: str = ""
+
+
+class BubblePlacement(BaseModel):
+    line_index: int
+    x: float = Field(ge=0, le=100, description="Bubble centre, % of panel width")
+    y: float = Field(ge=0, le=100, description="Bubble centre, % of panel height")
+    width: float = Field(ge=15, le=80, description="Bubble width, % of panel width")
+    tail_x: float | None = Field(default=None, description="Point the tail aims at (speaker's mouth), % of width; null for narration or off-screen voices")
+    tail_y: float | None = None
+
+
+class SfxPlacement(BaseModel):
+    x: float = Field(ge=0, le=100)
+    y: float = Field(ge=0, le=100)
+    size: float = Field(ge=4, le=20, description="Letter height, % of panel width")
+    rotation: float = Field(ge=-30, le=30)
+
+
+class PanelLayout(BaseModel):
+    bubbles: list[BubblePlacement]
+    sfx: SfxPlacement | None = None

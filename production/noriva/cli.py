@@ -57,6 +57,9 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--run", required=True)
     r.add_argument("--accept-qa", action="store_true", help="Owner overrides a failed episode QA; recorded in the ledger")
 
+    lt = sub.add_parser("letter")
+    lt.add_argument("--run", required=True)
+
     c = sub.add_parser("cost")
     c.add_argument("--run", required=True)
 
@@ -93,6 +96,11 @@ def main(argv: list[str] | None = None) -> None:
             owner_accepts_qa=args.accept_qa,
             references=references,
         )
+    elif args.cmd == "letter":
+        _require(["ANTHROPIC_API_KEY"])
+        from .providers.anthropic_llm import AnthropicLLM
+
+        result = pipeline.letter_episode(AnthropicLLM(settings), Path(args.run))
     else:
         ledger = Ledger(Path(args.run))
         result = {"by_stage_usd": ledger.cost_by_stage(), "total_usd": ledger.total_cost()}
