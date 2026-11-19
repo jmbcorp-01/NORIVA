@@ -4,6 +4,9 @@ import { SeriesGrid } from "@/components/reader/series-grid";
 import { DAY_KEYS, DAY_LABEL, DICT, genreLabel, getLocale, ROOT_CATEGORY, todayKey } from "@/lib/i18n";
 import { listSeries } from "@/lib/reader";
 import { Logo } from "@/components/logo";
+import { ContinueRow } from "@/components/reader/continue-row";
+import { continueReading } from "@/lib/library";
+import { currentReader } from "@/lib/reader-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +31,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ d
   const byDay = all.filter((s) => (day === "done" ? s.status === "completed" : s.days.includes(day)));
   const categories = [...new Set(all.flatMap((s) => s.roots.map((r) => r.category)))];
   const withNote = all.find((s) => s.rootNote) ?? null;
+  const reader = await currentReader();
+  const resume = reader ? await continueReading(reader.id, locale, 8) : [];
 
   return (
     <>
@@ -51,6 +56,20 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ d
           {t.readFirst}
         </Link>
       </section>
+
+      {resume.length ? (
+        <section className="pt-8" aria-labelledby="resume">
+          <div className="flex items-baseline px-4">
+            <h2 id="resume" className="font-serif text-[18px] font-semibold">
+              {t.continueReading}
+            </h2>
+            <Link href="/library" className="ml-auto py-2 text-[13px] text-ink-faint">
+              {t.library}
+            </Link>
+          </div>
+          <ContinueRow items={resume} t={t} />
+        </section>
+      ) : null}
 
       <section className="pt-8" aria-labelledby="by-day">
         <h2 id="by-day" className="px-4 font-serif text-[18px] font-semibold">

@@ -22,6 +22,12 @@ export default async function BrowseLayout({ children }: { children: React.React
             <Link href="/explore" className="text-ink-soft hover:text-ink">
               {t.explore}
             </Link>
+            <Link href="/library" className="text-ink-soft hover:text-ink">
+              {t.library}
+            </Link>
+            <Link href="/me" className="text-ink-soft hover:text-ink">
+              {t.me}
+            </Link>
           </nav>
           <div className="ml-auto">
             <Suspense>
@@ -35,7 +41,7 @@ export default async function BrowseLayout({ children }: { children: React.React
         <p>{t.aiNote}</p>
         <p className="mt-1">© NORIVA</p>
       </footer>
-      <TabBar labels={{ home: t.home, explore: t.explore }} />
+      <TabBar labels={{ home: t.home, explore: t.explore, library: t.library, me: t.me }} />
     </div>
   );
 }

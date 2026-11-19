@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { IconCompass, IconHome } from "./icons";
+import { IconBooks, IconCompass, IconHome, IconPerson } from "./icons";
 
-export function TabBar({ labels }: { labels: { home: string; explore: string } }) {
+export function TabBar({ labels }: { labels: { home: string; explore: string; library: string; me: string } }) {
   const path = usePathname();
   const items = [
     { href: "/", label: labels.home, Icon: IconHome, active: path === "/" },
     { href: "/explore", label: labels.explore, Icon: IconCompass, active: path.startsWith("/explore") },
+    { href: "/library", label: labels.library, Icon: IconBooks, active: path.startsWith("/library") },
+    { href: "/me", label: labels.me, Icon: IconPerson, active: path.startsWith("/me") || path.startsWith("/login") },
   ];
   return (
     <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-paper-raised pb-[env(safe-area-inset-bottom)] md:hidden">

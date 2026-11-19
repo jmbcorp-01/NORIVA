@@ -6,6 +6,7 @@ import {
   Stack,
   Token,
   type StackProps,
+  aws_certificatemanager as acm,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_ec2 as ec2,
@@ -13,6 +14,8 @@ import {
   aws_elasticloadbalancingv2 as elbv2,
   aws_logs as logs,
   aws_rds as rds,
+  aws_route53 as route53,
+  aws_route53_targets as targets,
   aws_s3 as s3,
   aws_secretsmanager as secretsmanager,
   aws_sqs as sqs,
@@ -20,7 +23,13 @@ import {
 import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import type { Construct } from "constructs";
 
-type Props = StackProps & { stage: string };
+type Props = StackProps & {
+  stage: string;
+  /** 서비스 도메인 (예: k-noriva.com). Route 53에 호스팅 영역이 있어야 해요. 없으면 CloudFront 기본 주소로만 열려요. */
+  domain?: string;
+  /** 도메인 인증서 (CloudFront 규칙상 us-east-1에서 만들어요, NorivaCertStack) */
+  certificate?: acm.ICertificate;
+};
 
 /**
  * NORIVA 전체 인프라 (docs/05-technical-design.md 2절)
@@ -88,13 +97,24 @@ export class NorivaStack extends Stack {
 
     /* ─── 비밀 값: 배포 뒤 콘솔에서 값을 채워요 (docs/aws-deploy.md) ─── */
     const appSecret = new secretsmanager.Secret(this, "AppSecret", {
-      description: "NORIVA 앱 비밀 값: SESSION_SECRET, STUDIO_OWNER_EMAIL, STUDIO_OWNER_PASSWORD_HASH, ANTHROPIC_API_KEY, FAL_KEY",
+      description: "NORIVA 앱 비밀 값: SESSION_SECRET, STUDIO_OWNER_EMAIL, STUDIO_OWNER_PASSWORD_HASH, ANTHROPIC_API_KEY, FAL_KEY, 독자 로그인 키",
       generateSecretString: {
         secretStringTemplate: JSON.stringify({
           STUDIO_OWNER_EMAIL: "",
           STUDIO_OWNER_PASSWORD_HASH: "",
           ANTHROPIC_API_KEY: "",
           FAL_KEY: "",
+          // 독자 로그인 (docs/login-setup.md). 서비스 주소(APP_URL)는 배포할 때 자동으로 들어가요.
+          KAKAO_CLIENT_ID: "",
+          KAKAO_CLIENT_SECRET: "",
+          NAVER_CLIENT_ID: "",
+          NAVER_CLIENT_SECRET: "",
+          GOOGLE_CLIENT_ID: "",
+          GOOGLE_CLIENT_SECRET: "",
+          APPLE_CLIENT_ID: "",
+          APPLE_TEAM_ID: "",
+          APPLE_KEY_ID: "",
+          APPLE_PRIVATE_KEY: "",
         }),
         generateStringKey: "SESSION_SECRET",
         passwordLength: 48,
@@ -120,7 +140,7 @@ export class NorivaStack extends Stack {
       memoryLimitMiB: 1024,
       runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.ARM64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
     });
-    webTask.addContainer("web", {
+    const webContainer = webTask.addContainer("web", {
       image: ecs.ContainerImage.fromAsset(path.join(repoRoot, "web"), { platform: Platform.LINUX_ARM64 }),
       portMappings: [{ containerPort: 3000 }],
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: "web", logRetention }),
@@ -136,6 +156,9 @@ export class NorivaStack extends Stack {
         SESSION_SECRET: ecs.Secret.fromSecretsManager(appSecret, "SESSION_SECRET"),
         STUDIO_OWNER_EMAIL: ecs.Secret.fromSecretsManager(appSecret, "STUDIO_OWNER_EMAIL"),
         STUDIO_OWNER_PASSWORD_HASH: ecs.Secret.fromSecretsManager(appSecret, "STUDIO_OWNER_PASSWORD_HASH"),
+        ...Object.fromEntries(
+          ["KAKAO_CLIENT_ID", "KAKAO_CLIENT_SECRET", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "APPLE_CLIENT_ID", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY"].map((k) => [k, ecs.Secret.fromSecretsManager(appSecret, k)]),
+        ),
       },
       healthCheck: {
         command: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"],
@@ -216,9 +239,27 @@ export class NorivaStack extends Stack {
     });
 
     /* ─── CloudFront ─── */
+    const domain = props.domain;
+    // www.도메인으로 들어오면 도메인으로 보내요. 로그인 쿠키와 돌아오는 주소가 한 곳이어야 해서요.
+    const wwwRedirect = domain
+      ? new cloudfront.Function(this, "WwwRedirect", {
+          runtime: cloudfront.FunctionRuntime.JS_2_0,
+          code: cloudfront.FunctionCode.fromInline(`
+function handler(event) {
+  var host = event.request.headers.host && event.request.headers.host.value;
+  if (host === "www.${domain}") {
+    var qs = Object.keys(event.request.querystring).length ? "?" + Object.keys(event.request.querystring).map(function (k) { var v = event.request.querystring[k]; return encodeURIComponent(k) + (v.value ? "=" + encodeURIComponent(v.value) : ""); }).join("&") : "";
+    return { statusCode: 301, statusDescription: "Moved Permanently", headers: { location: { value: "https://${domain}" + event.request.uri + qs } } };
+  }
+  return event.request;
+}`),
+        })
+      : undefined;
     const cdn = new cloudfront.Distribution(this, "Cdn", {
       comment: `NORIVA ${props.stage}`,
+      ...(domain && props.certificate ? { domainNames: [domain, `www.${domain}`], certificate: props.certificate } : {}),
       defaultBehavior: {
+        ...(wwwRedirect ? { functionAssociations: [{ function: wwwRedirect, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST }] } : {}),
         origin: new origins.LoadBalancerV2Origin(alb, {
           protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
           customHeaders: { "x-noriva-origin": originVerify },
@@ -246,7 +287,22 @@ export class NorivaStack extends Stack {
       priceClass: cloudfront.PriceClass.PRICE_CLASS_200, // 한국, 일본, 미국, 유럽 포함
     });
 
-    new CfnOutput(this, "Url", { value: `https://${cdn.distributionDomainName}` });
+    const appUrl = domain ? `https://${domain}` : `https://${cdn.distributionDomainName}`;
+    // 소셜 로그인이 돌아올 주소의 기준 (docs/login-setup.md)
+    webContainer.addEnvironment("APP_URL", appUrl);
+
+    if (domain) {
+      const zone = route53.HostedZone.fromLookup(this, "Zone", { domainName: domain });
+      const target = route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(cdn));
+      for (const name of [domain, `www.${domain}`]) {
+        const id = name === domain ? "Apex" : "Www";
+        new route53.ARecord(this, `${id}A`, { zone, recordName: name, target });
+        new route53.AaaaRecord(this, `${id}Aaaa`, { zone, recordName: name, target });
+      }
+    }
+
+    new CfnOutput(this, "Url", { value: appUrl });
+    new CfnOutput(this, "CloudFrontUrl", { value: `https://${cdn.distributionDomainName}` });
     new CfnOutput(this, "AppSecretName", { value: appSecret.secretName });
     new CfnOutput(this, "QueueUrl", { value: queue.queueUrl });
     new CfnOutput(this, "AssetsBucket", { value: assets.bucketName });
