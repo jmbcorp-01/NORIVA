@@ -63,6 +63,11 @@ export default async function SeriesPage({
         }
       />
       <Notice>{error}</Notice>
+      {s.title === "제목 미정" ? (
+        <Notice tone="ochre">
+          아직 제목이 없어요. 승인한 기획안의 제목을 오른쪽 아래 <a href="#settings" className="underline underline-offset-4">연재 설정</a>의 제목 칸에 적어 주세요. 다음 단계 에이전트들이 이 제목을 써요.
+        </Notice>
+      ) : null}
 
       <div className="mb-8 flex flex-wrap items-center gap-2 text-[13px] text-ink-soft">
         <span className="font-medium text-ink">뿌리</span>
@@ -113,10 +118,14 @@ export default async function SeriesPage({
             </form>
           ) : null}
 
-          <h2 className="mb-3 mt-10 text-[14px] font-semibold">연재 설정</h2>
+          <h2 id="settings" className="mb-3 mt-10 text-[14px] font-semibold">연재 설정</h2>
           {saved ? <p className="mb-2 text-[12px] text-pine">저장했어요. 독자 화면에 바로 반영돼요.</p> : null}
           <form action={saveSeriesPublic} className="space-y-3">
             <input type="hidden" name="seriesId" value={id} />
+            <label className="block">
+              <Label hint="기획안에서 고른 제목을 적어요">제목</Label>
+              <Input name="title" defaultValue={s.title === "제목 미정" ? "" : s.title} placeholder="예: 소금과 향" />
+            </label>
             <label className="block">
               <Label>영어 제목</Label>
               <Input name="titleEn" defaultValue={s.titleEn} />
