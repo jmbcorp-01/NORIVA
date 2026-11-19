@@ -24,8 +24,8 @@ npx cdk bootstrap          # 계정에 CDK 준비 자원 생성 (한 번만)
 ## 4. 배포
 ```bash
 npx cdk bootstrap aws://<계정번호>/us-east-1        # 인증서용 버지니아 리전 준비 (도메인을 쓸 때 한 번만)
-npx cdk deploy --all -c stage=staging -c domain=k-noriva.com   # 시험 환경
-npx cdk deploy --all -c stage=prod -c domain=k-noriva.com      # 운영 환경 (나중에)
+npx cdk deploy --all -c stage=staging   # 시험 환경 (도메인 k-noriva.com은 cdk.json에 들어 있어요)
+npx cdk deploy --all -c stage=prod      # 운영 환경 (나중에)
 ```
 - `Noriva-staging-Cert`(버지니아, CloudFront용 인증서)와 `Noriva-staging`(서울) 두 묶음이 만들어져요. 인증서 확인 레코드와 `k-noriva.com`, `www.k-noriva.com` 주소 레코드도 Route 53에 자동으로 들어가요. `www`로 들어오면 `k-noriva.com`으로 넘어가요.
 - 서비스 주소(`APP_URL`)는 도메인이 있으면 `https://k-noriva.com`, 없으면 CloudFront 주소로 자동 설정돼요.

@@ -1,6 +1,7 @@
 {
   "app": "npx tsx bin/noriva.ts",
   "context": {
-    "@aws-cdk/aws-ecs:enableImdsBlockingDeprecatedFeature": false
+    "@aws-cdk/aws-ecs:enableImdsBlockingDeprecatedFeature": false,
+    "domain": "k-noriva.com"
   }
 }
