@@ -1,0 +1,55 @@
+{
+  "id": "salt-and-incense",
+  "title": "Salt & Incense",
+  "genre": "occult",
+  "logline": "A Korean-American girl from LA inherits her late grandmother's shrine in Seoul, and with it a debt: the nine-tailed fox her grandmother sealed away fifty years ago is waking up, and it remembers her family's name.",
+  "tone": "Creeping dread lit by dry humor; warm underneath, about family and inherited debts. Scares come from stillness and wrong details, not gore.",
+  "art_style": "Korean webtoon style, clean confident line art, cinematic lighting, muted cool palette of night blues and grays, with saturated accents of shaman red, talisman yellow and candle orange; painterly backgrounds of present-day Seoul alleys, hillside neighborhoods and shrine interiors",
+  "world_rules": [
+    "Spirits cannot cross an unbroken line of salt.",
+    "Speaking a spirit's true name creates a debt to it.",
+    "A contract with a spirit passes down the bloodline until it is paid.",
+    "Talismans work only when written by someone the spirits recognize.",
+    "The fox can take human form only between dusk and the first rooster."
+  ],
+  "period_notes": [
+    "Present-day Seoul; flashbacks to 1975 Seoul for the grandmother's contract.",
+    "Shaman rituals (gut) shown respectfully: drums, cymbals, five-color robes, offerings of rice cakes and fruit."
+  ],
+  "characters": [
+    {
+      "id": "hana",
+      "name": "Hana Seo",
+      "role": "protagonist",
+      "appearance": "24-year-old Korean-American woman, shoulder-length black hair usually tied back, sharp dark eyes, oversized gray hoodie under a black bomber jacket, silver hoop earrings, her grandmother's red silk cord tied around her left wrist",
+      "personality": "Skeptical, stubborn, quick under pressure; hides grief behind sarcasm; fiercely loyal once she commits.",
+      "speech_style": "Dry, sarcastic LA millennial-Gen Z cusp; short sentences; swears mildly when scared; clumsy Korean she is embarrassed about.",
+      "voice_profile": "Female, mid-20s, low-medium pitch, flat deadpan delivery that cracks when emotional, General American accent"
+    },
+    {
+      "id": "fox",
+      "name": "The Old Fox",
+      "role": "antagonist and reluctant ally",
+      "appearance": "In human form, a tall elderly woman with silver hair in a low bun, amber eyes with slit pupils, traditional white hanbok gone gray with age, nine faint shadow-tails behind her that only show in reflections",
+      "personality": "Ancient, patient, amused by humans; keeps every promise to the letter and exploits every loophole.",
+      "speech_style": "Formal and slightly old-fashioned English, unhurried, likes riddles and calling Hana 'little debt'.",
+      "voice_profile": "Female, elderly, warm husky alto, slow cadence, faint knowing smile in the voice"
+    },
+    {
+      "id": "jun",
+      "name": "Jun Baek",
+      "role": "mentor",
+      "appearance": "Late-30s Korean man, cropped hair with gray at the temples, tired eyes, dark work jacket over a shaman's five-color sash when on duty, wooden prayer beads",
+      "personality": "Hana's grandmother's former apprentice; gruff, overworked, guilty about leaving the shrine.",
+      "speech_style": "Fluent but slightly formal English learned abroad; blunt; switches to Korean when angry.",
+      "voice_profile": "Male, late 30s, baritone, gravelly and tired, slight Korean accent"
+    }
+  ],
+  "season_arc": "Hana flies to Seoul to close her grandmother's shrine and accidentally breaks the seal. Spirit incidents erupt across the city, one per case. With Jun, she solves them and learns why her grandmother bargained with the fox in 1975 to save Hana's mother. The season ends revealing that the contract's final payment is Hana herself.",
+  "banned_similarities": [
+    "Gumiho as a romantic lead or love interest (avoid the premise of gumiho romance dramas)",
+    "Grim reaper romance or an immortal goblin bride premise",
+    "Exorcist-priest buddy dramas built on Catholic exorcism",
+    "Any existing manhwa, anime or film character design"
+  ]
+}
