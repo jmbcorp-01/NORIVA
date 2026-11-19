@@ -16,8 +16,8 @@
 | LLM | Claude API | 기획·스토리·콘티·대사·검수 |
 | 이미지 | fal.ai (여러 모델을 한 곳에서), LoRA 학습 | 모델 교체가 쉬움 |
 | 음성 (선택) | ElevenLabs | 1화 시험에서 사용. 모션·보이스툰은 2단계 이후 |
-| 결제 | 토스페이먼츠 (국내), 판매대행 MoR (해외) | 01번 4.4 |
-| 앱 | 1단계 PWA, 2단계 Capacitor로 iOS·Android 포장 | 같은 웹 코드 재사용 |
+| 결제 | 앱: App Store·Google Play 인앱결제, 웹: 토스페이먼츠, 통합 관리: RevenueCat | 01번 4.4 |
+| 앱 | Capacitor로 iOS·Android 앱 포장 (웹 코드 재사용), 인앱결제 플러그인 | 앱 출시가 목표라 결제 단계에서 함께 출시 |
 | 모니터링 | Sentry, Vercel Analytics, 자체 조회 이벤트 | |
 
 ## 2. 시스템 구조
@@ -25,7 +25,7 @@
 ```
 독자 브라우저/앱 ──▶ Next.js (Vercel) ──▶ Supabase Postgres
                          │   ▲                 ▲
-     결제 웹훅 ◀── 토스  │   │ Realtime(진행 상태) │
+  결제 웹훅 ◀── RevenueCat(애플·구글)·토스   │ Realtime(진행 상태) │
                          ▼   │                 │
 관리자 스튜디오 ──▶ /api/admin/* ── jobs 추가 ──┘
                                                │
@@ -50,8 +50,8 @@
 | --- | --- |
 | `profiles` | user_id(Auth), nickname, birth_year, adult_verified_at, locale, marketing_opt_in |
 | `plans` | code(free/pass_monthly/pass_yearly), price, currency, interval, benefits(json) |
-| `subscriptions` | user_id, plan_id, status(active/canceled/past_due), billing_key(암호화), current_period_end, provider |
-| `payments` | user_id, kind(coin/subscription), amount, currency, provider, provider_payment_key, status, raw(json) |
+| `subscriptions` | user_id, plan_id, status(active/canceled/past_due/grace), store(app_store/play/web), store_original_transaction_id, current_period_end |
+| `payments` | user_id, kind(coin/subscription), product_id, amount, currency, store(app_store/play/web), store_transaction_id, status, raw(json) |
 | `coin_wallets` | user_id, paid_balance, free_balance |
 | `coin_transactions` | user_id, delta_paid, delta_free, reason(charge/unlock/refund/event/expire), ref_id, balance_after |
 | `episode_unlocks` | user_id, episode_id, method(free/wait_free/coin/pass/preview), coins_spent |
@@ -136,7 +136,7 @@
 
 - 관리자 경로는 대표 계정 역할(`role = owner`)만 접근. DB는 행 단위 보안(RLS)으로 독자가 다른 사람의 결제·코인 정보를 읽지 못하게
 - API 키(Claude, fal, 토스 비밀키)는 서버 환경 변수에만. 저장소에 넣지 않음
-- 결제 확정은 반드시 서버에서 토스 승인 API로 검증한 뒤 코인 지급. 웹훅은 서명 확인
+- 결제 확정은 반드시 서버에서 검증한 뒤 코인 지급 (인앱결제는 스토어 영수증 검증, 웹은 토스 승인 API). 웹훅은 서명 확인. 환불 알림(애플·구글 환불)이 오면 코인 회수
 - 유료 회차 이미지는 서명 URL, 짧은 만료
 
 ## 6. 1인 개발 로드맵
@@ -146,10 +146,10 @@
 | 0. 품질 잡기 | 2주 | 이 지침으로 Salt & Incense 1화 다시 제작, 화풍 확정, 고정 시험 세트와 채점표 검증, 회차당 비용 1만 원 이하 목표 |
 | 1. 관리자 스튜디오 MVP | 4~6주 | 로그인, 소재 라이브러리, 지침 관리, 작품·회차 제작 보드, 작업 큐와 제작 서버 연결, 컷 편집기(재생성·후보 선택·말풍선 수정) |
 | 2. 독자 웹 + 회원 | 3~4주 | 홈, 탐색, 작품 상세, 뷰어, 로그인, 관심·댓글, 조회 이벤트. 무료 오픈 베타 (3작품 × 10화 비축) |
-| 3. 결제와 멤버십 | 3주 | 코인 충전, 회차 구매, 기다무, 패스 구독, 환불. 사업자 등록·PG 심사가 이 시점까지 끝나 있어야 함 |
-| 4. 확장 | 이후 | 앱 포장, 영어판, 모션·보이스툰, 추천, 이벤트, 외부 어시스턴트 계정 |
+| 3. 앱 출시와 결제 | 4~5주 | iOS·Android 앱 포장, 인앱결제(코인·패스), 회차 구매, 기다무, 환불 처리, 스토어 심사. 사업자 등록과 개발자 계정·판매자 등록이 이 시점까지 끝나 있어야 함 |
+| 4. 확장 | 이후 | 웹 결제(토스), 영어판, 모션·보이스툰, 추천, 이벤트, 외부 어시스턴트 계정 |
 
-0단계는 대표가 지금 바로 할 수 있는 일이고, 1단계와 동시에 진행할 수 있어요. 결제(3단계)는 PG 심사에 몇 주가 걸리니 2단계 시작할 때 신청해 두는 게 좋아요.
+0단계는 대표가 지금 바로 할 수 있는 일이고, 1단계와 동시에 진행할 수 있어요. 애플 개발자 등록과 판매자 정보 심사, 첫 앱 심사에 시간이 걸리니 2단계 시작할 때 계정을 만들어 두는 게 좋아요.
 
 ## 7. 월 운영비 (초기 추정)
 
@@ -160,9 +160,10 @@
 | R2 저장·전송 | 수천 원 수준 (전송료 없음) |
 | 제작비 (Claude + 이미지) | 회차당 1만 원 목표 × 월 24화(3작품 주 2회) ≈ 24만 원 |
 | 도메인, 이메일 | 월 수천 원 |
-| 결제 수수료 | 매출의 약 3% 안팎 (PG 계약에 따라) |
+| 결제 수수료 | 인앱결제는 매출의 15% (소규모 사업자 기준), 웹 결제는 약 3% |
+| 개발자 계정 | 애플 연 99달러, 구글 1회 25달러 |
 
-손익분기는 대략 패스 구독자 60~70명 수준이에요 (제작비와 고정비 약 40만 원 기준).
+손익분기는 인앱 수수료 15%를 빼고 대략 패스 구독자 70~80명 수준이에요 (제작비와 고정비 약 40만 원 기준).
 
 ## 8. 기존 코드에서 옮겨올 것
 
