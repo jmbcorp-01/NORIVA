@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 from . import agents
+from .imaging import trim_border
 from .config import Settings
 from .ledger import Ledger
 from .models import EpisodeScript, ReviewDecision, SeriesBible, Storyboard
@@ -112,6 +113,7 @@ def produce_episode(
         best: tuple[int, bytes, list[str]] | None = None
         for attempt in range(settings.max_image_attempts):
             img, cost = image_gen.generate(prompt, seed=panel.index * 100 + attempt, references=refs or None)
+            img = trim_border(img)
             ledger.record("art", "agent:art", f"panel {panel.index} attempt {attempt}", {"prompt": prompt}, cost)
             qa, cost = agents.qa_image(llm, bible, panel, img)
             ledger.record("qa", "agent:qa", f"panel {panel.index} attempt {attempt}", qa.model_dump(), cost)

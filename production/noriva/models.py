@@ -69,7 +69,9 @@ class Panel(BaseModel):
     index: int
     shot: Shot
     description: str = Field(description="What the image shows, in concrete visual terms")
-    character_ids: list[str]
+    character_ids: list[str] = Field(
+        description="Characters visible in the image. Off-screen speakers (a voice from a jar, a phone) are not listed."
+    )
     dialogue: list[DialogueLine]
     sfx: str | None = None
     motion: Motion = "none"
