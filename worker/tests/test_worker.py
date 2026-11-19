@@ -106,3 +106,30 @@ def test_guidelines_narrower_scope_last():
     )
     assert text.index("전체 지침") < text.index("작품 지침")
     assert "- 도리이" in text
+
+
+def test_idle_timer_expires_only_after_limit():
+    from noriva_worker.main import IdleTimer
+
+    now = [0.0]
+    t = IdleTimer(15, clock=lambda: now[0])
+    now[0] = 14 * 60
+    assert not t.expired()
+    t.worked()
+    now[0] = 28 * 60
+    assert not t.expired()
+    now[0] = 29 * 60
+    assert t.expired()
+    assert not IdleTimer(0, clock=lambda: 10**9).expired()
+
+
+def test_has_pending_sees_queued_and_ignores_stale_running(store):
+    c = store.conn
+    c.execute("delete from jobs")
+    assert not store.has_pending()
+    _, aid = make_job(store)
+    assert store.has_pending()
+    c.execute("update jobs set status = 'running', updated_at = now() - interval '3 hours' where artifact_id = %s", (aid,))
+    assert not store.has_pending()
+    c.execute("update jobs set updated_at = now() where artifact_id = %s", (aid,))
+    assert store.has_pending()
