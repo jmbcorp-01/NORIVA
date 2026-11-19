@@ -126,6 +126,11 @@ export const series = pgTable("series", {
   logline: text("logline").notNull().default(""),
   rootNote: text("root_note").notNull().default(""),
   coverUrl: text("cover_url").notNull().default(""),
+  // 독자 화면용 공개 정보 (한국어·영어)
+  loglineEn: text("logline_en").notNull().default(""),
+  rootNoteEn: text("root_note_en").notNull().default(""),
+  // 연재 요일: mon, tue, ... sun
+  scheduleDays: jsonb("schedule_days").$type<string[]>().notNull().default([]),
   // 작화·회차 플롯 등 게이트를 자동 승인으로 바꿀 단계 목록
   autoApprove: jsonb("auto_approve").$type<string[]>().notNull().default([]),
   ...ts(),
@@ -169,6 +174,36 @@ export const episodes = pgTable(
     ...ts(),
   },
   (t) => [uniqueIndex("episodes_series_number").on(t.seriesId, t.number)],
+);
+
+/** 독자에게 보여주는 회차 공개본. 검수를 통과한 말풍선 결과를 언어별로 굳혀 둬요. */
+export type PublishedBubble = {
+  shape: "speech" | "thought" | "shout" | "whisper" | "narration";
+  text: string;
+  box: { x: number; y: number; w: number; h: number };
+  tail: { x: number; y: number } | null;
+};
+export type PublishedPanel = {
+  index: number;
+  image: string; // 미디어 키
+  gapBefore: "none" | "normal" | "long";
+  bubbles: PublishedBubble[];
+  sfx: { text: string; x: number; y: number; size: number; angle: number } | null;
+};
+
+export const episodeAssets = pgTable(
+  "episode_assets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    episodeId: uuid("episode_id")
+      .notNull()
+      .references(() => episodes.id, { onDelete: "cascade" }),
+    locale: text("locale").notNull(), // ko | en
+    panels: jsonb("panels").$type<PublishedPanel[]>().notNull(),
+    sourceArtifactId: uuid("source_artifact_id"),
+    ...ts(),
+  },
+  (t) => [uniqueIndex("episode_assets_episode_locale").on(t.episodeId, t.locale)],
 );
 
 /* ─── 제작 파이프라인 (03번) ─── */

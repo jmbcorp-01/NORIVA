@@ -14,6 +14,7 @@ import {
   StudioError,
 } from "@/lib/studio";
 import { ALL_STAGES, type Stage } from "@/lib/pipeline";
+import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
 import type { GuidelineBody } from "@/db/schema";
 
 const lines = (v: FormDataEntryValue | null) =>
@@ -337,4 +338,69 @@ export async function retryJob(formData: FormData) {
   }
   revalidatePath("/studio/jobs");
   redirect("/studio/jobs");
+}
+
+/* ─── 연재 ─── */
+
+const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+export async function saveSeriesPublic(formData: FormData) {
+  await requireOwner();
+  const id = String(formData.get("seriesId"));
+  const path = `/studio/series/${id}`;
+  const str = (k: string, max = 2000) => String(formData.get(k) ?? "").trim().slice(0, max);
+  const cover = str("coverUrl", 500);
+  if (cover && !/^series\/[\w./-]+\.(png|jpe?g|webp)$/.test(cover)) back(path, new StudioError("표지는 작품 그림 중에서 골라 주세요"));
+  await db
+    .update(schema.series)
+    .set({
+      titleEn: str("titleEn", 200),
+      logline: str("logline"),
+      loglineEn: str("loglineEn"),
+      rootNote: str("rootNote"),
+      rootNoteEn: str("rootNoteEn"),
+      scheduleDays: formData.getAll("scheduleDays").map(String).filter((d) => DAYS.includes(d)),
+      coverUrl: cover,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.series.id, id));
+  revalidatePath(path);
+  revalidatePath("/");
+  redirect(`${path}?saved=1`);
+}
+
+export async function publishEpisodeAction(formData: FormData) {
+  const owner = await requireOwner();
+  const path = String(formData.get("back"));
+  const episodeId = String(formData.get("episodeId"));
+  try {
+    if (formData.get("decision") === "unpublish") await unpublishEpisode(episodeId, owner.email);
+    else {
+      const at = String(formData.get("publishAt") ?? "").trim();
+      // 입력은 한국 시간 기준 (datetime-local)
+      const when = at ? new Date(`${at}:00+09:00`) : undefined;
+      if (when && Number.isNaN(when.getTime())) throw new StudioError("공개 시각을 확인해 주세요");
+      await publishEpisode(episodeId, owner.email, when);
+    }
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  revalidatePath("/");
+  redirect(path);
+}
+
+export async function saveEpisodeInfo(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back"));
+  await db
+    .update(schema.episodes)
+    .set({
+      title: String(formData.get("title") ?? "").trim().slice(0, 200),
+      titleEn: String(formData.get("titleEn") ?? "").trim().slice(0, 200),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.episodes.id, String(formData.get("episodeId"))));
+  revalidatePath(path);
+  redirect(path);
 }

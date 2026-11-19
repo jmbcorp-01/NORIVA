@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { Noto_Serif_KR } from "next/font/google";
 import "./globals.css";
+import { getLocale } from "@/lib/i18n";
 
 const pretendard = localFont({
   src: "../../node_modules/pretendard/dist/web/variable/woff2/PretendardVariable.woff2",
@@ -23,9 +24,9 @@ export const metadata: Metadata = {
   description: "한국의 옛이야기가 지금의 웹툰이 되는 곳",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ko" className={`${pretendard.variable} ${serif.variable}`}>
+    <html lang={await getLocale()} className={`${pretendard.variable} ${serif.variable}`}>
       <body className="min-h-dvh">{children}</body>
     </html>
   );

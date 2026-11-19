@@ -10,8 +10,8 @@ const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg
 
 export async function GET(_req: Request, { params }: { params: Promise<{ key: string[] }> }) {
   const { key } = await params;
-  const root = path.resolve(process.env.MEDIA_DIR ?? path.join(process.cwd(), "..", ".media"));
-  const file = path.resolve(root, ...key);
+  const root = path.resolve(/*turbopackIgnore: true*/ process.env.MEDIA_DIR ?? path.join(process.cwd(), "..", ".media"));
+  const file = path.resolve(/*turbopackIgnore: true*/ root, ...key);
   const type = TYPES[path.extname(file).toLowerCase()];
   if (!file.startsWith(root + path.sep) || !type) return new NextResponse("not found", { status: 404 });
   try {
