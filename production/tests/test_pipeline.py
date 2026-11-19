@@ -75,8 +75,9 @@ class FakeImage:
     def __init__(self):
         self.prompts = []
 
-    def generate(self, prompt, seed=None):
+    def generate(self, prompt, seed=None, references=None):
         self.prompts.append(prompt)
+        self.references = getattr(self, "references", []) + [references]
         return b"\x89PNG\r\n\x1a\nfake", 0.04
 
 
@@ -129,7 +130,7 @@ def test_produce_writes_episode_with_bubbles_as_data(tmp_path):
     bubble = episode["panels"][0]["bubbles"][0]
     assert bubble["text"]["en"] == "Perfect. Another ghost."
     assert (run / bubble["audio"]["en"]).exists()
-    assert "No text, no speech bubbles" in image.prompts[0]
+    assert "No text, letters, speech bubbles" in image.prompts[0]
     assert episode["cost_total_usd"] > 0
 
 
@@ -180,3 +181,13 @@ def test_series_bible_file_is_valid(bible_path):
     if not path.exists():
         pytest.skip("no bible chosen yet")
     SeriesBible.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def test_character_references_are_passed_to_image_generation(tmp_path):
+    run = _plan_and_approve(tmp_path, FakeLLM())
+    image = FakeImage()
+    refs = {c.id: f"sheet-{c.id}".encode() for c in BIBLE.characters}
+    pipeline.produce_episode(BIBLE, [], FakeLLM(), image, FakeVoice(), SETTINGS, run, references=refs)
+    with_cast = [r for r in image.references if r]
+    assert with_cast and all(ref.startswith(b"sheet-") for r in with_cast for ref in r)
+    assert any("Reference image 1 is the design sheet" in p for p in image.prompts)

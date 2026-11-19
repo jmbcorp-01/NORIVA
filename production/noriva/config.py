@@ -20,7 +20,7 @@ class Prices:
 class Settings:
     llm_model: str = "claude-opus-5-5"
     llm_effort: str = "high"
-    image_model: str = "fal-ai/flux/dev"
+    image_model: str = "fal-ai/nano-banana"  # "/edit" is used when character references are given
     voice_model: str = "eleven_multilingual_v2"
     storyboard_variants: int = 3
     max_image_attempts: int = 3

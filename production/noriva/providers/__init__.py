@@ -18,8 +18,10 @@ class LLM(Protocol):
 
 
 class ImageGen(Protocol):
-    def generate(self, prompt: str, seed: int | None = None) -> tuple[bytes, float]:
-        """Return PNG/JPEG bytes and the cost in USD."""
+    def generate(
+        self, prompt: str, seed: int | None = None, references: list[bytes] | None = None
+    ) -> tuple[bytes, float]:
+        """Return PNG/JPEG bytes and the cost in USD. `references` are character sheets to match."""
 
 
 class Voice(Protocol):

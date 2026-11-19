@@ -84,11 +84,14 @@ def main(argv: list[str] | None = None) -> None:
         from .providers.fal_image import FalImage
 
         bible = _load_bible(args.bible)
+        ref_dir = Path(args.bible).parent / "refs"
+        references = {f.stem: f.read_bytes() for f in ref_dir.glob("*.jpg")} if ref_dir.is_dir() else {}
         run_dir = Path(args.run)
         episode_number = int(run_dir.name.removeprefix("ep"))
         result = pipeline.produce_episode(
             bible, _previously(run_dir.parent, episode_number), AnthropicLLM(settings), FalImage(settings), ElevenLabsVoice(settings), settings, run_dir,
             owner_accepts_qa=args.accept_qa,
+            references=references,
         )
     else:
         ledger = Ledger(Path(args.run))

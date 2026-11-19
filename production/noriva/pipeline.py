@@ -90,6 +90,7 @@ def produce_episode(
     settings: Settings,
     run_dir: Path,
     owner_accepts_qa: bool = False,
+    references: dict[str, bytes] | None = None,
 ) -> dict:
     ledger = Ledger(run_dir)
     board = Storyboard.model_validate_json((run_dir / "final_storyboard.json").read_text())
@@ -104,10 +105,13 @@ def produce_episode(
 
     panels_out, flagged = [], []
     for panel in board.panels:
-        prompt = agents.image_prompt(bible, panel)
+        refs = [references[c] for c in panel.character_ids if references and c in references]
+        if refs and len(refs) != len([c for c in panel.character_ids if bible.character(c)]):
+            refs = []  # numbering in the prompt must line up with the reference images
+        prompt = agents.image_prompt(bible, panel, with_references=bool(refs))
         best: tuple[int, bytes, list[str]] | None = None
         for attempt in range(settings.max_image_attempts):
-            img, cost = image_gen.generate(prompt, seed=panel.index * 100 + attempt)
+            img, cost = image_gen.generate(prompt, seed=panel.index * 100 + attempt, references=refs or None)
             ledger.record("art", "agent:art", f"panel {panel.index} attempt {attempt}", {"prompt": prompt}, cost)
             qa, cost = agents.qa_image(llm, bible, panel, img)
             ledger.record("qa", "agent:qa", f"panel {panel.index} attempt {attempt}", qa.model_dump(), cost)

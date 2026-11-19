@@ -100,19 +100,23 @@ Storyboard panels with dialogue:
 
 # --- Art prompt -------------------------------------------------------------
 
-def image_prompt(bible: SeriesBible, panel: Panel) -> str:
-    """Fixed character descriptions go into every prompt to keep faces and clothes stable."""
-    cast = []
-    for cid in panel.character_ids:
-        c = bible.character(cid)
-        if c:
-            cast.append(f"{c.name}: {c.appearance}")
+def image_prompt(bible: SeriesBible, panel: Panel, with_references: bool = False) -> str:
+    """Fixed character descriptions go into every prompt to keep faces and clothes stable.
+
+    With references, reference image N is the sheet of the Nth listed character."""
+    cast = [c for c in (bible.character(cid) for cid in panel.character_ids) if c]
     parts = [
-        f"Webtoon panel, {panel.shot} shot.",
+        f"Draw one single vertical webtoon panel, {panel.shot} shot, full-bleed artwork filling the entire frame edge to edge, no borders.",
         panel.description,
-        ("Characters: " + " | ".join(cast)) if cast else "",
+        ("Characters: " + " | ".join(f"{c.name}: {c.appearance}" for c in cast)) if cast else "",
+        " ".join(f"Reference image {i + 1} is the design sheet for {c.name}: match face, hair and outfit exactly." for i, c in enumerate(cast))
+        + " Use the references only for character design; do not copy their layout, pose or gray background."
+        if with_references and cast
+        else "",
+        f"Exactly {len(cast)} visible person(s)." if cast else "No people in this panel.",
         f"Style: {bible.art_style}",
-        "No text, no speech bubbles, no letters, no watermark.",
+        "Any signs, papers or talismans are blank or carry only simple abstract red symbols."
+        " No text, letters, speech bubbles, signature or watermark anywhere.",
     ]
     return " ".join(p for p in parts if p)
 
