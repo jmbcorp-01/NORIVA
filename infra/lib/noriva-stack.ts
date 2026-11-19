@@ -25,7 +25,7 @@ import type { Construct } from "constructs";
 
 type Props = StackProps & {
   stage: string;
-  /** 서비스 도메인 (예: noriva.app). Route 53에 호스팅 영역이 있어야 해요. 없으면 CloudFront 기본 주소로만 열려요. */
+  /** 서비스 도메인 (예: k-noriva.com). Route 53에 호스팅 영역이 있어야 해요. 없으면 CloudFront 기본 주소로만 열려요. */
   domain?: string;
   /** 도메인 인증서 (CloudFront 규칙상 us-east-1에서 만들어요, NorivaCertStack) */
   certificate?: acm.ICertificate;

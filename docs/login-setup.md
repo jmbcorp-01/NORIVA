@@ -6,14 +6,14 @@
 
 ## 먼저 정할 것: 서비스 주소
 
-모든 등록에 서비스 주소가 들어가요. 예를 들어 `https://noriva.app`라면 돌아오는 주소(Redirect URI, Callback URL)는 아래처럼 정해져요.
+모든 등록에 서비스 주소가 들어가요. 예를 들어 `https://k-noriva.com`라면 돌아오는 주소(Redirect URI, Callback URL)는 아래처럼 정해져요.
 
 | 로그인 | 돌아오는 주소 |
 | --- | --- |
-| 카카오 | `https://noriva.app/auth/kakao/callback` |
-| 네이버 | `https://noriva.app/auth/naver/callback` |
-| Google | `https://noriva.app/auth/google/callback` |
-| Apple | `https://noriva.app/auth/apple/callback` |
+| 카카오 | `https://k-noriva.com/auth/kakao/callback` |
+| 네이버 | `https://k-noriva.com/auth/naver/callback` |
+| Google | `https://k-noriva.com/auth/google/callback` |
+| Apple | `https://k-noriva.com/auth/apple/callback` |
 
 서비스 주소는 도메인을 붙여 배포하면 자동으로 정해져요([aws-deploy.md](aws-deploy.md)의 "3. 도메인 사기", "4. 배포"). 그래서 **도메인을 사고 한 번 배포한 뒤에** 아래 등록을 하는 순서가 좋아요. Apple은 `localhost`나 CloudFront 임시 주소를 받지 않아요.
 
@@ -23,8 +23,8 @@
 
 1. 카카오 계정으로 로그인 → **내 애플리케이션 → 애플리케이션 추가하기**. 앱 이름 `NORIVA`, 회사명은 사업자 상호.
 2. **앱 키**의 **REST API 키**를 복사해요 → `KAKAO_CLIENT_ID`
-3. **플랫폼 → Web**에 서비스 주소(`https://noriva.app`)를 등록해요.
-4. **카카오 로그인**을 **활성화**하고, **Redirect URI**에 `https://noriva.app/auth/kakao/callback`을 넣어요.
+3. **플랫폼 → Web**에 서비스 주소(`https://k-noriva.com`)를 등록해요.
+4. **카카오 로그인**을 **활성화**하고, **Redirect URI**에 `https://k-noriva.com/auth/kakao/callback`을 넣어요.
 5. **동의항목**: 닉네임을 "필수 동의"로 켜요. 이메일(카카오계정)은 **비즈 앱**으로 전환해야 받을 수 있어요. 앱 설정에서 사업자 정보로 비즈 앱 전환을 신청하고, 이메일을 "선택 동의"로 켜요.
 6. (권장) **보안 → Client Secret**에서 코드를 만들고 "사용함"으로 바꿔요 → `KAKAO_CLIENT_SECRET`
 
@@ -32,7 +32,7 @@
 
 1. **Application → 애플리케이션 등록**. 사용 API는 **네이버 로그인**.
 2. **제공 정보**: 별명(필수), 이메일 주소(선택).
-3. **로그인 오픈 API 서비스 환경**: PC 웹과 모바일 웹을 추가하고, 서비스 URL에 `https://noriva.app`, Callback URL에 `https://noriva.app/auth/naver/callback`.
+3. **로그인 오픈 API 서비스 환경**: PC 웹과 모바일 웹을 추가하고, 서비스 URL에 `https://k-noriva.com`, Callback URL에 `https://k-noriva.com/auth/naver/callback`.
 4. 등록 후 **Client ID** → `NAVER_CLIENT_ID`, **Client Secret** → `NAVER_CLIENT_SECRET`
 5. 처음에는 "개발 중" 상태라 등록한 멤버만 로그인돼요. 출시 전에 **검수 요청**을 해야 모든 사람이 쓸 수 있어요. 검수에는 서비스 화면 캡처와 로그인 버튼 위치가 필요해서, 웹을 배포한 뒤에 신청해요.
 
@@ -40,7 +40,7 @@
 
 1. 새 프로젝트 `NORIVA`를 만들어요.
 2. **Google 인증 플랫폼(OAuth 동의 화면)**: 앱 이름, 지원 이메일, 로고, 홈페이지·개인정보 처리방침 주소를 넣고, 대상은 **외부**로 정해요. 범위는 `openid`, `email`, `profile`만 써요(추가 심사가 필요 없는 기본 범위).
-3. **클라이언트 → 클라이언트 만들기**: 유형은 **웹 애플리케이션**, 승인된 리디렉션 URI에 `https://noriva.app/auth/google/callback`.
+3. **클라이언트 → 클라이언트 만들기**: 유형은 **웹 애플리케이션**, 승인된 리디렉션 URI에 `https://k-noriva.com/auth/google/callback`.
 4. **클라이언트 ID** → `GOOGLE_CLIENT_ID`, **클라이언트 보안 비밀번호** → `GOOGLE_CLIENT_SECRET`
 5. 앱 상태를 **프로덕션으로 게시**해요. 테스트 상태로 두면 등록한 테스트 사용자만 로그인돼요.
 
@@ -51,8 +51,8 @@ iOS 앱에 카카오·네이버·Google 로그인을 넣으면 **Apple 로그인
 1. **Identifiers → App IDs**: 앱의 번들 ID(예: `app.noriva.reader`)로 App ID를 만들고 **Sign in with Apple**을 켜요. (3단계 앱 출시 때도 같은 App ID를 써요.)
 2. **Identifiers → Services IDs**: 웹 로그인용 ID(예: `app.noriva.web`)를 만들고 **Sign in with Apple**을 켠 뒤 **Configure**:
    - Primary App ID: 위에서 만든 App ID
-   - Domains: `noriva.app`
-   - Return URLs: `https://noriva.app/auth/apple/callback`
+   - Domains: `k-noriva.com`
+   - Return URLs: `https://k-noriva.com/auth/apple/callback`
    - 이 Services ID 값 → `APPLE_CLIENT_ID`
 3. **Keys → +**: 이름을 정하고 **Sign in with Apple**을 켠 뒤 Primary App ID를 고르고 만들어요. **.p8 파일은 한 번만 내려받을 수 있어요.** 안전한 곳에 보관해요.
    - Key ID → `APPLE_KEY_ID`

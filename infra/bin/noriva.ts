@@ -5,7 +5,7 @@ import { NorivaCertStack } from "../lib/cert-stack";
 const app = new App();
 // 스테이지: staging(출시 전 시험, 스토어 심사용) / prod(운영). 기본은 staging.
 const stage = (app.node.tryGetContext("stage") as string) ?? "staging";
-// 서비스 도메인: npx cdk deploy --all -c domain=noriva.app (Route 53에 호스팅 영역이 있어야 해요)
+// 서비스 도메인: npx cdk deploy --all -c domain=k-noriva.com (Route 53에 호스팅 영역이 있어야 해요)
 const domain = (app.node.tryGetContext("domain") as string | undefined)?.trim() || undefined;
 const account = process.env.CDK_DEFAULT_ACCOUNT;
 
