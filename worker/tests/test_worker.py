@@ -9,6 +9,8 @@ from psycopg.types.json import Jsonb
 
 from noriva_worker.config import Config
 from noriva_worker.llm import LLMResult, cost_of
+from noriva_worker.handlers import Tools
+from noriva_worker.images import ImageNotConfiguredError
 from noriva_worker.main import process
 from noriva_worker.prompts import render_guidelines
 from noriva_worker.store import Store
@@ -64,7 +66,7 @@ def test_text_stage_moves_to_review_and_records_cost(store):
         store.conn.execute("update jobs set status='canceled' where id=%s", (job["id"],))
         job = store.claim_next("test")
     writer = FakeWriter()
-    process(store, job, writer, Config.from_env())
+    process(store, job, Tools(writer=writer), Config.from_env())
     a = store.conn.execute("select status, body from artifacts where id=%s", (aid,)).fetchone()
     assert a["status"] == "pending_review"
     assert "가짜 결과" in a["body"]["markdown"]
@@ -75,13 +77,17 @@ def test_text_stage_moves_to_review_and_records_cost(store):
     assert float(cost["cost_usd"]) == 0.014
 
 
-def test_unconnected_stage_fails_without_retry(store):
+def test_art_without_image_key_fails_without_retry(store):
     sid, aid = make_job(store, stage="art")
     job = store.claim_by_id(
         store.conn.execute("select id from jobs where artifact_id=%s", (aid,)).fetchone()["id"], "test"
     )
-    process(store, job, FakeWriter(), Config.from_env())
-    a = store.conn.execute("select status from artifacts where id=%s", (aid,)).fetchone()
+    def no_key():
+        raise ImageNotConfiguredError("FAL_KEY가 설정되지 않아")
+
+    process(store, job, Tools(writer=FakeWriter(), image_factory=no_key), Config.from_env())
+    a = store.conn.execute("select status, body from artifacts where id=%s", (aid,)).fetchone()
+    assert "FAL_KEY" in a["body"]["error"]
     j = store.conn.execute("select status from jobs where artifact_id=%s", (aid,)).fetchone()
     assert a["status"] == "failed" and j["status"] == "failed"
 

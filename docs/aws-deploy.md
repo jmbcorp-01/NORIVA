@@ -29,7 +29,7 @@ npx cdk deploy -c stage=prod      # 운영 환경 (나중에)
 | `STUDIO_OWNER_EMAIL` | 스튜디오 로그인 이메일 |
 | `STUDIO_OWNER_PASSWORD_HASH` | `cd web && npm run hash-password -- '비밀번호'` 출력의 `b64:`부터 끝까지 |
 | `ANTHROPIC_API_KEY` | Claude API 키 |
-| `FAL_KEY` | fal.ai 키 (작화 단계 연결 후 사용) |
+| `FAL_KEY` | fal.ai 키 (작화 단계, 회차당 대략 60컷 x 후보 1~2장) |
 | `SESSION_SECRET` | 자동 생성됨, 그대로 두기 |
 
 값을 바꾼 뒤 ECS 서비스(Web, Worker)를 "새 배포 강제"로 다시 시작하면 적용돼요.

@@ -3,6 +3,7 @@ import { StageBadge } from "@/components/stage-badge";
 import { canStart, STAGE_INFO, stageStates, type LatestArtifact, type Stage } from "@/lib/pipeline";
 import type { Artifact } from "@/lib/studio";
 import { decideArtifact, runStage } from "../../actions";
+import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views";
 
 type Props = {
   stages: Stage[];
@@ -67,7 +68,20 @@ export function StageBoard({ stages, latest, seriesId, episodeId, back }: Props)
                   ) : null}
 
                   {a && a.status !== "generating" && a.status !== "failed" ? (
-                    <ArtifactView body={a.body} markdown={markdown} />
+                    isArtBody(a.body) ? (
+                      <ArtView
+                        body={a.body}
+                        canRedraw={a.status !== "stale" && canStart(stage, l)}
+                        artifactId={a.id}
+                        seriesId={seriesId}
+                        episodeId={episodeId}
+                        back={back}
+                      />
+                    ) : isLetteredBody(a.body) ? (
+                      <LetteredView body={a.body} />
+                    ) : (
+                      <ArtifactView body={a.body} markdown={markdown} />
+                    )
                   ) : null}
 
                   {a ? (

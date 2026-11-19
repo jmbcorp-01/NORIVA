@@ -13,6 +13,12 @@ class Config:
     effort: str
     max_attempts: int
     poll_seconds: float
+    image_model: str
+    image_price: float
+    art_candidates: int
+    art_pass_score: int
+    art_max_panels: int
+    art_parallel: int
 
     @staticmethod
     def from_env() -> "Config":
@@ -24,4 +30,11 @@ class Config:
             effort=os.environ.get("NORIVA_TEXT_EFFORT", "high"),
             max_attempts=int(os.environ.get("NORIVA_MAX_ATTEMPTS", "3")),
             poll_seconds=float(os.environ.get("NORIVA_POLL_SECONDS", "3")),
+            # 그림 모델: 인물 시트를 참조로 줄 수 있는 모델이어야 해요 (fal의 "<모델>/edit" 경로)
+            image_model=os.environ.get("NORIVA_IMAGE_MODEL", "fal-ai/nano-banana"),
+            image_price=float(os.environ.get("NORIVA_IMAGE_PRICE", "0.04")),
+            art_candidates=int(os.environ.get("NORIVA_ART_CANDIDATES", "2")),
+            art_pass_score=int(os.environ.get("NORIVA_ART_PASS_SCORE", "80")),
+            art_max_panels=int(os.environ.get("NORIVA_ART_MAX_PANELS", "60")),
+            art_parallel=int(os.environ.get("NORIVA_ART_PARALLEL", "4")),
         )
