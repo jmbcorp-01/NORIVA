@@ -22,7 +22,7 @@ from .images import FalImage, ImageNotConfiguredError
 from .llm import RefusedError, TextModel, TruncatedError
 from .media import media_from_env
 from .scout import run_scout, run_source_fill
-from .series_meta import run_series_meta
+from .series_meta import run_episode_meta, run_series_meta
 from .store import Store
 from .visual import ArtSettings, StageInputError
 
@@ -71,6 +71,15 @@ def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
             values, costs = run_series_meta(mctx, tools.writer)
             filled = store.finish_series_meta(job, mctx["series"], values, costs)
             log.info("연재 설정 채움 %s: %s", job["series_id"], ", ".join(filled) or "채울 빈 칸 없음")
+        elif job["type"] == "episode_meta":
+            ectx = store.episode_meta_context(job)
+            if ectx is None:
+                raise StageInputError("회차를 찾지 못했어요 (지워졌을 수 있어요)")
+            if not ectx["story"]:
+                raise StageInputError("승인한 스토리가 없어요. ② 스토리를 먼저 승인해 주세요.")
+            values, costs = run_episode_meta(ectx, tools.writer)
+            filled = store.finish_episode_meta(job, ectx["episode"], values, costs)
+            log.info("회차 정보 채움 %s화: %s", ectx["number"], ", ".join(filled) or "채울 빈 칸 없음")
         else:
             ctx = store.context(job)
             body, costs = run_stage(job["type"], ctx, tools)

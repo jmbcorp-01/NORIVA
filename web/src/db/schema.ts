@@ -224,6 +224,7 @@ export const stage = pgEnum("stage", [
   "scout", // 시장 분석 소재 발굴
   "source_fill", // 소재 이름만 보고 나머지 칸 채우기
   "series_meta", // 승인한 기획·스토리·인물로 연재 설정(제목, 소개, 뿌리 노트) 채우기
+  "episode_meta", // 승인한 스토리의 회차 요약으로 회차 제목(한·영)과 한 줄 요약 채우기
 ]);
 
 export const artifactStatus = pgEnum("artifact_status", [
