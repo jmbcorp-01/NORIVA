@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { Badge, Button, Card, Empty, Input, Label, Notice, PageHeader, Textarea } from "@/components/ui";
 import { coverCandidates } from "@/lib/studio-publish";
@@ -8,7 +8,7 @@ import { mediaUrl } from "@/lib/media";
 import { latestArtifacts } from "@/lib/studio";
 import { isApproved, SERIES_STAGES, type Stage } from "@/lib/pipeline";
 import { AGE_RATING, SERIES_STATUS, SOURCE_CATEGORY } from "@/lib/labels";
-import { createEpisode, saveSeriesPublic } from "../../../actions";
+import { createEpisode, fillSeriesMeta, saveSeriesPublic } from "../../../actions";
 
 const DAYS = [
   ["mon", "월"],
@@ -28,10 +28,10 @@ export default async function SeriesPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string; saved?: string }>;
+  searchParams: Promise<{ error?: string; saved?: string; metaFilling?: string }>;
 }) {
   const { id } = await params;
-  const { error, saved } = await searchParams;
+  const { error, saved, metaFilling } = await searchParams;
   if (!/^[0-9a-f-]{36}$/.test(id)) notFound();
   const [s] = await db.select().from(schema.series).where(eq(schema.series.id, id));
   if (!s) notFound();
@@ -45,6 +45,13 @@ export default async function SeriesPage({
     db.select().from(schema.episodes).where(eq(schema.episodes.seriesId, id)).orderBy(asc(schema.episodes.number)),
     coverCandidates(id),
   ]);
+  const [metaJob] = await db
+    .select({ status: schema.jobs.status, error: schema.jobs.error })
+    .from(schema.jobs)
+    .where(and(eq(schema.jobs.type, "series_meta"), eq(schema.jobs.seriesId, id)))
+    .orderBy(desc(schema.jobs.createdAt))
+    .limit(1);
+  const metaBusy = metaJob && (metaJob.status === "queued" || metaJob.status === "running");
   const toL = (st: Stage) => (latest[st] ? { id: latest[st]!.id, stage: st, status: latest[st]!.status } : undefined);
   const readyForEpisodes = isApproved(toL("story")) && isApproved(toL("characters"));
   const back = `/studio/series/${id}`;
@@ -65,7 +72,7 @@ export default async function SeriesPage({
       <Notice>{error}</Notice>
       {s.title === "제목 미정" ? (
         <Notice tone="ochre">
-          아직 제목이 없어요. 승인한 기획안의 제목을 오른쪽 아래 <a href="#settings" className="underline underline-offset-4">연재 설정</a>의 제목 칸에 적어 주세요. 다음 단계 에이전트들이 이 제목을 써요.
+          아직 제목이 없어요. 오른쪽 아래 <a href="#settings" className="underline underline-offset-4">연재 설정</a>에서 직접 적거나 &ldquo;승인한 내용으로 AI가 채우기&rdquo;를 눌러 주세요. ③ 인물을 승인하면 AI가 자동으로 한 번 채워요.
         </Notice>
       ) : null}
 
@@ -120,6 +127,19 @@ export default async function SeriesPage({
 
           <h2 id="settings" className="mb-3 mt-10 text-[14px] font-semibold">연재 설정</h2>
           {saved ? <p className="mb-2 text-[12px] text-pine">저장했어요. 독자 화면에 바로 반영돼요.</p> : null}
+          {isApproved(toL("concept")) ? (
+            <form action={fillSeriesMeta} className="mb-3">
+              <input type="hidden" name="seriesId" value={id} />
+              <Button type="submit" className="w-full" disabled={!!metaBusy}>
+                {metaBusy ? "AI가 쓰는 중… (1~2분 뒤 새로고침)" : "승인한 내용으로 AI가 채우기"}
+              </Button>
+              <p className="mt-1.5 text-[11px] text-ink-faint">
+                승인한 기획안·스토리·인물을 읽고 제목, 한 줄 소개, 뿌리 노트를 한국어·영어로 써요. 비어 있는 칸만 채우니, 다시 쓰게 하려면 그 칸을 비우고 저장한 뒤 누르세요. 약 $0.1
+              </p>
+              {metaFilling && metaJob?.status === "done" ? <p className="mt-1 text-[12px] text-pine">채웠어요. 내용을 확인하고 고친 뒤 저장해 주세요.</p> : null}
+              {metaJob?.status === "failed" ? <p className="mt-1 text-[12px] text-plum">채우기 실패: {metaJob.error}</p> : null}
+            </form>
+          ) : null}
           <form action={saveSeriesPublic} className="space-y-3">
             <input type="hidden" name="seriesId" value={id} />
             <label className="block">

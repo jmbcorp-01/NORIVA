@@ -235,6 +235,48 @@ class Store:
             self.finish(job, {}, costs)
         return filled
 
+    # ── 연재 설정 채우기 ──
+
+    def series_meta_context(self, job: dict[str, Any]) -> dict[str, Any] | None:
+        c = self.conn
+        series = c.execute("select * from series where id = %s", (job["series_id"],)).fetchone()
+        if not series:
+            return None
+        sources = c.execute(
+            """select s.name, s.summary from series_sources ss join sources s on s.id = ss.source_id
+               where ss.series_id = %s order by s.name""",
+            (job["series_id"],),
+        ).fetchall()
+        inputs: list[tuple[str, str]] = []
+        for stage in ("concept", "story", "characters"):
+            a = c.execute(
+                """select body from artifacts where series_id = %s and episode_id is null and stage = %s
+                   and status in ('approved','edited') order by updated_at desc limit 1""",
+                (job["series_id"], stage),
+            ).fetchone()
+            if a:
+                inputs.append((STAGE_LABEL_KO[stage], body_text(a["body"])))
+        return {"series": series, "sources": sources, "inputs": inputs}
+
+    def finish_series_meta(self, job: dict[str, Any], series: dict[str, Any], values: dict[str, str], costs: list[dict[str, Any]]) -> list[str]:
+        """비어 있는 칸만 채워요 (제목은 '제목 미정'도 빈 칸으로 봐요)."""
+        cols = {"title": "title", "titleEn": "title_en", "logline": "logline", "loglineEn": "logline_en", "rootNote": "root_note", "rootNoteEn": "root_note_en"}
+        sets, params, filled = [], [], []
+        for key, col in cols.items():
+            cur = (series.get(col) or "").strip()
+            empty = not cur or (col == "title" and cur == "제목 미정")
+            if empty and values.get(key):
+                sets.append(f'"{col}" = %s')
+                params.append(values[key])
+                filled.append(col)
+        with self.conn.transaction():
+            if sets:
+                self.conn.execute(
+                    f"update series set {', '.join(sets)}, updated_at = now() where id = %s", (*params, series["id"])
+                )
+            self.finish(job, {}, costs)
+        return filled
+
     # ── 에이전트에게 줄 맥락 ──
 
     def context(self, job: dict[str, Any]) -> dict[str, Any]:

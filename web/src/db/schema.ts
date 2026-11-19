@@ -223,6 +223,7 @@ export const stage = pgEnum("stage", [
   // 작품 밖 작업 (작품 없이 돌아요, jobs.type에만 써요)
   "scout", // 시장 분석 소재 발굴
   "source_fill", // 소재 이름만 보고 나머지 칸 채우기
+  "series_meta", // 승인한 기획·스토리·인물로 연재 설정(제목, 소개, 뿌리 노트) 채우기
 ]);
 
 export const artifactStatus = pgEnum("artifact_status", [

@@ -422,6 +422,24 @@ export async function saveEpisodeInfo(formData: FormData) {
   redirect(path);
 }
 
+/** 승인한 기획안·스토리·인물로 연재 설정의 빈 칸(제목, 소개, 뿌리 노트)을 AI가 채워요. */
+export async function fillSeriesMeta(formData: FormData) {
+  await requireOwner();
+  const id = String(formData.get("seriesId"));
+  const path = `/studio/series/${id}`;
+  try {
+    const busy = await db
+      .select({ id: schema.jobs.id })
+      .from(schema.jobs)
+      .where(and(eq(schema.jobs.type, "series_meta"), eq(schema.jobs.seriesId, id), inArray(schema.jobs.status, ["queued", "running"])));
+    if (!busy.length) await enqueueJob({ type: "series_meta", seriesId: id });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(`${path}?metaFilling=1#settings`);
+}
+
 /* ─── 소재 발굴 (시장 분석 → 소재 후보) ─── */
 
 export async function startScout(formData: FormData) {
