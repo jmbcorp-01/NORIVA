@@ -146,6 +146,8 @@ export class NorivaStack extends Stack {
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: "web", logRetention }),
       environment: {
         NODE_ENV: "production",
+        // Fargate는 HOSTNAME을 컨테이너 호스트 이름으로 바꿔 넣어요. Next 서버가 모든 주소(127.0.0.1 포함)에서 듣도록 고정해요.
+        HOSTNAME: "0.0.0.0",
         DB_SSL: "true",
         SQS_QUEUE_URL: queue.queueUrl,
         AWS_REGION: this.region,

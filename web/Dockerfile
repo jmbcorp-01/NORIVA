@@ -25,4 +25,4 @@ COPY --from=migrator /m/node_modules ./scripts/node_modules
 COPY scripts/migrate.mjs ./scripts/migrate.mjs
 USER node
 EXPOSE 3000
-CMD ["sh", "-c", "node scripts/migrate.mjs && node server.js"]
+CMD ["sh", "-c", "node scripts/migrate.mjs && HOSTNAME=0.0.0.0 node server.js"]
