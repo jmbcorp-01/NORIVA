@@ -149,6 +149,17 @@ def test_episode_qa_failure_stops_before_spending_on_art(tmp_path):
     assert image.prompts == []
 
 
+def test_owner_can_accept_failed_episode_qa(tmp_path):
+    run = _plan_and_approve(tmp_path, FakeLLM())
+    image = FakeImage()
+    status = pipeline.produce_episode(
+        BIBLE, [], FakeLLM(episode_pass=False), image, FakeVoice(), SETTINGS, run, owner_accepts_qa=True
+    )
+    assert image.prompts
+    assert status["status"] in ("ready", "needs_owner")
+    assert any(e["actor"] == "owner" and "QA" in e["action"] for e in Ledger(run).entries())
+
+
 def test_image_prompt_carries_fixed_character_design():
     panel = Panel(index=0, shot="medium", description="Hana lights incense", character_ids=["hana"], dialogue=[])
     prompt = image_prompt(BIBLE, panel)

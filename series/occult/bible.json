@@ -43,6 +43,24 @@
       "personality": "Hana's grandmother's former apprentice; gruff, overworked, guilty about leaving the shrine.",
       "speech_style": "Fluent but slightly formal English learned abroad; blunt; switches to Korean when angry.",
       "voice_profile": "Male, late 30s, baritone, gravelly and tired, slight Korean accent"
+    },
+    {
+      "id": "grandmother",
+      "name": "Seo Okja (Halmeoni)",
+      "role": "guest (flashbacks, letters)",
+      "appearance": "Korean woman about thirty (1975 flashbacks), slender, hair in a tight braided low bun, sharp brows, five-color shaman robe (red, yellow, blue, white and black panels) over a white hanbok, red silk cord tied on her left wrist",
+      "personality": "Fierce, practical, loving but hard; makes terrible bargains to protect family.",
+      "speech_style": "Clipped and firm; few words; never pleads twice.",
+      "voice_profile": "Female, about 30, low firm voice, slight Korean accent in English"
+    },
+    {
+      "id": "mom",
+      "name": "Grace Seo (Hana's mother)",
+      "role": "guest (phone calls)",
+      "appearance": "Korean-American woman about fifty, short neat bob, reading glasses, cardigan; usually shown only as a phone screen photo or a voice.",
+      "personality": "Anxious, protective, keeps secrets about her own childhood.",
+      "speech_style": "Short worried sentences, mom-style commands, long silences.",
+      "voice_profile": "Female, about 50, warm but tense, General American accent with slight Korean-American lilt"
     }
   ],
   "season_arc": "Hana flies to Seoul to close her grandmother's shrine and accidentally breaks the seal. Spirit incidents erupt across the city, one per case. With Jun, she solves them and learns why her grandmother bargained with the fox in 1975 to save Hana's mother. The season ends revealing that the contract's final payment is Hana herself.",

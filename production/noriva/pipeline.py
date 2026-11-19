@@ -89,6 +89,7 @@ def produce_episode(
     voice: Voice,
     settings: Settings,
     run_dir: Path,
+    owner_accepts_qa: bool = False,
 ) -> dict:
     ledger = Ledger(run_dir)
     board = Storyboard.model_validate_json((run_dir / "final_storyboard.json").read_text())
@@ -97,7 +98,9 @@ def produce_episode(
     report, cost = agents.qa_episode(llm, bible, board, previously)
     ledger.record("qa", "agent:qa", "episode check", report.model_dump(), cost)
     if not report.passed or report.score < settings.qa_pass_score:
-        return _status(run_dir, "needs_owner", reason="episode QA failed", issues=report.issues, score=report.score)
+        if not owner_accepts_qa:
+            return _status(run_dir, "needs_owner", reason="episode QA failed", issues=report.issues, score=report.score)
+        ledger.record("review", "owner", "accepted episode despite QA notes", {"score": report.score, "issues": report.issues})
 
     panels_out, flagged = [], []
     for panel in board.panels:

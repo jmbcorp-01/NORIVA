@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> None:
     r = sub.add_parser("produce")
     r.add_argument("--bible", required=True)
     r.add_argument("--run", required=True)
+    r.add_argument("--accept-qa", action="store_true", help="Owner overrides a failed episode QA; recorded in the ledger")
 
     c = sub.add_parser("cost")
     c.add_argument("--run", required=True)
@@ -86,7 +87,8 @@ def main(argv: list[str] | None = None) -> None:
         run_dir = Path(args.run)
         episode_number = int(run_dir.name.removeprefix("ep"))
         result = pipeline.produce_episode(
-            bible, _previously(run_dir.parent, episode_number), AnthropicLLM(settings), FalImage(settings), ElevenLabsVoice(settings), settings, run_dir
+            bible, _previously(run_dir.parent, episode_number), AnthropicLLM(settings), FalImage(settings), ElevenLabsVoice(settings), settings, run_dir,
+            owner_accepts_qa=args.accept_qa,
         )
     else:
         ledger = Ledger(Path(args.run))
