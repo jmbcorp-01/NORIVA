@@ -370,6 +370,7 @@ export async function saveSeriesPublic(formData: FormData) {
   await db
     .update(schema.series)
     .set({
+      ...(str("title", 200) ? { title: str("title", 200) } : {}),
       titleEn: str("titleEn", 200),
       logline: str("logline"),
       loglineEn: str("loglineEn"),
