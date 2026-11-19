@@ -19,6 +19,7 @@ STAGE_LABEL_KO = {
     "storyboard": "콘티",
     "art": "작화",
     "lettering": "말풍선",
+    "review": "검수",
 }
 
 
@@ -65,7 +66,7 @@ class Store:
 
     # ── 결과 기록 ──
 
-    def finish(self, job: dict[str, Any], body: dict[str, Any], cost: dict[str, Any] | None) -> None:
+    def finish(self, job: dict[str, Any], body: dict[str, Any], costs: list[dict[str, Any]]) -> None:
         with self.conn.transaction():
             if job["artifact_id"]:
                 self.conn.execute(
@@ -76,11 +77,19 @@ class Store:
                 "update jobs set status = 'done', error = null, finished_at = now(), updated_at = now() where id = %s",
                 (job["id"],),
             )
-            if cost:
+            # 같은 제공자·모델 호출은 한 줄로 합쳐요 (작화 한 번에 호출이 수백 번이라)
+            merged: dict[tuple[str, str], dict[str, Any]] = {}
+            for cost in costs:
+                m = merged.setdefault((cost["provider"], cost["model"]), {"units": {}, "cost_usd": 0.0, "calls": 0})
+                m["calls"] += 1
+                m["cost_usd"] += cost["cost_usd"]
+                for k, v in cost["units"].items():
+                    m["units"][k] = m["units"].get(k, 0) + v
+            for (provider, model), m in merged.items():
                 self.conn.execute(
                     """insert into cost_ledger (series_id, episode_id, job_id, provider, model, units, cost_usd)
                        values (%s, %s, %s, %s, %s, %s, %s)""",
-                    (job["series_id"], job["episode_id"], job["id"], cost["provider"], cost["model"], Jsonb(cost["units"]), cost["cost_usd"]),
+                    (job["series_id"], job["episode_id"], job["id"], provider, model, Jsonb({**m["units"], "calls": m["calls"]}), round(m["cost_usd"], 4)),
                 )
 
     def fail(self, job: dict[str, Any], error: str, max_attempts: int, retryable: bool) -> bool:
@@ -120,9 +129,11 @@ class Store:
             episode = c.execute("select * from episodes where id = %s", (job["episode_id"],)).fetchone()
 
         inputs: list[tuple[str, str]] = []
+        input_bodies: dict[str, Any] = {}
         for aid in artifact["input_artifact_ids"]:
             a = c.execute("select stage, body from artifacts where id = %s", (aid,)).fetchone()
             if a:
+                input_bodies[a["stage"]] = a["body"]
                 inputs.append((STAGE_LABEL_KO.get(a["stage"], a["stage"]), body_text(a["body"])))
 
         # 회차 단계는 바로 앞 회차들의 승인된 대본 요약을 함께 줘요 (설정 모순 방지)
@@ -145,14 +156,25 @@ class Store:
         versions.sort(key=lambda v: order[v["scope"]])
 
         previous = None
-        if artifact["attempt"] > 1:
+        previous_body = None
+        payload = job["payload"] or {}
+        if payload.get("base_artifact_id"):
+            prev_row = c.execute("select body from artifacts where id = %s", (payload["base_artifact_id"],)).fetchone()
+        elif artifact["attempt"] > 1:
             prev_row = c.execute(
                 """select body from artifacts where series_id = %s and stage = %s
                    and episode_id is not distinct from %s and attempt = %s order by created_at desc limit 1""",
                 (job["series_id"], job["type"], job["episode_id"], artifact["attempt"] - 1),
             ).fetchone()
-            if prev_row:
-                previous = body_text(prev_row["body"])
+        else:
+            prev_row = None
+        if prev_row:
+            previous_body = prev_row["body"]
+            previous = body_text(prev_row["body"])
+
+        banned = []
+        if job["type"] in ("lettering", "review"):
+            banned = c.execute("select kind, term from banned_terms where active").fetchall()
 
         return {
             "series": series,
@@ -160,8 +182,14 @@ class Store:
             "episode": episode,
             "inputs": inputs,
             "guidelines": versions,
-            "instruction": (job["payload"] or {}).get("instruction") or artifact["owner_note"],
+            "instruction": payload.get("instruction") or artifact["owner_note"],
             "previous_attempt": previous,
+            "previous_body": previous_body,
+            "input_bodies": input_bodies,
+            "payload": payload,
+            "artifact_id": str(artifact["id"]),
+            "attempt": artifact["attempt"],
+            "banned_terms": banned,
         }
 
 

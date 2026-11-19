@@ -9,6 +9,7 @@ import {
   isSeriesStage,
   nextToEnqueue,
   STAGE_INFO,
+  EXTRA_GUIDELINE_AGENTS,
   UPSTREAM,
   type LatestArtifact,
   type Stage,
@@ -84,6 +85,9 @@ export async function startStage(opts: {
   stage: Stage;
   actor: string;
   instruction?: string;
+  /** 작화에서 고른 컷만 다시 그릴 때: 컷 번호와 바탕이 되는 작화 결과물 */
+  panels?: number[];
+  baseArtifactId?: string;
 }): Promise<string> {
   const { seriesId, stage, actor } = opts;
   const episodeId = isSeriesStage(stage) ? null : opts.episodeId;
@@ -103,7 +107,10 @@ export async function startStage(opts: {
   }
 
   const inputIds = UPSTREAM[stage].map((u) => latest[u]!.id);
-  const versions = await resolveGuidelineVersions(STAGE_INFO[stage].agent, s.genre, seriesId, episodeId);
+  const versions = [];
+  for (const agent of [STAGE_INFO[stage].agent, ...(EXTRA_GUIDELINE_AGENTS[stage] ?? [])]) {
+    versions.push(...(await resolveGuidelineVersions(agent, s.genre, seriesId, episodeId)));
+  }
   const attempt = (latest[stage]?.attempt ?? 0) + 1;
 
   const [artifact] = await db
@@ -126,7 +133,10 @@ export async function startStage(opts: {
     seriesId,
     episodeId,
     artifactId: artifact.id,
-    payload: { instruction: opts.instruction ?? "" },
+    payload: {
+      instruction: opts.instruction ?? "",
+      ...(opts.panels?.length ? { panels: opts.panels, base_artifact_id: opts.baseArtifactId } : {}),
+    },
   });
 
   if (attempt > 1) {
@@ -135,7 +145,7 @@ export async function startStage(opts: {
       seriesId,
       actor,
       action: "regenerate",
-      note: opts.instruction ?? "",
+      note: opts.panels?.length ? `${opts.panels.join(", ")}컷 다시 그리기. ${opts.instruction ?? ""}`.trim() : (opts.instruction ?? ""),
     });
   }
   return artifact.id;

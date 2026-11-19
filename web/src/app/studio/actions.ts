@@ -260,6 +260,32 @@ export async function runStage(formData: FormData) {
   redirect(path);
 }
 
+/** 작화 결과에서 고른 컷만 다시 그려요. 나머지 컷은 그대로 새 결과물로 옮겨요. */
+export async function redrawPanels(formData: FormData) {
+  const owner = await requireOwner();
+  const path = String(formData.get("back"));
+  const panels = formData
+    .getAll("panels")
+    .map((v) => Number(v))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  try {
+    if (panels.length === 0) throw new StudioError("다시 그릴 컷을 하나 이상 골라 주세요");
+    await startStage({
+      seriesId: String(formData.get("seriesId")),
+      episodeId: (formData.get("episodeId") as string) || null,
+      stage: "art",
+      actor: owner.email,
+      instruction: String(formData.get("instruction") ?? "").trim(),
+      panels,
+      baseArtifactId: String(formData.get("artifactId")),
+    });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
 export async function decideArtifact(formData: FormData) {
   const owner = await requireOwner();
   const path = String(formData.get("back"));

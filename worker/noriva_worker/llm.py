@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import dataclass
+from typing import Any
 
 import anthropic
 
@@ -18,6 +21,15 @@ class LLMResult:
     model: str
     usage: dict[str, int]
     cost_usd: float
+
+    def cost_entry(self) -> dict[str, Any]:
+        return {"provider": "anthropic", "model": self.model, "units": self.usage, "cost_usd": self.cost_usd}
+
+
+@dataclass
+class JSONResult:
+    data: dict[str, Any]
+    result: LLMResult
 
 
 class RefusedError(Exception):
@@ -45,17 +57,47 @@ class TextModel:
         self.client = client or anthropic.Anthropic()
 
     def write(self, system: str, task: str) -> LLMResult:
+        return self._call(system, [{"type": "text", "text": task}], None, self.effort, 64000)
+
+    def json(
+        self,
+        system: str,
+        task: str,
+        schema: dict[str, Any],
+        images: list[bytes] | None = None,
+        effort: str | None = None,
+        max_tokens: int = 32000,
+    ) -> JSONResult:
+        """정해진 JSON 모양으로 답을 받아요 (작화 컷 목록, 검사 점수, 말풍선 위치처럼 코드가 읽는 결과)."""
+        content: list[dict[str, Any]] = [
+            {"type": "image", "source": {"type": "base64", "media_type": _media_type(img), "data": base64.standard_b64encode(img).decode()}}
+            for img in images or []
+        ]
+        content.append({"type": "text", "text": task})
+        r = self._call(system, content, schema, effort or self.effort, max_tokens)
+        try:
+            data = json.loads(r.text)
+        except json.JSONDecodeError as e:
+            raise TruncatedError(f"JSON 결과가 잘렸거나 깨졌어요: {e}") from e
+        return JSONResult(data=data, result=r)
+
+    def _call(
+        self, system: str, content: list[dict[str, Any]], schema: dict[str, Any] | None, effort: str, max_tokens: int
+    ) -> LLMResult:
         # 긴 출력(대본, 콘티)이 많아서 스트리밍으로 받고 마지막 메시지만 써요.
         # 정책상 거절되면 서버가 다른 모델로 이어서 처리하도록 fallbacks를 켜 둬요.
+        output_config: dict[str, Any] = {"effort": effort}
+        if schema is not None:
+            output_config["format"] = {"type": "json_schema", "schema": schema}
         with self.client.beta.messages.stream(
             model=self.model,
-            max_tokens=64000,
+            max_tokens=max_tokens,
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
             thinking={"type": "adaptive"},
-            output_config={"effort": self.effort},
+            output_config=output_config,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": task}],
+            messages=[{"role": "user", "content": content}],
         ) as stream:
             msg = stream.get_final_message()
 
@@ -63,6 +105,8 @@ class TextModel:
             raise RefusedError("모델이 이 요청을 거절했어요. 지시나 소재 표현을 바꿔 다시 생성해 주세요.")
         text = "".join(b.text for b in msg.content if b.type == "text").strip()
         if msg.stop_reason == "max_tokens":
+            if schema is not None:
+                raise TruncatedError("결과가 길이 한도에서 잘렸어요. 컷 수를 줄이거나 나눠서 다시 생성해 주세요.")
             text += "\n\n> (출력이 길이 한도에서 잘렸어요. 범위를 나눠 다시 생성해 주세요.)"
         u = msg.usage
         usage = {
@@ -72,3 +116,17 @@ class TextModel:
             "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
         }
         return LLMResult(text=text, model=msg.model, usage=usage, cost_usd=cost_of(self.model, usage))
+
+
+class TruncatedError(Exception):
+    pass
+
+
+def _media_type(data: bytes) -> str:
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"

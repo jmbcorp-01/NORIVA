@@ -37,6 +37,11 @@ export const STAGE_INFO: Record<Stage, { no: string; label: string; agent: strin
   review: { no: "⑨", label: "검수", agent: "reviewer", desc: "고정 채점표, 최종 승인" },
 };
 
+/** 단계마다 함께 읽는 다른 에이전트의 지침 (말풍선은 영어 대사 지침도 따라요) */
+export const EXTRA_GUIDELINE_AGENTS: Partial<Record<Stage, string[]>> = {
+  lettering: ["translator_en"],
+};
+
 /** 각 단계가 입력으로 쓰는 앞 단계 (승인된 결과물이 있어야 시작 가능) */
 export const UPSTREAM: Record<Stage, Stage[]> = {
   concept: [],
