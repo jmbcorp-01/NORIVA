@@ -22,6 +22,7 @@ from .images import FalImage, ImageNotConfiguredError
 from .llm import RefusedError, TextModel, TruncatedError
 from .media import media_from_env
 from .scout import run_scout, run_source_fill
+from .series_meta import run_series_meta
 from .store import Store
 from .visual import ArtSettings, StageInputError
 
@@ -61,6 +62,15 @@ def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
             values, costs = run_source_fill(source, tools.writer)
             filled = store.finish_source_fill(job, source, values, costs)
             log.info("소재 채움 %s: %s", source["name"], ", ".join(filled) or "채울 빈 칸 없음")
+        elif job["type"] == "series_meta":
+            mctx = store.series_meta_context(job)
+            if mctx is None:
+                raise StageInputError("작품을 찾지 못했어요 (지워졌을 수 있어요)")
+            if not mctx["inputs"]:
+                raise StageInputError("승인한 기획안이 없어요. ① 기획안을 먼저 승인해 주세요.")
+            values, costs = run_series_meta(mctx, tools.writer)
+            filled = store.finish_series_meta(job, mctx["series"], values, costs)
+            log.info("연재 설정 채움 %s: %s", job["series_id"], ", ".join(filled) or "채울 빈 칸 없음")
         else:
             ctx = store.context(job)
             body, costs = run_stage(job["type"], ctx, tools)

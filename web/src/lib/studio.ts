@@ -183,6 +183,21 @@ async function afterApproved(a: Artifact, actor: string) {
   for (const next of nextToEnqueue(a.stage as Stage, asLatest(latest))) {
     await startStage({ seriesId: a.seriesId, episodeId: a.episodeId, stage: next, actor });
   }
+  // 인물까지 승인되면 연재 설정(제목, 소개, 뿌리 노트)의 빈 칸을 AI가 기본값으로 채워요
+  if (a.stage === "characters" && !a.episodeId) await autoFillSeriesMeta(a.seriesId);
+}
+
+async function autoFillSeriesMeta(seriesId: string) {
+  const [s] = await db.select().from(series).where(eq(series.id, seriesId));
+  if (!s) return;
+  const missing = s.title === "제목 미정" || !s.title || !s.titleEn || !s.logline || !s.rootNote;
+  if (!missing) return;
+  const { jobs } = schema;
+  const busy = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(eq(jobs.type, "series_meta"), eq(jobs.seriesId, seriesId), inArray(jobs.status, ["queued", "running"])));
+  if (!busy.length) await enqueueJob({ type: "series_meta", seriesId });
 }
 
 export async function approveArtifact(id: string, actor: string, note = "") {

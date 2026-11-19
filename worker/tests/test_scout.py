@@ -168,3 +168,26 @@ def test_source_fill_only_fills_empty_fields(store):
     assert s["summary"] == "대표가 쓴 요약" and s["era"] == "조선" and s["rules"] == ["금기"]
     assert s["category"] == "creature"
     assert store.conn.execute("select status from jobs where id=%s", (job["id"],)).fetchone()["status"] == "done"
+
+
+class FakeMeta:
+    def json(self, system, task, schema, images=None, effort=None, max_tokens=32000):
+        assert "승인된 기획안" in task
+        return JSONResult(data={"title": "소금과 향", "titleEn": "Salt & Incense", "logline": "소개", "loglineEn": "Intro",
+                                "rootNote": "뿌리", "rootNoteEn": "Roots"}, result=R)
+
+
+def test_series_meta_fills_empty_fields_only(store):
+    c = store.conn
+    sid = c.execute(
+        "insert into series (slug, title, genre, brief, root_note) values (%s, '제목 미정', '오컬트·호러', %s, '대표가 쓴 뿌리') returning id",
+        (f"m-{uuid.uuid4().hex[:8]}", Jsonb({"ageRating": "15"})),
+    ).fetchone()["id"]
+    c.execute("insert into artifacts (series_id, stage, status, body) values (%s, 'concept', 'approved', %s)", (sid, Jsonb({"markdown": "# 소금과 향"})))
+    job = c.execute(
+        "insert into jobs (type, series_id, status, attempts) values ('series_meta', %s, 'running', 1) returning *", (sid,)
+    ).fetchone()
+    process(store, job, Tools(writer=FakeMeta()), cfg())
+    s = c.execute("select * from series where id=%s", (sid,)).fetchone()
+    assert s["title"] == "소금과 향" and s["title_en"] == "Salt & Incense" and s["root_note"] == "대표가 쓴 뿌리"
+    assert c.execute("select status from jobs where id=%s", (job["id"],)).fetchone()["status"] == "done"
