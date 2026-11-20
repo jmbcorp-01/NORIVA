@@ -63,6 +63,21 @@ def _clip(v: Any, lo: float = 0.0, hi: float = 100.0) -> float:
         return lo
 
 
+def _load_json(media: Media, key: str) -> Any:
+    try:
+        b = media.get(key)
+        return json.loads(b) if b else None
+    except Exception:
+        return None
+
+
+def _save_json(media: Media, key: str, data: Any) -> None:
+    try:
+        media.put(key, json.dumps(data, ensure_ascii=False).encode(), content_type="application/json")
+    except Exception:  # 저장이 안 돼도 작업은 계속해요 (이어 그리기만 못 할 뿐)
+        pass
+
+
 def _report(ctx: dict[str, Any], step: str, done: int | None = None, total: int | None = None) -> None:
     fn = ctx.get("progress")
     if fn:
@@ -384,7 +399,15 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         if sheets_body.get("kind") == "sheets" and c.get("sheet")
     ]
 
-    if redraw and prev.get("kind") == "art":
+    # 작업이 도중에 끊겨 다시 시작하면(작업기 종료, 일시 오류) 같은 결과물의 컷 목록과 끝난 컷을 이어 써요.
+    _ep = ctx["episode"]["number"] if ctx.get("episode") else 0
+    ck_base = f"series/{ctx['series']['id']}/ep{_ep:03d}/art/{ctx['artifact_id']}/_progress"
+    saved_plan = _load_json(media, f"{ck_base}/plan.json")
+
+    if saved_plan:
+        plan = saved_plan
+        redraw = [int(i) for i in plan.pop("_redraw", [])]
+    elif redraw and prev.get("kind") == "art":
         # 고른 컷만 다시 그려요. 컷 목록과 인물 명세는 이전 결과를 그대로 써요.
         plan = {"style_prompt": prev["style_prompt"], "characters": prev["characters"], "panels": [dict(p) for p in prev["panels"]]}
     else:
@@ -408,6 +431,8 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         plan["panels"] = plan["panels"][: s.max_panels]
         for i, p in enumerate(plan["panels"]):
             p["index"] = i + 1
+    if not saved_plan:
+        _save_json(media, f"{ck_base}/plan.json", {**plan, "_redraw": redraw})
 
     if not plan["panels"]:
         raise StageInputError("콘티에서 컷을 찾지 못했어요. 콘티 결과를 확인해 주세요.")
@@ -583,7 +608,20 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     todo = [p for p in plan["panels"] if not redraw or p["index"] in redraw]
     if payload.get("keep_adopted"):
         todo = []  # 고른 모델의 시험 컷 그림만 옮기고 새로 그리지 않아요
-    results = _map_progress(ctx, s.parallel, draw, todo, "시험 컷 그리는 중" if test_run else "컷 그리는 중")
+
+    def draw_saved(panel: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """끝난 컷은 바로 저장해요. 다시 시작한 작업은 저장된 컷을 그대로 쓰고 남은 컷만 그려요."""
+        key = f"{ck_base}/panel-{panel['index']:03d}.json"
+        done = _load_json(media, key)
+        if done and done.get("out", {}).get("image"):
+            return done["out"], done.get("costs") or []
+        out, local = draw(panel)
+        _save_json(media, key, {"out": out, "costs": local})
+        return out, local
+
+    resumed = sum(1 for p in todo if _load_json(media, f"{ck_base}/panel-{p['index']:03d}.json"))
+    step = "시험 컷 그리는 중" if test_run else "컷 그리는 중"
+    results = _map_progress(ctx, s.parallel, draw_saved, todo, step + (f" (끝난 {resumed}컷 이어서)" if resumed else ""))
     drawn = {p["index"]: p for p, _ in results}
     for _, local in results:
         costs.extend(local)
