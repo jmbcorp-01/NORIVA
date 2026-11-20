@@ -26,6 +26,7 @@ type SheetsBody = {
   model?: string | null;
   redrawn?: string[];
   rule_suggestions?: string[];
+  master_warnings?: { item: string; note: string; characters: string[] }[];
   summary: { characters: number; passed: number };
 };
 
@@ -51,6 +52,7 @@ export function SheetsView({
   canRedraw: boolean;
 }) {
   const pics = body.characters.filter((c) => c.sheet).map((c) => ({ src: mediaUrl(c.sheet!), alt: `${c.name} 인물 시트` }));
+  const failed = body.characters.filter((c) => typeof c.score === "number" && !c.passed);
   return (
     <div>
       {body.rule_suggestions?.length ? <RuleSuggestions rules={body.rule_suggestions} seriesId={seriesId} back={back} /> : null}
@@ -62,6 +64,26 @@ export function SheetsView({
         {body.summary.characters}명 중 {body.summary.passed}명 자동 검사 합격 · {imageModelLabel(body.model)}
         {body.redrawn?.length ? ` · 이번에 다시 그린 인물 ${body.redrawn.join(", ")}` : ""}
       </p>
+      {failed.length ? (
+        <div className="mt-2 rounded-[5px] border border-plum/40 px-3 py-2 text-[12px]">
+          <p className="font-medium text-plum">
+            불합격 {failed.length}명: 승인하면 ⑦ 작화가 이 시트를 모든 회차에서 그대로 따라 그려요. 아래에서 체크해 둔 인물부터 다시 그리기를 권해요.
+          </p>
+          <ul className="mt-1 space-y-0.5 text-ink-soft">
+            {failed.map((c) => (
+              <li key={c.id}>
+                {c.name} {c.score}점 · {(c.defects ?? []).filter((d) => d.severity !== "minor").slice(0, 2).map((d) => d.note).join(" / ") || "기준 점수 미달"}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-ink-faint">다시 그리면 지난 검사에서 걸린 치명·주요 문제를 자동으로 고치라고 넣어요. 지시는 더 바꾸고 싶은 것만 적으면 돼요.</p>
+        </div>
+      ) : null}
+      {body.master_warnings?.length ? (
+        <p className="mt-2 text-[12px] text-plum">
+          화풍 마스터에 금지 소품이 있어서 해당 인물은 마스터 없이 그렸어요: {body.master_warnings.map((w) => `${w.item}${w.characters.length ? ` (${w.characters.join(", ")})` : ""}`).join(" · ")}
+        </p>
+      ) : null}
       <p className="mt-1 text-[12px] text-ink-faint">
         승인하면 ⑦ 작화가 모든 회차에서 이 시트와 외모 명세를 그대로 써요. 칼·옷·머리 모양이 시대에 맞는지, 세 방향이 같은 사람인지 크게 보며 확인하세요.
       </p>
@@ -106,7 +128,7 @@ export function SheetsView({
               ) : null}
               {canRedraw ? (
                 <label className="mt-2 inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 text-[12px]">
-                  <input type="checkbox" name="chars" value={c.id} className="size-4 accent-[var(--color-pine)]" />이 인물 다시 그리기
+                  <input type="checkbox" name="chars" value={c.id} defaultChecked={typeof c.score === "number" && !c.passed} className="size-4 accent-[var(--color-pine)]" />이 인물 다시 그리기
                 </label>
               ) : null}
             </div>
@@ -174,6 +196,11 @@ export function HistoryRefs({ seriesId, refs, back }: { seriesId: string; refs: 
             </form>
           ))}
         </div>
+      ) : null}
+      {!refs.length ? (
+        <p className="mt-2 text-[12px] text-plum">
+          아직 고증 사진이 없어요. 사극·시대물이면 주인공의 무기와 옷 사진을 먼저 올리세요. 사진 없이 글로만 설명하면 그림 모델이 일본도나 기모노처럼 익숙한 모양으로 그리기 쉬워요.
+        </p>
       ) : null}
       {refs.length < 3 ? (
         <form action={updateHistoryRefs} className="mt-3 flex flex-wrap items-center gap-2">

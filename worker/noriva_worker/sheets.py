@@ -79,6 +79,22 @@ score는 0~100. 이 시트를 30화 동안 그대로 써도 될 때만 80 이상
 
 SHEET_PASS = 80
 
+MASTER_SCHEMA = _obj(
+    {"violations": _arr(_obj({"item": _STR, "character_ids": _arr(_STR), "note": _STR}))}
+)
+
+MASTER_TASK = """# 과제: 화풍 마스터의 소품 검사
+
+첨부한 그림은 이 작품의 화풍 마스터다. 인물 시트를 그릴 때 선과 채색의 기준으로 참고 그림에 넣는다.
+그런데 그림 모델은 참고 그림의 칼·옷·머리 모양까지 따라 그린다. 마스터에 아래 인물들의 '그리면 안 되는 것'이나
+시대·나라가 다른 무기·복식(일본도와 코등이, 하카마, 기모노, 변발 등)이 보이면 모두 적어라.
+- item: 보이는 것(한국어), character_ids: 그 소품을 따라 그리면 안 되는 인물 id, note: 어디에 어떻게 보이는지 한 문장.
+- 없으면 빈 목록.
+
+## 인물
+{specs}
+"""
+
 FIX_SCHEMA = _obj(
     {
         "updates": _arr(
@@ -102,6 +118,10 @@ FIX_TASK = """# 과제: ④+ 인물 시트 — 대표 지시를 고정 명세에
 
 ## 대표 지시
 {instruction}
+
+## 지난 검사에서 걸린 문제
+명세가 맞는데 그림이 틀린 문제는 명세를 바꾸지 말고 edit에 고칠 것을 적는다. 명세가 모호해서 생긴 문제는 명세를 구체적으로 고친다.
+{issues}
 
 ## 다시 그릴 인물의 현재 명세
 {specs}
@@ -159,6 +179,20 @@ def _edit_prompt(c: dict[str, Any], edit: str, n_history: int) -> str:
     return " ".join(p for p in parts if p)
 
 
+def _issue_lines(defects: list[dict[str, Any]]) -> str:
+    return "; ".join(f"{d.get('code', '')} {d.get('note', '')}".strip() for d in defects if d.get("severity") in ("critical", "major"))
+
+
+def _issues(chars: list[dict[str, Any]]) -> str:
+    """지난 검사에서 걸린 치명·주요 문제를 인물별로 모아요. 다시 그릴 때 대표가 일일이 적지 않아도 고치게 해요."""
+    out = []
+    for c in chars:
+        lines = [f"  - [{d['severity']}] {d.get('code', '')} {d.get('note', '')}" for d in c.get("defects") or [] if d.get("severity") in ("critical", "major")]
+        if lines:
+            out.append(f"- {c['id']} ({c.get('name', '')}):\n" + "\n".join(lines))
+    return "\n".join(out)
+
+
 def _spec_json(c: dict[str, Any]) -> str:
     keys = ("id", "name", "kind", "appearance", "period_notes", "never")
     return json.dumps({k: c.get(k) for k in keys}, ensure_ascii=False)
@@ -193,11 +227,16 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     if only and prev.get("kind") == "sheets":
         chars = [dict(c) for c in prev["characters"]]
         targets = [c for c in chars if c["id"] in only]
-        if instruction and targets:
-            _report(ctx, "대표 지시를 인물 명세에 반영하는 중")
+        issues = _issues(targets)
+        if (instruction or issues) and targets:
+            _report(ctx, "지시와 지난 검사 결과를 인물 명세에 반영하는 중")
             r = llm.json(
                 system,
-                FIX_TASK.format(instruction=instruction, specs="\n".join(_spec_json(c) for c in targets)),
+                FIX_TASK.format(
+                    instruction=instruction or "(없음)",
+                    issues=issues or "(없음)",
+                    specs="\n".join(_spec_json(c) for c in targets),
+                ),
                 FIX_SCHEMA,
                 effort="medium",
                 max_tokens=8000,
@@ -233,6 +272,27 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             c["id"] = cid
 
     out_base = f"series/{ctx['series']['id']}/sheets/{ctx['artifact_id']}"
+    todo = [c for c in chars if not only or c["id"] in only]
+
+    # 2. 화풍 마스터에 금지 소품(일본도 등)이 있으면, 그 소품을 따라 그리면 안 되는 인물은 마스터를 참고 그림에서 빼요
+    master_warnings: list[dict[str, Any]] = []
+    no_master: set[str] = set()
+    if masters and any(c.get("never") for c in todo):
+        _report(ctx, "화풍 마스터의 소품 검사 중")
+        r = llm.json(
+            system,
+            MASTER_TASK.format(specs="\n".join(_spec_json(c) for c in todo)),
+            MASTER_SCHEMA,
+            images=[thumbnail(m, 1024) for m in masters],
+            effort="medium",
+            max_tokens=4000,
+        )
+        costs.add(r.result.cost_entry())
+        ids = {c["id"] for c in todo}
+        for v in r.data.get("violations") or []:
+            hit = [_slug(x) for x in v.get("character_ids") or [] if _slug(x) in ids]
+            master_warnings.append({"item": v.get("item", ""), "note": v.get("note", ""), "characters": hit})
+            no_master.update(hit)
     master_note = (
         f"두 번째부터 {len(masters)}장은 고른 화풍 마스터다. 선과 채색이 이 화풍과 같은지도 본다."
         if masters
@@ -269,7 +329,8 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     def draw(c: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
         note = instruction if only else ""
-        prompt = _sheet_prompt(base, style, c, len(masters), len(history), note)
+        refs = history if c["id"] in no_master else masters + history
+        n_masters = 0 if c["id"] in no_master else len(masters)
         tries: list[dict[str, Any]] = []
         # 대표가 고칠 곳을 지시했으면 첫 번째는 이전 시트를 그대로 두고 그 부분만 고쳐요. 두 번째는 새 명세로 새로 그려요.
         old = media.get(c["sheet"]) if edits.get(c["id"]) and c.get("sheet") else None
@@ -278,7 +339,12 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             if k == 0 and old:
                 img = images.generate(_edit_prompt(c, edits[c["id"]], len(history)), seed=seed, aspect_ratio="4:3", references=[old, *history], model=model)
             else:
-                img = images.generate(prompt, seed=seed, aspect_ratio="4:3", references=(masters + history) or None, model=model)
+                # 앞 시도에서 걸린 치명·주요 문제를 이번 그림 지시에 넣어요
+                fix = _issue_lines(tries[-1]["defects"]) if tries else ""
+                prompt = _sheet_prompt(base, style, c, n_masters, len(history), note)
+                if fix:
+                    prompt += f" Fix these problems found in the previous attempt: {fix}"
+                img = images.generate(prompt, seed=seed, aspect_ratio="4:3", references=refs or None, model=model)
             local.append(img.cost_entry())
             data = trim_border(img.data)
             key = media.put(f"{out_base}/{c['id']}-{k + 1}.png", data)
@@ -295,7 +361,6 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             "candidates": [{"image": t["image"], "score": t["score"]} for t in tries],
         }, local
 
-    todo = [c for c in chars if not only or c["id"] in only]
     results = _map_progress(ctx, 4, draw, todo, "인물 시트 그리는 중")
     drawn = {c["id"]: c for c, _ in results}
     for _, local in results:
@@ -322,6 +387,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         "model": model,
         "redrawn": [c["id"] for c in todo] if only else [],
         "rule_suggestions": rule_suggestions,
+        "master_warnings": master_warnings,
         "summary": {"characters": len(final), "passed": sum(1 for c in final if c.get("passed"))},
     }
     return body, list(costs)
