@@ -88,6 +88,8 @@ export async function startStage(opts: {
   /** 작화에서 고른 컷만 다시 그릴 때: 컷 번호와 바탕이 되는 작화 결과물 */
   panels?: number[];
   baseArtifactId?: string;
+  /** 작업에 함께 넘길 값 (작화: 비교할 모델, 고른 모델) */
+  extra?: Record<string, unknown>;
 }): Promise<string> {
   const { seriesId, stage, actor } = opts;
   const episodeId = isSeriesStage(stage) ? null : opts.episodeId;
@@ -136,6 +138,7 @@ export async function startStage(opts: {
     payload: {
       instruction: opts.instruction ?? "",
       ...(opts.panels?.length ? { panels: opts.panels, base_artifact_id: opts.baseArtifactId } : {}),
+      ...(opts.extra ?? {}),
     },
   });
 
@@ -204,6 +207,10 @@ export async function approveArtifact(id: string, actor: string, note = "") {
   const a = await getArtifact(id);
   if (!canApprove({ id: a.id, stage: a.stage as Stage, status: a.status })) {
     throw new StudioError("검토 대기 중인 결과물만 승인할 수 있어요");
+  }
+  const pending = (a.body as { kind?: string; pending?: number[] }).pending;
+  if (a.stage === "art" && pending?.length) {
+    throw new StudioError(`아직 그리지 않은 컷이 ${pending.length}개 있어요. '나머지 그리기'를 먼저 눌러 주세요`);
   }
   await db.update(artifacts).set({ status: "approved", updatedAt: new Date() }).where(eq(artifacts.id, id));
   await db.insert(decisionLedger).values({ artifactId: id, seriesId: a.seriesId, actor, action: "approve", note });

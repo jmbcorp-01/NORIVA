@@ -113,6 +113,8 @@ export type SeriesBrief = {
   ageRating: "all" | "12" | "15" | "18";
   audience: string;
   memo: string;
+  /** 작화에 쓸 그림 모델 (모델 비교 시험에서 대표가 고름). 없으면 작업 서버 기본값 */
+  imageModel?: string;
 };
 
 export const series = pgTable("series", {

@@ -216,3 +216,11 @@ export const STATE_LABEL: Record<StageState, string> = {
   rejected: "반려",
   failed: "실패",
 };
+
+/** 작화 모델 비교 시험에 쓰는 그림 모델. 작업 서버 images.IMAGE_MODELS와 같아야 해요. 가격은 어림값이에요. */
+export const IMAGE_MODELS = [
+  { id: "fal-ai/nano-banana", label: "Nano Banana (기본)", price: 0.04 },
+  { id: "fal-ai/nano-banana-pro", label: "Nano Banana Pro", price: 0.15 },
+  { id: "fal-ai/bytedance/seedream/v4", label: "Seedream 4", price: 0.03 },
+] as const;
+export const imageModelLabel = (id?: string | null) => IMAGE_MODELS.find((m) => m.id === id)?.label ?? "기본 모델";

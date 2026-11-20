@@ -23,11 +23,54 @@ class ImageResult:
 
 
 class ImageGen(Protocol):
-    def generate(self, prompt: str, seed: int | None = None, references: list[bytes] | None = None, aspect_ratio: str = "3:4") -> ImageResult: ...
+    def generate(
+        self,
+        prompt: str,
+        seed: int | None = None,
+        references: list[bytes] | None = None,
+        aspect_ratio: str = "3:4",
+        model: str | None = None,
+    ) -> ImageResult: ...
 
 
 class ImageNotConfiguredError(Exception):
     """FAL_KEY가 없어서 그림을 그릴 수 없어요."""
+
+
+# 비교 시험에 쓰는 그림 모델. 가격은 fal 안내 기준 어림값이에요 (실제 청구는 fal 대시보드).
+IMAGE_MODELS: dict[str, float] = {
+    "fal-ai/nano-banana": 0.04,
+    "fal-ai/nano-banana-pro": 0.15,
+    "fal-ai/bytedance/seedream/v4": 0.03,
+}
+
+# Seedream은 비율 대신 크기 이름을 받아요
+_SEEDREAM_SIZE = {"3:4": "portrait_4_3", "9:16": "portrait_16_9", "4:3": "landscape_4_3", "16:9": "landscape_16_9", "1:1": "square_hd"}
+
+
+def request_for(model: str, prompt: str, aspect_ratio: str, references: list[bytes] | None) -> tuple[str, dict]:
+    """모델마다 다른 호출 주소와 입력 이름을 맞춰요."""
+    urls = ["data:image/png;base64," + base64.b64encode(ref).decode() for ref in references or []]
+    body: dict = {"prompt": prompt, "num_images": 1, "sync_mode": True}
+    if "seedream" in model:
+        body["image_size"] = _SEEDREAM_SIZE.get(aspect_ratio, "portrait_4_3")
+        if urls:
+            body["image_urls"] = urls
+        return model + ("/edit" if urls else "/text-to-image"), body
+    body["aspect_ratio"] = aspect_ratio
+    if model.endswith("-pro"):
+        body["resolution"] = "1K"
+    if urls:
+        body["image_urls"] = urls
+        return model + "/edit", body
+    return model, body
+
+
+def price_for(endpoint: str, default_model: str, default_price: float) -> float:
+    base = endpoint.removesuffix("/edit").removesuffix("/text-to-image")
+    if base == default_model:
+        return default_price
+    return IMAGE_MODELS.get(base, default_price)
 
 
 class FalImage:
@@ -54,12 +97,15 @@ class FalImage:
         r.raise_for_status()
         return r
 
-    def generate(self, prompt: str, seed: int | None = None, references: list[bytes] | None = None, aspect_ratio: str = "3:4") -> ImageResult:
-        body: dict = {"prompt": prompt, "num_images": 1, "sync_mode": True, "aspect_ratio": aspect_ratio}
-        model = self.model
-        if references:
-            model += "/edit"
-            body["image_urls"] = ["data:image/png;base64," + base64.b64encode(ref).decode() for ref in references]
+    def generate(
+        self,
+        prompt: str,
+        seed: int | None = None,
+        references: list[bytes] | None = None,
+        aspect_ratio: str = "3:4",
+        model: str | None = None,
+    ) -> ImageResult:
+        model, body = request_for(model or self.model, prompt, aspect_ratio, references)
         if seed is not None:
             body["seed"] = seed
         r = self._post(f"https://fal.run/{model}", body)
@@ -70,7 +116,7 @@ class FalImage:
             img = self.http.get(url)
             img.raise_for_status()
             data = img.content
-        return ImageResult(data=to_png(data), model=model, cost_usd=self.price_each)
+        return ImageResult(data=to_png(data), model=model, cost_usd=price_for(model, self.model, self.price_each))
 
 
 def to_png(data: bytes) -> bytes:

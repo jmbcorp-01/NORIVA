@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .images import ImageGen, thumbnail, trim_border
+from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
 from .llm import JSONResult
 from .media import Media
 from .prompts import render_guidelines
@@ -32,6 +32,7 @@ class ArtSettings:
     max_panels: int = 80  # 02번 S-16: 한 화 50~70컷, 1화·시즌 마지막 화는 80컷까지
     parallel: int = 4
     check_effort: str = "medium"
+    test_panels: int = 5  # 처음 작화는 대표 장면 몇 컷만 그려 승인받아요. 0이면 끝까지 그려요.
 
 
 class StageInputError(Exception):
@@ -134,8 +135,8 @@ CHECK_SCHEMA = _obj(
 CHECK_TASK = """# 과제: 컷 그림 자동 결함 검사
 
 첨부한 그림 한 장을 이 컷의 지시와 지침의 AI-01~AI-14, 한국 고증 규칙으로 검사하라.
-- 치명(critical): 글자·가짜 글자·워터마크, 인물 수가 틀림, 손·얼굴 해부학 붕괴, 일본·중국식 요소(도리이 등), 기존 작품과 닮음.
-- 주요(major): 인물 외모가 명세와 다름, 화풍 이탈, AI 특유의 매끈한 광택·과한 보케·무의미한 배경 디테일.
+- 치명(critical): 글자·가짜 글자·한자·워터마크(간판과 부적의 글자 포함), 그림 안에 그린 컷 테두리·여백·한 장에 여러 컷(만화책 페이지처럼 보임), 인물 수가 틀림, 손·얼굴 해부학 붕괴, 일본·중국식 요소(도리이, 일본도, 기모노 등), 기존 작품과 닮음.
+- 주요(major): 한국 웹툰 디지털 셀 채색이 아닌 화풍(수채화, 종이 질감, 잉크 해칭, 서양 그래픽노블, 그림책, 실사), 인물 외모가 명세와 다름, 다른 컷과 등신·화풍이 다름, AI 특유의 매끈한 광택·과한 보케·무의미한 배경 디테일.
 - 경미(minor): 그 밖에 고치면 좋은 것.
 score는 0~100, 그대로 연재할 수 있을 때만 80 이상. 결함마다 code에 지침 규칙 코드(예: AI-03, R-5)를 적어라.
 
@@ -150,9 +151,41 @@ score는 0~100, 그대로 연재할 수 있을 때만 80 이상. 결함마다 co
 """
 
 
+# 플랫폼 공통 화풍 바탕: 작품 화풍 카드보다 앞에 붙여 "웹툰 디지털 채색"에서 벗어나지 않게 해요.
+WEBTOON_BASE = (
+    "Korean webtoon (manhwa) digital illustration for vertical-scroll smartphone reading: clean confident digital lineart, "
+    "flat cel shading with one or two shadow tones and crisp highlights, saturated digital colors, simplified painted backgrounds. "
+    "Not watercolor, not paper or canvas texture, not ink hatching, not a western comic or picture-book style, not a photo or 3D render."
+)
+
+# 콘티의 컷 높이 → 그림 비율. 웹툰은 가로로 넓은 컷과 세로로 긴 컷이 섞여야 리듬이 생겨요.
+ASPECT = {"short": "4:3", "normal": "3:4", "long": "9:16"}
+
+
+def choose_test_panels(panels: list[dict[str, Any]], n: int) -> list[int]:
+    """시험 컷: 첫 컷과 마지막 컷, 그리고 인물이 나오는 컷을 고르게 섞어 n개."""
+    if n <= 0 or len(panels) <= n:
+        return [p["index"] for p in panels]
+    if n == 1:
+        return [panels[0]["index"]]
+    picked = [panels[0]["index"], panels[-1]["index"]]
+    if n == 2:
+        return picked
+    people = [p for p in panels[1:-1] if p.get("character_ids")] or panels[1:-1]
+    need = n - 2
+    step = len(people) / need
+    for k in range(need):
+        idx = people[int(k * step + step / 2)]["index"]
+        if idx not in picked:
+            picked.append(idx)
+    return sorted(picked)
+
+
 def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]], with_refs: bool, extra: str) -> str:
     parts = [
-        f"One single vertical webtoon panel, {panel['shot']} shot, full-bleed artwork filling the whole frame edge to edge, no borders.",
+        WEBTOON_BASE,
+        f"One single webtoon panel, {panel['shot']} shot, one continuous image filling the whole frame edge to edge."
+        " Not a comic page: no panel borders, no frames, no gutters, no split panels, no paper margins.",
         panel["description"],
         ("Characters: " + " | ".join(f"{c['name']}: {c['appearance']}" for c in cast)) if cast else "",
         (
@@ -173,9 +206,21 @@ def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]],
 
 
 def _sheet_key(series_id: str, char: dict[str, Any], style: str) -> str:
-    h = hashlib.sha256(f"{char['appearance']}|{style}".encode()).hexdigest()[:10]
+    h = hashlib.sha256(f"v2|{char['appearance']}|{style}".encode()).hexdigest()[:10]
     slug = re.sub(r"[^a-z0-9_-]", "", char["id"].lower()) or "c"
     return f"series/{series_id}/refs/{slug}-{h}.png"
+
+
+def _valid_model(m: Any) -> str | None:
+    return m if isinstance(m, str) and m in IMAGE_MODELS else None
+
+
+def _model_slug(m: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", m.lower()).strip("-")[-40:]
+
+
+def images_default_model(images: Any) -> str | None:
+    return getattr(images, "model", None)
 
 
 def _rank(c: dict[str, Any], pass_score: int) -> tuple[int, int]:
@@ -211,6 +256,27 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     if not plan["panels"]:
         raise StageInputError("콘티에서 컷을 찾지 못했어요. 콘티 결과를 확인해 주세요.")
 
+    # 그림 모델: 이번 작업에서 고른 것 > 작품에 정해 둔 것 > 기본값
+    brief = (ctx.get("series") or {}).get("brief") or {}
+    model = _valid_model(payload.get("model")) or _valid_model(payload.get("adopt_model")) or _valid_model(brief.get("imageModel"))
+    compare = [m for m in (payload.get("compare_models") or []) if _valid_model(m)]
+
+    # 비교 시험에서 고른 모델의 그림을 그 컷의 결과로 삼아요
+    adopt = _valid_model(payload.get("adopt_model"))
+    if adopt:
+        for p in plan["panels"]:
+            v = next((v for v in p.get("variants") or [] if v["model"] == adopt), None)
+            if v:
+                p.update({"image": v["image"], "score": v["score"], "defects": v["defects"], "passed": v["passed"]})
+            p.pop("variants", None)
+
+    # 처음 작화는 시험 컷만 그려요. 대표가 보고 '나머지 그리기'를 누르면 나머지를 그려요.
+    if not redraw and s.test_panels > 0 and not payload.get("full"):
+        redraw = choose_test_panels(plan["panels"], s.test_panels)
+        test_run = True
+    else:
+        test_run = False
+
     style = plan["style_prompt"]
     chars = {c["id"]: dict(c) for c in plan["characters"]}
 
@@ -220,10 +286,12 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         key = _sheet_key(ctx["series"]["id"], c, style)
         if media.get(key) is None:
             img = images.generate(
-                f"Character design sheet for a Korean webtoon. {c['name']}: {c['appearance']}. Front view and three-quarter view side by side, "
-                f"full body, neutral expression, plain light gray background. Style: {style}. No text, labels or watermark.",
+                f"{WEBTOON_BASE} Character turnaround sheet for a Korean webtoon. {c['name']}: {c['appearance']}. "
+                "Front view, side view and back view side by side, full body, plus three head close-ups (neutral, angry, smiling). "
+                f"Pure flat white background with no texture. Style: {style}. No text, labels or watermark.",
                 seed=1,
                 aspect_ratio="4:3",
+                model=model,
             )
             costs.add(img.cost_entry())
             media.put(key, trim_border(img.data))
@@ -233,42 +301,69 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     ep = ctx["episode"]["number"] if ctx.get("episode") else 0
     base = f"series/{ctx['series']['id']}/ep{ep:03d}/art/{artifact_id}"
 
+    def check(panel: dict[str, Any], cast: list[dict[str, Any]], data: bytes, local: list[dict[str, Any]]) -> dict[str, Any]:
+        r = llm.json(
+            system,
+            CHECK_TASK.format(
+                panel=json.dumps({k2: panel[k2] for k2 in ("shot", "description", "character_ids", "avoid")}, ensure_ascii=False),
+                cast=json.dumps([{"id": c["id"], "appearance": c["appearance"]} for c in cast], ensure_ascii=False) or "(없음)",
+                style=style,
+            ),
+            CHECK_SCHEMA,
+            images=[thumbnail(data)],
+            effort=s.check_effort,
+            max_tokens=8000,
+        )
+        local.append(r.result.cost_entry())
+        d = r.data
+        if cast and d.get("people_count", len(cast)) < len(cast):
+            d["defects"].append({"code": "AI-07", "severity": "major", "note": f"인물 수 {d['people_count']}명 (지시: {len(cast)}명)"})
+        return {"score": max(0, min(100, int(d["score"]))), "defects": d["defects"]}
+
     def draw(panel: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
         cast = [chars[cid] for cid in panel["character_ids"] if cid in chars]
         refs = [media.get(c["sheet"]) for c in cast] if 0 < len(cast) <= 3 else []
         if any(r is None for r in refs):
             refs = []
-        prompt = _panel_prompt(style, panel, cast, bool(refs), instruction if redraw else "")
+        prompt = _panel_prompt(style, panel, cast, bool(refs), instruction if redraw and not test_run else "")
+        aspect = ASPECT.get(panel.get("height") or "normal", "3:4")
+        seed0 = panel["index"] * 100 + 10 * (ctx.get("attempt") or 1)
+
+        if compare:
+            # 모델 비교: 같은 지시로 모델마다 한 장씩 그려 나란히 보여줘요
+            variants = []
+            for m in compare:
+                try:
+                    img = images.generate(prompt, seed=seed0, references=refs or None, aspect_ratio=aspect, model=m)
+                except Exception as e:  # 한 모델이 실패해도 나머지 비교는 계속해요
+                    variants.append({"model": m, "error": str(e)[:300]})
+                    continue
+                local.append(img.cost_entry())
+                key = media.put(f"{base}/{panel['index']:03d}-{_model_slug(m)}.png", trim_border(img.data))
+                c = check(panel, cast, trim_border(img.data), local)
+                variants.append({"model": m, "image": key, **c, "passed": bool(_rank(c, s.pass_score)[0])})
+            ok = [v for v in variants if "image" in v]
+            best = ok[0] if ok else {"image": None, "score": 0, "defects": [], "passed": False}
+            out = {**panel, "prompt": prompt, "aspect": aspect, "image": best["image"], "score": best["score"],
+                   "defects": best["defects"], "passed": best["passed"], "variants": variants, "drawn_in": artifact_id}
+            return out, local
+
         cands: list[dict[str, Any]] = []
         for k in range(s.candidates):
-            img = images.generate(prompt, seed=panel["index"] * 100 + k + 10 * (ctx.get("attempt") or 1), references=refs or None)
+            img = images.generate(prompt, seed=seed0 + k, references=refs or None, aspect_ratio=aspect, model=model)
             local.append(img.cost_entry())
             data = trim_border(img.data)
             key = media.put(f"{base}/{panel['index']:03d}-{k + 1}.png", data)
-            check = llm.json(
-                system,
-                CHECK_TASK.format(
-                    panel=json.dumps({k2: panel[k2] for k2 in ("shot", "description", "character_ids", "avoid")}, ensure_ascii=False),
-                    cast=json.dumps([{"id": c["id"], "appearance": c["appearance"]} for c in cast], ensure_ascii=False) or "(없음)",
-                    style=style,
-                ),
-                CHECK_SCHEMA,
-                images=[thumbnail(data)],
-                effort=s.check_effort,
-                max_tokens=8000,
-            )
-            local.append(check.result.cost_entry())
-            d = check.data
-            if cast and d.get("people_count", len(cast)) < len(cast):
-                d["defects"].append({"code": "AI-07", "severity": "major", "note": f"인물 수 {d['people_count']}명 (지시: {len(cast)}명)"})
-            cands.append({"image": key, "score": max(0, min(100, int(d["score"]))), "defects": d["defects"]})
+            cands.append({"image": key, **check(panel, cast, data, local)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break  # 합격 후보가 나오면 더 그리지 않아요
         best = max(cands, key=lambda c: _rank(c, s.pass_score))
         out = {
             **panel,
             "prompt": prompt,
+            "aspect": aspect,
+            "model": model or images_default_model(images),
             "image": best["image"],
             "score": best["score"],
             "defects": best["defects"],
@@ -276,27 +371,36 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             "candidates": [{"image": c["image"], "score": c["score"]} for c in cands],
             "drawn_in": artifact_id,
         }
+        out.pop("variants", None)
         return out, local
 
     todo = [p for p in plan["panels"] if not redraw or p["index"] in redraw]
-    results = _map_progress(ctx, s.parallel, draw, todo, "컷 그리는 중")
+    if payload.get("keep_adopted"):
+        todo = []  # 고른 모델의 시험 컷 그림만 옮기고 새로 그리지 않아요
+    results = _map_progress(ctx, s.parallel, draw, todo, "시험 컷 그리는 중" if test_run else "컷 그리는 중")
     drawn = {p["index"]: p for p, _ in results}
     for _, local in results:
         costs.extend(local)
 
     panels = [drawn.get(p["index"], p) for p in plan["panels"]]
-    flagged = [p["index"] for p in panels if not p.get("passed")]
-    scores = [p["score"] for p in panels if "score" in p]
+    pending = [p["index"] for p in panels if not p.get("image")]
+    flagged = [p["index"] for p in panels if p.get("image") and not p.get("passed")]
+    scores = [p["score"] for p in panels if p.get("image") and "score" in p]
     body = {
         "kind": "art",
         "style_prompt": style,
         "characters": list(chars.values()),
         "panels": panels,
         "flagged": flagged,
-        "redrawn": redraw,
+        "redrawn": [] if test_run or payload.get("keep_adopted") else redraw,
+        "pending": pending,
+        "test_panels": redraw if test_run else (prev.get("test_panels") or []),
+        "model": model,
+        "compare_models": compare,
         "summary": {
             "panels": len(panels),
-            "passed": len(panels) - len(flagged),
+            "drawn": len(panels) - len(pending),
+            "passed": len(panels) - len(pending) - len(flagged),
             "average_score": round(sum(scores) / len(scores), 1) if scores else 0,
         },
     }

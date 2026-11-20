@@ -45,6 +45,7 @@ def tools_from_config(cfg: Config) -> Tools:
             pass_score=cfg.art_pass_score,
             max_panels=cfg.art_max_panels,
             parallel=cfg.art_parallel,
+            test_panels=cfg.art_test_panels,
         ),
     )
 
