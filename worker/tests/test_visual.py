@@ -48,7 +48,12 @@ class FakeModel:
         from noriva_worker.llm import ResearchResult
 
         self.calls.append((["research"], task, 0))
-        return ResearchResult(text="조사", links=[{"title": "공식", "url": "https://comic.example/1"}], searches=2, results=[_r()])
+        return ResearchResult(
+            text="조사. 공식 주소 https://comic.naver.com/webtoon/list?titleId=7",
+            links=[{"title": "공식", "url": "https://comic.example/1"}, {"title": "링크 없음 리뷰", "url": "https://review.example/9"}],
+            searches=2,
+            results=[_r()],
+        )
 
     def json(self, system, task, schema, images=None, effort=None, max_tokens=32000):
         props = schema["properties"]
@@ -73,6 +78,7 @@ class FakeModel:
             data = {"works": [
                 {"title": "참고작", "platform": "네이버웹툰", "author": "작가", "url": "https://comic.example/1", "why": "시대극", "traits": traits},
                 {"title": "링크없음", "platform": "카카오", "author": "", "url": "https://made.up/x", "why": "", "traits": traits},
+                {"title": "공식작", "platform": "네이버웹툰", "author": "", "url": "https://comic.naver.com/webtoon/list?titleId=99", "why": "", "traits": traits},
             ]}
         elif "shading_steps" in props:
             data = {"line": "굵은 외곽선", "coloring": "셀", "shading_steps": 2, "palette": "고채도", "proportions": "8등신",
@@ -304,7 +310,7 @@ def test_style_scout_suggestions_feed_style_without_names(store, tmp_path, monke
     import noriva_worker.style_scout as ss
 
     fetched = []
-    monkeypatch.setattr(ss, "fetch_cover", lambda url: fetched.append(url) or png())
+    monkeypatch.setattr(ss, "fetch_cover", lambda url: fetched.append(url) or (None if "comic.example" in url else png()))
     c = store.conn
     sid, _ = _series(c)
     model, images = FakeModel(), FakeImages()
@@ -316,19 +322,23 @@ def test_style_scout_suggestions_feed_style_without_names(store, tmp_path, monke
     assert c.execute("select status from jobs where id=%s", (jid,)).fetchone()["status"] == "done"
     brief = c.execute("select brief from series where id=%s", (sid,)).fetchone()["brief"]
     works = brief["styleSuggestions"]["works"]
-    assert [w["title"] for w in works] == ["참고작", "링크없음"] and works[1]["url"] == ""  # 인용 안 된 주소는 버려요
+    assert [w["title"] for w in works] == ["참고작", "링크없음", "공식작"]
+    assert works[1]["url"] == ""  # 인용 안 된 지어낸 주소는 버려요
+    assert works[2]["url"].startswith("https://comic.naver.com/")  # 공식 플랫폼 주소는 인용 없어도 받아요
     assert "styleChoice" not in brief  # 새로 찾으면 전에 고른 건 풀어요
     # 링크가 있는 작품은 공식 대표 이미지를 보고 다시 재요 (글로 추정한 값 대신)
-    assert fetched == ["https://comic.example/1"] and works[0]["measured"] and not works[1]["measured"]
-    assert works[0]["traits"]["shading_steps"] == 2 and works[1]["traits"]["shading_steps"] == 3
+    # 작품 주소에서 못 받으면 그 작품을 다룬 인용 링크의 대표 이미지로 재요
+    assert fetched == ["https://comic.example/1", "https://review.example/9", "https://comic.naver.com/webtoon/list?titleId=99"]
+    assert not works[0]["measured"] and works[1]["measured"] and works[2]["measured"]
+    assert works[0]["traits"]["shading_steps"] == 3 and works[1]["traits"]["shading_steps"] == 2
 
-    c.execute("update series set brief = brief || %s where id = %s", (Jsonb({"styleChoice": [0]}), sid))
+    c.execute("update series set brief = brief || %s where id = %s", (Jsonb({"styleChoice": [1]}), sid))
     model.calls.clear()
     _, style = _run(store, tools, sid, None, "style", [concept])
     plan = next(call for call in model.calls if "candidates" in call[0])
-    assert "참고 화풍 A" in plan[1] and "집중선" in plan[1] and "참고작" not in plan[1]  # 특징만, 이름은 빼고
-    assert style["picked"] == ["참고작 (네이버웹툰)"] and "참고작" not in style["markdown"]
-    assert all("참고작" not in p for p, _ in images.prompts)
+    assert "참고 화풍 A" in plan[1] and "집중선" in plan[1] and "링크없음" not in plan[1]  # 특징만, 이름은 빼고
+    assert style["picked"] == ["링크없음 (카카오)"] and "링크없음" not in style["markdown"]
+    assert all("링크없음" not in p for p, _ in images.prompts)
 
 
 # ── 시험 컷, 모델 요청 모양 (DB 없이) ──
