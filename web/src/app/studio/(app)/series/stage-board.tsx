@@ -9,7 +9,7 @@ import { decideArtifact, runStage } from "../../actions";
 import { and, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views";
-import { isStyleBody, StyleRefs, StyleScout, StyleView } from "./style-view";
+import { ImageModelPicker, isStyleBody, StyleRefs, StyleScout, StyleView } from "./style-view";
 
 type Props = {
   stages: Stage[];
@@ -84,6 +84,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                         error={scoutJob?.status === "failed" ? (scoutJob.error ?? "찾기에 실패했어요") : null}
                       />
                       <StyleRefs seriesId={seriesId} refs={styleRefs} back={back} />
+                      <ImageModelPicker seriesId={seriesId} back={back} current={brief?.imageModel} />
                     </>
                   ) : null}
                   {state === "locked" ? (

@@ -408,6 +408,27 @@ export async function updateStyleRefs(formData: FormData) {
   redirect(path);
 }
 
+/** 작품의 그림 모델을 정해요. ④ 화풍 샘플과 ⑦ 작화가 이 모델로 그려요. 빈 값이면 작업 서버 기본 모델. */
+export async function setImageModel(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back"));
+  const seriesId = String(formData.get("seriesId"));
+  try {
+    const model = String(formData.get("model") ?? "");
+    if (model && !IMAGE_MODELS.some((m) => m.id === model)) throw new StudioError("알 수 없는 그림 모델이에요");
+    const [s] = await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId));
+    if (!s) throw new StudioError("작품을 찾을 수 없어요");
+    const brief = { ...s.brief };
+    if (model) brief.imageModel = model;
+    else delete brief.imageModel;
+    await db.update(schema.series).set({ brief }).where(eq(schema.series.id, seriesId));
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
 /** ④ 화풍: 승인한 ①~③에 맞는 시장 웹툰을 AI가 웹에서 찾아 화풍 특징을 정리해요. */
 export async function findStyleWorks(formData: FormData) {
   await requireOwner();

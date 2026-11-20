@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui";
-import { imageModelLabel } from "@/lib/pipeline";
+import { IMAGE_MODELS, imageModelLabel } from "@/lib/pipeline";
 import type { StyleWork } from "@/db/schema";
-import { approveStyle, findStyleWorks, setStyleChoice, updateStyleRefs } from "../../actions";
+import { approveStyle, findStyleWorks, setImageModel, setStyleChoice, updateStyleRefs } from "../../actions";
 import { mediaUrl } from "./panel-views";
 
 type StyleBody = {
@@ -194,6 +194,31 @@ export function StyleScout({
         </form>
       ) : null}
     </div>
+  );
+}
+
+/** ④ 화풍 샘플과 ⑦ 작화에 쓸 그림 모델 고르기 */
+export function ImageModelPicker({ seriesId, back, current }: { seriesId: string; back: string; current?: string }) {
+  return (
+    <form action={setImageModel} className="mb-4 flex flex-wrap items-center gap-2 rounded-[5px] border border-line px-4 py-3 text-[13px]">
+      <input type="hidden" name="back" value={back} />
+      <input type="hidden" name="seriesId" value={seriesId} />
+      <label htmlFor="image-model" className="font-medium">
+        그림 모델
+      </label>
+      <select id="image-model" name="model" defaultValue={current ?? ""} className="rounded-[4px] border border-line-strong bg-paper px-2 py-1 text-[13px]">
+        <option value="">기본 모델 (Nano Banana)</option>
+        {IMAGE_MODELS.filter((m) => m.id !== "fal-ai/nano-banana").map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label} (장당 약 ${m.price})
+          </option>
+        ))}
+      </select>
+      <Button type="submit">저장</Button>
+      <span className="w-full text-[12px] text-ink-soft">
+        지금 {imageModelLabel(current)}. ④ 샘플 9장과 ⑦ 작화가 이 모델로 그려요. Nano Banana Pro는 지시를 가장 잘 따르고, Seedream 4는 아시아 만화체에 강하고 저렴해요.
+      </span>
+    </form>
   );
 }
 
