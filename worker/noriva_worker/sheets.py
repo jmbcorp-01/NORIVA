@@ -20,7 +20,7 @@ import threading
 from typing import Any
 
 from . import commons
-from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
+from .images import IMAGE_MODELS, ImageGen, NoImageError, thumbnail, trim_border
 from .media import Media
 from .prompts import PERIOD_JUDGE_NOTE, render_guidelines, render_task
 from .research import research_text
@@ -680,16 +680,33 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         def draw_variants(p: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             local: list[dict[str, Any]] = []
             refs = [thumbnail(h, 1024) for h in photos_for.get(p["id"], [])[:2]]
-            prompt = _prop_prompt(base, style, p, len(refs))
-            if instruction and redo_parts:
-                prompt += f" Director's note: {instruction}"
+            note = f" Director's note: {instruction}" if instruction and redo_parts else ""
+            prompt = _prop_prompt(base, style, p, len(refs)) + note
+            plain = _prop_prompt(base, style, p, 0) + note  # 실물 사진 없이 그릴 때
             variants = []
+            failed = 0
             for k in range(PART_VARIANTS):
-                img = images.generate(prompt, seed=11 + k + 100 * (ctx.get("attempt") or 1), aspect_ratio="4:3",
-                                      references=refs or None, model=PART_MODEL)
+                seed = 11 + k + 100 * (ctx.get("attempt") or 1)
+                try:
+                    img = images.generate(prompt, seed=seed, aspect_ratio="4:3", references=refs or None, model=PART_MODEL)
+                except NoImageError:
+                    # 실물 사진 때문에 안전 필터에 걸리는 일이 있어요. 사진 없이 한 번 더 그려 보고, 그래도 안 되면 이 후보만 빼요.
+                    try:
+                        img = images.generate(plain, seed=seed + 50, aspect_ratio="4:3", model=PART_MODEL) if refs else None
+                    except NoImageError:
+                        img = None
+                    if img is None:
+                        failed += 1
+                        continue
                 local.append(img.cost_entry())
                 data = trim_border(img.data)
                 variants.append({"image": media.put(f"{out_base}/part-{p['id']}-{k + 1}.png", data), "data": data, "issues": []})
+            if not variants:
+                out = {**p, "variants": [], "recommended": 0, "photos": len(refs), "locked": None,
+                       "error": "그림 모델이 이 부품을 그리지 못했어요. 생김새 설명을 바꿔 적고 이 부품만 다시 그려 주세요."}
+                for k2 in ("image", "passed", "score", "defects", "as_ref", "stopped", "tries"):
+                    out.pop(k2, None)
+                return out, local
             r = llm.json(
                 system,
                 PART_REVIEW_TASK.format(
@@ -712,6 +729,10 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             out = {**p, "variants": [{"image": v["image"], "issues": v["issues"]} for v in variants],
                    "recommended": rec if isinstance(rec, int) and 0 <= rec < len(variants) else 0,
                    "photos": len(refs), "locked": None}
+            if failed:
+                out["error"] = f"후보 {failed}장은 그림 모델이 그리지 못해서 {len(variants)}장만 보여요."
+            else:
+                out.pop("error", None)
             for k2 in ("image", "passed", "score", "defects", "as_ref", "stopped", "tries"):
                 out.pop(k2, None)
             return out, local

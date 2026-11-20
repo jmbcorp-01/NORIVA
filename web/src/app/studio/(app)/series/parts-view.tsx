@@ -13,6 +13,7 @@ export type Part = {
   variants?: { image: string; issues: { item: string; severity: "critical" | "major" }[] }[];
   recommended?: number;
   locked?: string | null;
+  error?: string;
 };
 
 const PART_KIND: Record<string, string> = { object: "소품", attire: "옷차림", hair: "머리 모양" };
@@ -64,6 +65,7 @@ export function PartsView({
               <summary className="cursor-pointer text-indigo">생김새 설명</summary>
               <p className="mt-1">{p.description}</p>
             </details>
+            {p.error ? <p className="mt-1 text-[12px] text-plum">{p.error}</p> : null}
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {(p.variants ?? []).map((v, i) => {
                 const crit = v.issues.some((x) => x.severity === "critical");
@@ -114,7 +116,7 @@ export function PartsView({
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
             {parts.map((p) => (
               <label key={p.id} className="inline-flex min-h-[36px] items-center gap-1.5">
-                <input type="checkbox" name="parts" value={p.id} className="size-4 accent-[var(--color-pine)]" />
+                <input type="checkbox" name="parts" value={p.id} defaultChecked={!(p.variants ?? []).length} className="size-4 accent-[var(--color-pine)]" />
                 {p.name}
               </label>
             ))}
