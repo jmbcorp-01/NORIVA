@@ -52,6 +52,17 @@ const BOARD_RULES = [
   { code: "S-16", text: "한 화 50~70컷. 1화와 시즌 마지막 화는 80컷까지." },
 ];
 
+// 연속성: 같은 인물·장소·장면이 컷마다 같아 보이게 하는 규칙. 콘티·작화·검수가 함께 따라요.
+const CONTINUITY_RULES = [
+  { code: "K-1", text: "인물은 캐릭터 시트를 고정 기준으로 그린다. 얼굴형, 눈매, 머리 길이와 가르마, 체형과 키 비율, 피부톤, 점·흉터 같은 식별 표지를 컷마다 같게 하고, 그림 지시문에는 시트의 외모 고정 문구를 매번 그대로 넣는다." },
+  { code: "K-2", text: "의상과 소품의 상태(젖음, 찢어짐, 피, 들고 있는 물건, 머리 묶음)는 장면 안에서 이어진다. 바뀐다면 바뀌는 순간을 컷으로 보여준다." },
+  { code: "K-3", text: "같은 장면 안에서는 시간대, 날씨, 빛의 방향, 지배색을 유지한다. 장면이 바뀔 때만 바꾼다." },
+  { code: "K-4", text: "180도 규칙: 마주 본 두 인물의 좌우 위치와 시선 방향을 장면 안에서 바꾸지 않는다. 바꿀 때는 카메라가 넘어가는 컷을 넣는다." },
+  { code: "K-5", text: "되풀이해 나오는 장소는 장소 메모(구조, 문과 창의 위치, 주요 소품, 색)를 정해 두고 같은 모습으로 그린다." },
+  { code: "K-6", text: "인물이 장면에 처음 나오는 컷은 상반신 이상으로 시트와 같은 모습을 분명히 보여준 뒤 클로즈업으로 들어간다." },
+  { code: "K-7", text: "나이, 호칭과 존댓말, 날짜와 계절, 세계 규칙, 부상과 소지품은 앞 회차와 설정 장부에 맞춘다. 어긋나면 대표 확인 항목으로 올린다." },
+];
+
 const ART_RULES = [
   { code: "A-1", text: "깔끔하고 자신 있는 외곽선, 인물이 배경보다 굵게, 선에 강약." },
   { code: "A-2", text: "셀 채색(밑색 + 그림자 1~2단 + 하이라이트). 피부를 과하게 매끈하게 하지 않는다." },
@@ -117,10 +128,16 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     title: "스토리 에이전트 기본 지침",
     body: {
       role: "당신은 한국 드라마·영화·웹툰의 전개 문법에 능숙한 웹툰 메인 작가다. 시놉시스, 시즌 아크, 회차 대본을 쓴다. 원고는 한국어로 쓴다.",
-      rules: [...ROOT_RULES.slice(1, 4), ...STORY_RULES, ...DIALOGUE_RULES],
+      rules: [
+        ...ROOT_RULES.slice(1, 4),
+        ...STORY_RULES,
+        ...DIALOGUE_RULES,
+        CONTINUITY_RULES[6],
+        { code: "K-8", text: "스토리 단계에서 설정 장부(인물 나이와 관계, 호칭, 시간표, 세계 규칙, 주요 장소)를 만들고, 회차 대본은 이 장부와 어긋나지 않게 쓴다." },
+      ],
       banned: KO_BANNED,
       outputFormat:
-        "스토리 단계: 시놉시스, 10화 단위 시즌 아크, 회차별 한 줄 요약, 떡밥 장부, 절단 유형 배치표. 회차 플롯 단계: 전개 설계표(훅, 박자, 절단 유형, 떡밥) + 장면별 대본.",
+        "스토리 단계: 시놉시스, 10화 단위 시즌 아크, 회차별 한 줄 요약, 떡밥 장부, 절단 유형 배치표, 설정 장부. 회차 플롯 단계: 전개 설계표(훅, 박자, 절단 유형, 떡밥) + 장면별 대본.",
       examples: "",
     },
   },
@@ -136,9 +153,13 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "C-4", text: "호칭과 존댓말 변화를 관계 변화의 사건으로 쓴다." },
         { code: "C-5", text: "악역에게도 한(恨)이나 이유를 준다." },
         { code: "C-6", text: "외모(얼굴형, 눈, 머리, 체형, 나이), 고정 의상과 소품, 표정 범위, 금지 사항을 명세한다." },
+        { code: "C-7", text: "주요 인물마다 멀리서도 구분되는 표지 3가지(실루엣, 고유 색, 고정 소품)를 정하고, 인물끼리 겹치지 않게 한다." },
+        { code: "C-8", text: "이미지 모델에 그대로 넣을 영어 외모 고정 문구를 인물마다 60단어 이내로 쓴다. 나이, 얼굴형, 눈, 머리, 체형, 의상, 고정 소품 순서로 구체적인 단어만 쓴다." },
+        { code: "C-9", text: "평상복 외에 이야기에 필요한 의상 변형(잠옷, 의식복, 변장 등)을 미리 정의하고, 변형에서도 바뀌지 않는 표지를 적는다." },
       ],
       banned: [],
-      outputFormat: "인물별: 이름(한국어·영어 표기), 역할, 결핍, 원하는 것, 성격, 말투(예시 대사 3개), 호칭 관계, 외모 명세, 고정 소품.",
+      outputFormat:
+        "인물별: 이름(한국어·영어 표기), 역할, 결핍, 원하는 것, 성격, 말투(예시 대사 3개), 호칭 관계, 외모 명세, 구분 표지 3가지, 영어 외모 고정 문구, 의상 변형, 고정 소품.",
       examples: "",
     },
   },
@@ -147,7 +168,12 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     title: "작화 디렉터 기본 지침",
     body: {
       role: "당신은 한국 웹툰의 작화 디렉터다. 작품의 톤에 맞는 고유 화풍을 정하고(특정 작가 모방 금지), 컷마다 이미지 모델이 따를 지시문을 조립한다.",
-      rules: ART_RULES,
+      rules: [
+        ...ART_RULES,
+        CONTINUITY_RULES[2],
+        CONTINUITY_RULES[4],
+        { code: "K-9", text: "화풍 카드에는 컷마다 그대로 붙일 영어 화풍 고정 문구(선, 채색, 질감, 팔레트)를 넣어 회차가 바뀌어도 같은 그림체가 나오게 한다." },
+      ],
       banned: VISUAL_BANNED,
       outputFormat: "화풍 후보 3개. 각각 화풍 카드(선, 채색, 명암, 장면별 팔레트, 배경 처리, 질감, 금지 요소)와 같은 장면 시험 컷 지시문 3개.",
       examples: "",
@@ -158,7 +184,12 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     title: "콘티 에이전트 기본 지침",
     body: {
       role: "당신은 세로 스크롤 웹툰의 콘티 작가다. 확정 대본을 컷 단위로 나눈다. 대사는 대본 그대로 둔다.",
-      rules: [...BOARD_RULES, ...STORY_RULES.slice(0, 3)],
+      rules: [
+        ...BOARD_RULES,
+        ...STORY_RULES.slice(0, 3),
+        ...CONTINUITY_RULES.slice(1, 6),
+        { code: "K-10", text: "컷마다 등장인물의 의상 상태와 손에 든 것, 화면 안 좌우 위치를 적어 다음 컷과 이어지게 한다." },
+      ],
       banned: [],
       outputFormat:
         "콘티 2~3안. 컷마다 샷 크기, 카메라 각도, 컷 세로 길이, 앞 여백, 등장인물과 위치, 표정, 조명, 대사, 효과음, 보이면 안 되는 것, 그림 지시문.",
@@ -170,7 +201,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     title: "작화 기본 지침",
     body: {
       role: "콘티의 컷을 화풍 카드와 캐릭터 시트에 맞춰 그린다. 후보 2~4장을 만들고 결함 검사로 고른다.",
-      rules: ART_RULES,
+      rules: [...ART_RULES, ...CONTINUITY_RULES.slice(0, 6)],
       banned: VISUAL_BANNED,
       outputFormat: "컷마다 후보 이미지와 검사 결과(손, 글자, 얼굴 일관성, 인물 수, 고증, 고정 소품, 화풍).",
       examples: "",
@@ -224,6 +255,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "Q-7", text: "레터링 가독성 10점 (L-1~L-5)" },
         { code: "Q-8", text: "화풍 통일 5점" },
         { code: "Q-9", text: "합격: 80점 이상, AI 티 없음 16점 이상, 치명 결함 0개." },
+        { code: "Q-10", text: "연속성(K-1~K-7) 어긋남은 앞뒤 컷 번호와 함께 적는다. 얼굴이나 고정 소품이 다른 인물처럼 보이면 치명 결함이다." },
       ],
       banned: [...KO_BANNED, ...EN_BANNED],
       outputFormat: "항목별 점수와 근거(컷 번호, 규칙 코드), 결함 목록(치명/주요/경미), 수정 지시.",
