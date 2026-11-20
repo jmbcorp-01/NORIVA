@@ -18,7 +18,7 @@ import httpx
 
 from .config import Config
 from .handlers import Tools, run_stage
-from .images import FalImage, ImageNotConfiguredError
+from .images import FalImage, ImageNotConfiguredError, NoImageError
 from .llm import RefusedError, TextModel, TruncatedError
 from .media import media_from_env
 from .scout import run_scout, run_source_fill
@@ -104,7 +104,7 @@ def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
             body, costs = run_stage(job["type"], ctx, tools)
             store.finish(job, body, costs)
         log.info("작업 완료 %s 비용 $%.4f", job["id"], sum(c["cost_usd"] for c in costs))
-    except (RefusedError, TruncatedError, StageInputError, ImageNotConfiguredError) as e:
+    except (RefusedError, TruncatedError, StageInputError, ImageNotConfiguredError, NoImageError) as e:
         store.fail(job, str(e), cfg.max_attempts, retryable=False)
     except (anthropic.RateLimitError, anthropic.InternalServerError, anthropic.APIConnectionError) as e:
         again = store.fail(job, f"일시적 오류: {e}", cfg.max_attempts, retryable=True)

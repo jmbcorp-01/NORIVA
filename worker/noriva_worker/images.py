@@ -37,6 +37,19 @@ class ImageNotConfiguredError(Exception):
     """FAL_KEY가 없어서 그림을 그릴 수 없어요."""
 
 
+class NoImageError(Exception):
+    """그림 모델이 이 지시로 그림을 내놓지 않았어요 (fal 422 'did not generate the expected output').
+    안전 필터, 참고 사진, 지시 문구 때문에 생겨요. 씨앗을 바꿔 몇 번 다시 해도 안 될 때 올려요."""
+
+
+NO_OUTPUT_TRIES = 3  # 422 '그림 없음'이면 씨앗을 바꿔 다시 그려 보는 횟수
+
+
+def _no_output(e: Exception) -> bool:
+    r = getattr(e, "response", None)
+    return r is not None and r.status_code == 422 and "did not generate" in r.text
+
+
 # 비교 시험에 쓰는 그림 모델. 가격은 fal 안내 기준 어림값이에요 (실제 청구는 fal 대시보드).
 IMAGE_MODELS: dict[str, float] = {
     "fal-ai/nano-banana": 0.04,
@@ -111,10 +124,23 @@ class FalImage:
         aspect_ratio: str = "3:4",
         model: str | None = None,
     ) -> ImageResult:
+        import httpx
+
         model, body = request_for(model or self.model, prompt, aspect_ratio, references)
-        if seed is not None:
-            body["seed"] = seed
-        r = self._post(f"https://fal.run/{model}", body)
+        for t in range(NO_OUTPUT_TRIES):
+            if seed is not None:
+                body["seed"] = seed + 7919 * t
+            try:
+                r = self._post(f"https://fal.run/{model}", body)
+                break
+            except httpx.HTTPStatusError as e:
+                if not _no_output(e):
+                    raise
+                if t == NO_OUTPUT_TRIES - 1:
+                    raise NoImageError(
+                        f"그림 모델이 이 지시로 그림을 만들지 못했어요 ({NO_OUTPUT_TRIES}번 시도). "
+                        "참고 사진이나 지시 문구가 안전 필터에 걸렸을 수 있어요."
+                    ) from e
         url = r.json()["images"][0]["url"]
         if url.startswith("data:"):
             data = base64.b64decode(url.split(",", 1)[1])

@@ -584,6 +584,40 @@ def test_panel_prompt_adds_locked_part_refs():
     assert "period-accurate design" not in _panel_prompt("st", {"shot": "wide", "description": "d"}, cast, cast, "", 1)
 
 
+def test_part_variants_survive_no_output_errors(store, tmp_path, monkeypatch):
+    """그림 모델이 422 '그림 없음'을 내도 작업 전체가 멈추지 않아요: 사진 없이 다시 그려 보고, 안 되면 그 후보만 빼요."""
+    from noriva_worker import commons
+    from noriva_worker.images import NoImageError
+
+    monkeypatch.setattr(commons, "search_commons", lambda q, limit=6: [
+        {"title": "Ring sword.jpg", "url": "https://x/r.jpg", "page": "https://commons/r", "license": "CC BY-SA 4.0", "artist": "Museum"}])
+    monkeypatch.setattr(commons, "fetch", lambda url: png())
+    c = store.conn
+    sid, _ = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model = FakeModel()
+
+    class Flaky(FakeImages):
+        def generate(self, prompt, seed=None, references=None, aspect_ratio="3:4", model=None):
+            if "short jacket closed with a belt" in prompt:  # 옷차림은 늘 실패
+                raise NoImageError("no output")
+            if references and seed is not None and seed % 2:  # 사진을 넣은 홀수 씨앗은 실패
+                raise NoImageError("no output")
+            return super().generate(prompt, seed, references, aspect_ratio, model)
+
+    images = Flaky()
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=0))
+    master = media.put(f"series/{sid}/style/m.png", png())
+    style = _approved(c, sid, None, "style", {"kind": "style", "markdown": "먹선", "chosen": 0, "style_masters": [master],
+                                              "candidates": [{"name": "먹선", "medium": "ink", "card": "", "style_prompt": "ink wash style", "samples": [master]}]})
+    chars = _approved(c, sid, None, "characters", {"markdown": "순정: 신라 화랑"})
+    _, pb = _run(store, tools, sid, None, "sheets", [chars, style])
+    by = {p["id"]: p for p in pb["parts"]}
+    assert len(by["sword"]["variants"]) == 4 and "error" not in by["sword"]  # 사진 없이 다시 그려서 4장
+    assert by["silla_man"]["variants"] == [] and "다시 그려" in by["silla_man"]["error"]
+    assert len(by["sunjeong_hair"]["variants"]) == 4 and pb["phase"] == "parts"
+
+
 def test_commons_queries_are_shortened():
     from noriva_worker.commons import _queries
 
@@ -665,3 +699,31 @@ def test_sheet_retries_stop_when_stalled_or_over_budget():
     assert b.ok()
     b.spend({"cost_usd": 0.15})
     assert not b.ok() and _Budget(0).ok()
+
+
+def test_fal_retries_no_output_with_new_seed(monkeypatch):
+    import httpx
+
+    from noriva_worker.images import FalImage, NoImageError
+
+    monkeypatch.setenv("FAL_KEY", "test")
+    fal = FalImage("fal-ai/nano-banana", 0.04)
+    seeds = []
+
+    def post(url, body, fail=[2]):
+        seeds.append(body["seed"])
+        if fail[0]:
+            fail[0] -= 1
+            req = httpx.Request("POST", url)
+            raise httpx.HTTPStatusError("422", request=req, response=httpx.Response(422, text='{"detail":"did not generate the expected output"}', request=req))
+        return httpx.Response(200, json={"images": [{"url": "data:image/png;base64,"}]})
+
+    monkeypatch.setattr(fal, "_post", post)
+    fal.generate("p", seed=5)
+    assert len(seeds) == 3 and len(set(seeds)) == 3
+
+    seeds.clear()
+    monkeypatch.setattr(fal, "_post", lambda url, body: post(url, body, [9]))
+    with pytest.raises(NoImageError):
+        fal.generate("p", seed=5)
+    assert len(seeds) == 3
