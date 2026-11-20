@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
+from .images import IMAGE_MODELS, ImageGen, NoImageError, thumbnail, trim_border
 from .llm import JSONResult
 from .media import Media
 from .prompts import render_guidelines
@@ -581,14 +581,26 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             return out, local
 
         cands: list[dict[str, Any]] = []
+        blocked = ""
         for k in range(s.candidates):
-            img = images.generate(prompt, seed=seed0 + k, references=refs or None, aspect_ratio=aspect, model=model)
+            try:
+                img = images.generate(prompt, seed=seed0 + k, references=refs or None, aspect_ratio=aspect, model=model)
+            except NoImageError as e:
+                # 이 컷만 그림 모델이 거부했어요 (안전 필터 등). 작업 전체를 멈추지 않고 이 컷만 비워 둬요.
+                blocked = str(e)
+                break
             local.append(img.cost_entry())
             data = trim_border(img.data)
             key = media.put(f"{key_base}/{panel['index']:03d}-{k + 1}.png", data)
             cands.append({"image": key, **check(panel, cast, data, local, sheet_cast, sheets)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break  # 합격 후보가 나오면 더 그리지 않아요
+        if not cands:
+            out = {**panel, "prompt": prompt, "aspect": aspect, "model": model or images_default_model(images), "image": None,
+                   "score": 0, "defects": [], "passed": False, "candidates": [], "drawn_in": artifact_id,
+                   "blocked": blocked or "그림이 만들어지지 않았어요."}
+            out.pop("variants", None)
+            return out, local
         best = max(cands, key=lambda c: _rank(c, s.pass_score))
         out = {
             **panel,
@@ -613,7 +625,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         """끝난 컷은 바로 저장해요. 다시 시작한 작업은 저장된 컷을 그대로 쓰고 남은 컷만 그려요."""
         key = f"{ck_base}/panel-{panel['index']:03d}.json"
         done = _load_json(media, key)
-        if done and done.get("out", {}).get("image"):
+        if done and (done.get("out", {}).get("image") or done.get("out", {}).get("blocked")):
             return done["out"], done.get("costs") or []
         out, local = draw(panel)
         _save_json(media, key, {"out": out, "costs": local})
@@ -638,7 +650,8 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         costs.extend(local)
 
     panels = [drawn.get(p["index"], p) for p in plan["panels"]]
-    pending = [p["index"] for p in panels if not p.get("image")]
+    pending = [p["index"] for p in panels if not p.get("image") and not p.get("blocked")]
+    blocked = [{"index": p["index"], "note": p["blocked"]} for p in panels if p.get("blocked") and not p.get("image")]
     flagged = [p["index"] for p in panels if p.get("image") and not p.get("passed")]
     scores = [p["score"] for p in panels if p.get("image") and "score" in p]
     body = {
@@ -650,6 +663,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         "rhythm_warnings": rhythm_warnings(panels),
         "redrawn": [] if test_run or payload.get("keep_adopted") else redraw,
         "pending": pending,
+        "blocked": blocked,
         "test_panels": redraw if test_run else (prev.get("test_panels") or []),
         "model": model,
         "compare_models": compare,
