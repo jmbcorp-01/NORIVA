@@ -200,7 +200,6 @@ export function SheetsView({
                   <span className="text-ink-faint">{p.owners.join(", ")}</span>
                   {typeof p.score === "number" ? <Badge tone={p.passed ? "pine" : "plum"}>{p.score}점</Badge> : null}
                   {typeof p.score === "number" ? <span className="text-ink-faint">{violations(count(p.defects, "critical"), count(p.defects, "major"))}</span> : null}
-                  {p.as_ref && !p.passed ? <span className="text-ink-soft">치명 결함이 없어 참고 그림으로 썼어요</span> : null}
                 </div>
                 {p.stopped ? <p className="text-ink-soft">{STOPPED[p.stopped]}</p> : null}
                 {p.defects?.filter((d) => d.severity !== "minor").map((d, i) => (

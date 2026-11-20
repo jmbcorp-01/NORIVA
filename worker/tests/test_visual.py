@@ -116,7 +116,9 @@ class FakeModel:
         elif "photos" in props:
             data = {"photos": [{"index": 0, "prop_ids": ["sword"], "real_photo": True, "note": "실물"}]}
         elif "violations" in props:
-            data = {"violations": [{"item": "긴 뿔", "character_ids": ["cow"], "note": "마스터의 소가 긴 뿔"}]}
+            # 원본 마스터에는 소의 긴 뿔이 있고, 한 번 지우면 없어져요
+            self.screens = getattr(self, "screens", 0) + 1
+            data = {"violations": [{"item": "긴 뿔", "character_ids": ["cow"], "note": "마스터의 소가 긴 뿔"}] if self.screens % 2 == 1 else []}
         elif "updates" in props:
             self.fix_tasks = getattr(self, "fix_tasks", []) + [task]
             data = {"updates": [{"id": "cow", "appearance": "yellow ox with short horns", "period_notes": "", "never": ["long horns"],
@@ -504,16 +506,16 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path, monkeypatch):
     assert not any("katana" in p or "Must not include" in p for p, _ in sheet_prompts)
     assert all("no view labels" in p for p, _ in sheet_prompts)
     assert sheets["summary"] == {"characters": 2, "passed": 2, "props": 2, "props_passed": 2}
-    assert len(images.prompts) == 10  # 마스터 지우기 2번 + 소품·의상 4 + 인물 4
-    # 마스터에 금지 소품이 있으면 그것을 지운 깨끗한 마스터를 먼저 만들어 씀
+    assert len(images.prompts) == 9  # 마스터 지우기 1번(지운 뒤 문제가 없어짐) + 소품·의상 4 + 인물 4
+    # 원본 마스터에 금지 소품이 있으면 그것을 지운 깨끗한 마스터를 먼저 만들어 씀
     assert images.prompts[0][0].startswith("Edit reference image 1. Remove these things completely: 긴 뿔") and images.prompts[0][1] == 1
     assert sheets["clean_masters"] and sheets["clean_masters"][0].endswith("master-clean-1.png")
     # 순정은 화풍 마스터 + 소품 시트를 참조로, 고증 사진은 넣지 않음. 마스터에 금지 소품이 있는 소는 마스터 없이.
-    assert sheets["master_warnings"][0]["characters"] == ["cow"]
-    assert all(n == 0 for p, n in sheet_prompts if "누렁소" in p)
+    assert sheets["master_warnings"] == []  # 지운 뒤 다시 검사해서 문제가 없으면 모든 인물이 깨끗한 마스터를 써요
+    assert all(n == 1 for p, n in sheet_prompts if "누렁소" in p and p.startswith("Korean"))
     assert all(n == 3 and "approved prop design for 환두대도" in p and "approved period costume design" in p for p, n in sheet_prompts if "순정" in p)
-    # 한 번에 안 지워지면 고칠 문장을 넣어 한 번 더 지움
-    assert images.prompts[1][0].startswith("Edit reference image 1. Remove these things completely: 긴 뿔")
+    # 지운 뒤 문제가 없어졌으니 한 번만 지움
+    assert sum(p.startswith("Edit reference image 1. Remove these things") for p, _ in images.prompts) == 1
     # 앞 시도에서 걸린 치명 문제만 첫 시트에서 고쳐 그림 (다시 그리지 않음)
     assert any(p.startswith("Edit reference image 1, a character design turnaround sheet") and "Fix these problems: GA-3 일본도" in p
                for p, _ in images.prompts)
@@ -586,9 +588,9 @@ def test_research_stage_feeds_style_and_sheets(store, tmp_path, monkeypatch):
     assert searched == [["Silla clay figurine"]]  # 의상은 고증 자료에 사진이 없어서 공용에서 찾음
     spec_task = [t for props, t, _ in model.calls if list(props) == ["characters", "props", "attire"]][-1]
     assert "고증 자료" in spec_task
-    # 마스터는 검사 전에 고증 자료의 머리 모양대로 고쳐 그리고, 그 깨끗한 마스터를 어떤 그림에서 만들었는지 남겨요
-    assert any("approved period design" in p and "small topknot covered by a plain cloth cap" in p for p, _ in images.prompts)
-    assert sheets["clean_masters"] and sheets["clean_from"] == [master]
+    # 마스터는 문제가 있을 때만 고쳐 그리고(원본을 먼저 검사), 어떤 그림에서 만들었는지 남겨요
+    assert not any("approved period design" in p for p, _ in images.prompts)
+    assert sheets["clean_from"] == [master]
     master_screen = [t for props, t, _ in model.calls if "violations" in props][-1]
     assert "people" in master_screen
     # 그리기 전에 명세 글을 고증 자료와 맞춰 보고, 고친 것을 남겨요
