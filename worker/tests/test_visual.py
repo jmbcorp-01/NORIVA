@@ -93,10 +93,10 @@ class FakeModel:
                  "period_notes": "straight ring-pommel sword, no guard", "never": ["curved katana", "tsuba"]},
                 {"id": "cow", "name": "누렁소", "kind": "animal", "role": "minor", "appearance": "yellow ox", "period_notes": "", "never": []},
             ]}
-        elif list(props) == ["updates"]:
+        elif "updates" in props:
             self.fix_tasks = getattr(self, "fix_tasks", []) + [task]
             data = {"updates": [{"id": "cow", "appearance": "yellow ox with short horns", "period_notes": "", "never": ["long horns"],
-                                 "edit": "Make both horns short."}]}
+                                 "edit": "Make both horns short."}], "rules": ["누렁소의 뿔은 짧다.", " "]}
         elif list(props) == ["score", "defects"]:
             # 인물마다 첫 시트는 불합격, 둘째는 합격 (병렬로 돌아도 인물별로 셈)
             key = task.split('"id": "')[1].split('"')[0]
@@ -453,6 +453,7 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path):
     assert again["characters"][0]["sheet"] == sj["sheet"] and again["redrawn"] == ["cow"]
     cow = again["characters"][1]
     assert cow["appearance"] == "yellow ox with short horns" and cow["never"] == ["long horns"]
+    assert again["rule_suggestions"] == ["누렁소의 뿔은 짧다."]
 
     # ⑦ 작화는 승인된 시트와 명세를 그대로 써요 (시트를 새로 그리지 않음)
     images.prompts.clear()
