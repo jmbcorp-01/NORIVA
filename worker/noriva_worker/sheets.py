@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 import re
+import threading
 from typing import Any
 
 from . import commons
@@ -138,6 +139,36 @@ code는 H-2(복식), H-6(무기), H-7(관모·장신구·머리), AI-xx(그림 �
 {spec}
 """
 FIX_BATCH = 3  # 명세 고치기를 한 번에 넣는 인물 수
+RETRY_BUDGET_USD = 12.0  # ④+ 한 번 실행에서 '다시 그리기'에 쓸 수 있는 돈. 첫 그림은 늘 그리고, 넘으면 더 다시 그리지 않아요.
+
+LINT_SCHEMA = _obj(
+    {
+        "characters": _arr(_obj({"id": _STR, "appearance": _STR, "period_notes": _STR, "never": _arr(_STR), "changes": _STR})),
+        "props": _arr(_obj({"id": _STR, "description": _STR, "changes": _STR})),
+    }
+)
+
+LINT_TASK = """# 과제: 그리기 전 명세 글 검사
+
+아래 인물 명세와 소품·의상 명세를 그대로 이미지 모델에 넣어 시트를 그린다. 그림 한 장은 비싸고, 명세가 틀리면 몇 번을 다시 그려도 검사에서 떨어진다.
+그리기 전에 글만 보고 서로 어긋나는 곳을 찾아 고쳐라.
+1. 명세와 ③+ 고증 자료가 다름: 자료에 없는 부품·장식을 더함(예: 자료에 없는 손 보호판, 감은 손잡이 끈), 자료와 다른 머리 모양·관모·옷 구조.
+2. appearance나 period_notes가 그 인물의 never에 있는 것을 묘사함(예: never에 이마 띠가 있는데 appearance에 forehead band).
+3. 같은 계층·성별 인물끼리 머리 모양·머리 장식 규칙이 어긋남(한 인물에 금지한 것을 다른 인물이 함). 고증 자료를 따르는 쪽으로 맞춘다.
+4. 이미지 모델이 다른 시대·나라 모양을 떠올리기 쉬운 모호한 말(robe, headwrap, guard, wrapped hilt)이 구조 설명 없이 쓰임. 맞는 구조를 긍정형으로 구체적으로 쓴다.
+5. never가 8개를 넘거나 같은 말이 겹침. 핵심만 8개 이내로 남긴다.
+고칠 것이 있는 인물·소품만 돌려준다. 고친 필드는 전체 새 문장으로 쓰고, 고치지 않는 필드는 빈 문자열(never는 빈 목록)로 둔다.
+appearance는 70단어 이내. changes는 무엇을 왜 고쳤는지 한국어 한 문장. 고칠 것이 없으면 빈 목록.
+
+## ③+ 고증 자료
+{research}
+
+## 인물 명세
+{specs}
+
+## 소품·의상 명세
+{props}
+"""
 NEVER_MAX = 8  # 금지 목록이 길면 항목마다 치명 결함이 되어 점수가 0으로 떨어져요. 핵심만 남겨요.
 
 MASTER_SCHEMA = _obj(
@@ -310,6 +341,46 @@ def _prop_prompt(base: str, style: str, p: dict[str, Any], n_photos: int) -> str
     return " ".join(x for x in parts if x)
 
 
+def _prop_fix_prompt(p: dict[str, Any], fix: str, n_photos: int) -> str:
+    """틀린 곳만 고치는 편집 지시. 맞게 그린 부분은 그대로 두니 다시 그릴 때보다 빨리 맞아 가요."""
+    parts = [
+        f"Edit reference image 1, a {'period costume' if p.get('kind') == 'attire' else 'prop'} design sheet for a Korean webtoon: {p['description']}",
+        "Keep the layout, the views, the drawing style and every part that is already correct exactly as they are.",
+        f"Change only these problems, in every view where they appear: {fix}",
+        f"Reference image(s) 2-{n_photos + 1} are museum photos of the real thing of this era: match their shape." if n_photos else "",
+        "Pure flat white background with no texture.",
+        NO_TEXT,
+    ]
+    return " ".join(x for x in parts if x)
+
+
+def _crit(defects: list[dict[str, Any]]) -> int:
+    return sum(1 for d in defects if d.get("severity") == "critical")
+
+
+def _stalled(tries: list[dict[str, Any]]) -> bool:
+    """고쳐 그렸는데도 치명 결함이 줄지 않고 점수도 오르지 않으면, 같은 지시로 더 그려도 돈만 들어요."""
+    if len(tries) < 2:
+        return False
+    a, b = tries[-2], tries[-1]
+    return _crit(b["defects"]) >= _crit(a["defects"]) and b["score"] <= a["score"]
+
+
+class _Budget:
+    """여러 그림을 동시에 그려도 '다시 그리기' 비용을 한곳에서 세요."""
+
+    def __init__(self, limit: float) -> None:
+        self.limit, self.spent, self._lock = limit, 0.0, threading.Lock()
+
+    def spend(self, entry: dict[str, Any]) -> None:
+        with self._lock:
+            self.spent += float(entry.get("cost_usd") or 0)
+
+    def ok(self) -> bool:
+        with self._lock:
+            return self.limit <= 0 or self.spent < self.limit
+
+
 def _edit_prompt(c: dict[str, Any], edit: str, props: list[dict[str, Any]]) -> str:
     """이전 시트에서 고칠 곳만 바꾸는 편집 지시. 얼굴·옷·구도는 그대로 두고 지시한 것만 바꿔요."""
     parts = [
@@ -453,6 +524,47 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
 
     out_base = f"series/{ctx['series']['id']}/sheets/{ctx['artifact_id']}"
     todo = [c for c in chars if not only or c["id"] in only]
+
+    # 그리기 전에 명세 글을 먼저 검사해요. 명세끼리 어긋나면 몇 번을 다시 그려도 떨어져요. 그림 한 장보다 훨씬 싸요.
+    spec_fixes: list[dict[str, str]] = []
+    lint_props = [p for p in props if not only or set(p["owners"]) & {c["id"] for c in todo}]
+    if research or any(c.get("never") for c in todo):
+        _report(ctx, "그리기 전 명세 글 검사 중")
+        r = llm.json(
+            system,
+            LINT_TASK.format(
+                research=research or "(없음)",
+                specs="\n".join(_spec_json(c) for c in todo),
+                props="\n".join(json.dumps({k: p.get(k) for k in ("id", "kind", "name", "owners", "description")}, ensure_ascii=False) for p in lint_props) or "(없음)",
+            ),
+            LINT_SCHEMA,
+            effort="medium",
+            max_tokens=32000,
+        )
+        costs.add(r.result.cost_entry())
+        by_id = {c["id"]: c for c in todo}
+        for u in r.data.get("characters") or []:
+            c = by_id.get(_slug(u.get("id", "")))
+            if not c:
+                continue
+            changed = False
+            for k in ("appearance", "period_notes"):
+                if (u.get(k) or "").strip() and u[k].strip() != c.get(k):
+                    c[k] = u[k].strip()
+                    changed = True
+            if u.get("never"):
+                c["never"] = [str(x) for x in u["never"] if str(x).strip()][:NEVER_MAX]
+                changed = True
+            if changed:
+                spec_fixes.append({"id": c["id"], "name": c.get("name", ""), "changes": (u.get("changes") or "").strip()})
+        pby = {p["id"]: p for p in lint_props}
+        for u in r.data.get("props") or []:
+            p = pby.get(_slug(u.get("id", "")))
+            if p and (u.get("description") or "").strip() and u["description"].strip() != p["description"]:
+                p["description"] = u["description"].strip()
+                p.pop("passed", None)  # 명세가 바뀌었으니 다시 그려요
+                spec_fixes.append({"id": p["id"], "name": p.get("name", ""), "changes": (u.get("changes") or "").strip()})
+    budget = _Budget(float(brief.get("sheetRetryBudgetUsd") or RETRY_BUDGET_USD))
 
     # 2. 화풍 마스터에 금지 소품(일본도 등)이나 장식 효과가 있으면, 마스터에서 그것만 지운 '깨끗한 마스터'를 만들어 모든 인물에 써요.
     #    지우고도 남아 있으면 그 소품과 엮인 인물만 마스터를 빼요.
@@ -608,13 +720,23 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         tries: list[dict[str, Any]] = []
         refs = photos_for.get(p["id"], [])[:3]
         photos = [thumbnail(h, 1024) for h in refs]
+        stop = ""
         for k in range(3):
-            prompt = _prop_prompt(base, style, p, len(refs))
-            if tries:
-                fix = _issue_lines(tries[-1]["defects"])
-                prompt += f" Fix these problems found in the previous attempt: {fix}" if fix else ""
-            img = images.generate(prompt, seed=7 + k + 10 * (ctx.get("attempt") or 1), aspect_ratio="4:3", references=refs or None, model=model)
+            if tries and not budget.ok():
+                stop = "budget"
+                break
+            seed = 7 + k + 10 * (ctx.get("attempt") or 1)
+            fix = _issue_lines(tries[-1]["defects"]) if tries else ""
+            if tries and fix:
+                # 다시 그리지 않고 지금까지 가장 나은 그림에서 틀린 곳만 고쳐요
+                prev_best = max(tries, key=lambda t: t["score"])
+                img = images.generate(_prop_fix_prompt(p, _issue_lines(prev_best["defects"]), len(refs)), seed=seed, aspect_ratio="4:3",
+                                      references=[prev_best["data"], *refs], model=model)
+            else:
+                img = images.generate(_prop_prompt(base, style, p, len(refs)), seed=seed, aspect_ratio="4:3", references=refs or None, model=model)
             local.append(img.cost_entry())
+            if tries:
+                budget.spend(img.cost_entry())
             data = trim_border(img.data)
             key = media.put(f"{out_base}/prop-{p['id']}-{k + 1}.png", data)
             r = llm.json(
@@ -629,11 +751,15 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                 max_tokens=16000,
             )
             local.append(r.result.cost_entry())
-            tries.append({"image": key, "defects": r.data["defects"], "score": score_of(r.data["defects"])})
+            tries.append({"image": key, "data": data, "defects": r.data["defects"], "score": score_of(r.data["defects"])})
             if ok(tries[-1]):
                 break
+            if _stalled(tries):
+                stop = "stalled"
+                break
         best = max(tries, key=lambda t: (ok(t), t["score"]))
-        return {**p, "image": best["image"], "score": best["score"], "defects": best["defects"], "passed": ok(best)}, local
+        return {**p, "image": best["image"], "score": best["score"], "defects": best["defects"], "passed": ok(best),
+                "tries": len(tries), "stopped": stop if not ok(best) else ""}, local
 
     if prop_todo:
         done = _map_progress(ctx, 4, draw_prop, prop_todo, "소품 시트 그리는 중")
@@ -686,22 +812,34 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         tries: list[dict[str, Any]] = []
         # 대표가 고칠 곳을 지시했으면 첫 번째는 이전 시트를 그대로 두고 그 부분만 고쳐요. 두 번째는 새 명세로 새로 그려요.
         old = media.get(c["sheet"]) if edits.get(c["id"]) and c.get("sheet") else None
+        stop = ""
+        prop_refs = [prop_imgs[p["id"]] for p in mine]
         for k in range(3 if c.get("role") == "main" else 2):
+            if tries and not budget.ok():
+                stop = "budget"
+                break
             seed = 1 + k + 10 * (ctx.get("attempt") or 1)
+            prev_best = max(tries, key=lambda t: t["score"]) if tries else None
+            fix = _issue_lines(prev_best["defects"]) if prev_best else ""
             if k == 0 and old:
-                img = images.generate(_edit_prompt(c, edits[c["id"]], mine), seed=seed, aspect_ratio="4:3", references=[old, *[prop_imgs[p["id"]] for p in mine]], model=model)
+                img = images.generate(_edit_prompt(c, edits[c["id"]], mine), seed=seed, aspect_ratio="4:3", references=[old, *prop_refs], model=model)
+            elif prev_best and fix and not (old and k == 1):
+                # (대표 지시로 이전 시트를 고친 첫 그림이 떨어지면, 두 번째는 새 명세로 새로 그려요)
+                # 다시 그리지 않고 지금까지 가장 나은 시트에서 걸린 곳만 고쳐요. 맞게 그린 얼굴·옷은 그대로 남아요.
+                img = images.generate(_edit_prompt(c, f"Fix these problems: {fix}", mine), seed=seed, aspect_ratio="4:3",
+                                      references=[prev_best["data"], *prop_refs], model=model)
             else:
-                # 앞 시도에서 걸린 치명·주요 문제를 이번 그림 지시에 넣어요
-                fix = _issue_lines(tries[-1]["defects"]) if tries else ""
-                prompt = _sheet_prompt(base, style, c, n_masters, mine, note)
-                if fix:
-                    prompt += f" Fix these problems found in the previous attempt: {fix}"
-                img = images.generate(prompt, seed=seed, aspect_ratio="4:3", references=refs or None, model=model)
+                img = images.generate(_sheet_prompt(base, style, c, n_masters, mine, note), seed=seed, aspect_ratio="4:3", references=refs or None, model=model)
             local.append(img.cost_entry())
+            if tries:
+                budget.spend(img.cost_entry())
             data = trim_border(img.data)
             key = media.put(f"{out_base}/{c['id']}-{k + 1}.png", data)
-            tries.append({"image": key, **check(c, data, local)})
+            tries.append({"image": key, "data": data, **check(c, data, local)})
             if ok(tries[-1]):
+                break
+            if _stalled(tries):
+                stop = "stalled"
                 break
         best = max(tries, key=lambda t: (ok(t), t["score"]))
         return {
@@ -710,6 +848,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             "score": best["score"],
             "defects": best["defects"],
             "passed": ok(best),
+            "stopped": stop if not ok(best) else "",
             "candidates": [{"image": t["image"], "score": t["score"], **_counts(t["defects"]), "defects": t["defects"]} for t in tries],
         }, local
 
@@ -745,6 +884,8 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         "props": props,
         "clean_masters": clean_keys,
         "clean_from": master_keys,
+        "spec_fixes": spec_fixes,
+        "retry_spent_usd": round(budget.spent, 2),
         "clean_research": research_body.get("era"),
         "photo_notes": photo_notes,
         "found_photos": found_photos,

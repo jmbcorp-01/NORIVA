@@ -11,6 +11,11 @@ function violations(critical: number, major: number): string {
   return parts.length ? `위반 ${parts.join(" · ")}` : "위반 없음";
 }
 
+const STOPPED: Record<string, string> = {
+  stalled: "고쳐 그려도 같은 문제가 반복돼서 더 그리지 않고 멈췄어요. 아래 문제를 보고 지시를 남겨 주세요.",
+  budget: "이번 실행의 다시 그리기 비용 상한에 닿아 멈췄어요.",
+};
+
 function count(defects: Defect[] | undefined, s: Defect["severity"]): number {
   return (defects ?? []).filter((d) => d.severity === s).length;
 }
@@ -28,6 +33,7 @@ type SheetChar = {
   passed?: boolean;
   defects?: Defect[];
   candidates?: { image: string; score: number; critical?: number; major?: number }[];
+  stopped?: "" | "stalled" | "budget";
 };
 type SheetsBody = {
   kind: "sheets";
@@ -40,7 +46,9 @@ type SheetsBody = {
   clean_masters?: string[];
   found_photos?: { prop: string; image: string; title: string; page: string; license: string; artist: string }[];
   photo_notes?: { index: number; real_photo: boolean; props: string[]; note: string }[];
-  props?: { id: string; name: string; owners: string[]; description: string; kind?: string; image?: string; score?: number; passed?: boolean; as_ref?: boolean; defects?: Defect[] }[];
+  props?: { id: string; name: string; owners: string[]; description: string; kind?: string; image?: string; score?: number; passed?: boolean; as_ref?: boolean; stopped?: "" | "stalled" | "budget"; defects?: Defect[] }[];
+  spec_fixes?: { id: string; name: string; changes: string }[];
+  retry_spent_usd?: number;
   search_log?: { prop: string; queries: string[]; candidates: number; accepted: number; notes: string[] }[];
   summary: { characters: number; passed: number };
 };
@@ -94,6 +102,18 @@ export function SheetsView({
           <p className="mt-1 text-ink-faint">점수는 그림 솜씨가 아니라 인물 명세와 ③+ 고증 자료를 어긴 개수로 매겨요. 치명 1개에 30점, 주요 1개에 10점이 깎여요.</p>
           <p className="mt-1 text-ink-faint">다시 그리면 지난 검사에서 걸린 치명·주요 문제를 자동으로 고치라고 넣어요. 지시는 더 바꾸고 싶은 것만 적으면 돼요.</p>
         </div>
+      ) : null}
+      {body.spec_fixes?.length ? (
+        <details className="mt-2 text-[12px] text-ink-soft">
+          <summary className="cursor-pointer text-indigo">그리기 전 글 검사로 고친 명세 {body.spec_fixes.length}개</summary>
+          <ul className="mt-1 space-y-0.5">
+            {body.spec_fixes.map((f) => (
+              <li key={f.id}>
+                {f.name || f.id}: {f.changes || "명세를 고증 자료에 맞췄어요"}
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
       {body.clean_masters?.length ? (
         <div className="mt-2 text-[12px] text-ink-soft">
@@ -182,6 +202,7 @@ export function SheetsView({
                   {typeof p.score === "number" ? <span className="text-ink-faint">{violations(count(p.defects, "critical"), count(p.defects, "major"))}</span> : null}
                   {p.as_ref && !p.passed ? <span className="text-ink-soft">치명 결함이 없어 참고 그림으로 썼어요</span> : null}
                 </div>
+                {p.stopped ? <p className="text-ink-soft">{STOPPED[p.stopped]}</p> : null}
                 {p.defects?.filter((d) => d.severity !== "minor").map((d, i) => (
                   <p key={i} className={d.severity === "critical" ? "text-plum" : "text-ink-soft"}>
                     [{SEVERITY[d.severity]}] {d.note}
@@ -220,6 +241,7 @@ export function SheetsView({
                 {typeof c.score === "number" ? <Badge tone={c.passed ? "pine" : "plum"}>{c.score}점</Badge> : null}
                 {typeof c.score === "number" ? <span className="text-[12px] text-ink-faint">{violations(count(c.defects, "critical"), count(c.defects, "major"))}</span> : null}
               </div>
+              {c.stopped ? <p className="mt-1 text-[12px] text-plum">{STOPPED[c.stopped]}</p> : null}
               <p className="mt-1 text-ink-soft">{c.appearance}</p>
               {c.period_notes ? <p className="mt-1 text-[12px] text-ink-soft">고증: {c.period_notes}</p> : null}
               {c.never?.length ? <p className="mt-1 text-[12px] text-plum">금지: {c.never.join(", ")}</p> : null}
