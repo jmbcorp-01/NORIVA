@@ -6,7 +6,7 @@ import { activeJobs, type JobView, typicalSeconds } from "@/lib/progress";
 import { canStart, type JobType, STAGE_HELP, STAGE_INFO, stageStates, type LatestArtifact, type Stage } from "@/lib/pipeline";
 import type { Artifact } from "@/lib/studio";
 import { decideArtifact, runStage } from "../../actions";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views";
 import { ImageModelPicker, isStyleBody, StyleRefs, StyleScout, StyleView } from "./style-view";
@@ -44,6 +44,25 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
         .orderBy(desc(schema.jobs.createdAt))
         .limit(1)
     : [];
+  const versionIds = [...new Set(Object.values(latest).flatMap((a) => a?.guidelineVersionIds ?? []))];
+  const applied = new Map(
+    (versionIds.length
+      ? await db
+          .select({
+            id: schema.guidelineVersions.id,
+            version: schema.guidelineVersions.version,
+            body: schema.guidelineVersions.body,
+            guidelineId: schema.guidelines.id,
+            title: schema.guidelines.title,
+            scope: schema.guidelines.scope,
+            current: schema.guidelines.currentVersion,
+          })
+          .from(schema.guidelineVersions)
+          .innerJoin(schema.guidelines, eq(schema.guidelines.id, schema.guidelineVersions.guidelineId))
+          .where(inArray(schema.guidelineVersions.id, versionIds))
+      : []
+    ).map((v) => [v.id, v]),
+  );
   const scoutBusy = !!scoutJob && (scoutJob.status === "queued" || scoutJob.status === "running");
   return (
     <ol className="space-y-3">
@@ -123,9 +142,12 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                   ) : null}
 
                   {a ? (
-                    <p className="mt-3 text-[11px] text-ink-faint">
-                      {formatDate(a.updatedAt)} · 지침 {a.guidelineVersionIds.length}개 버전 적용 · 입력 지문 {a.inputHash || "없음"}
-                    </p>
+                    <details className="mt-3 text-[11px] text-ink-faint">
+                      <summary className="cursor-pointer">
+                        {formatDate(a.updatedAt)} · 지침 {a.guidelineVersionIds.length}개 버전 적용 (눌러서 보기) · 입력 지문 {a.inputHash || "없음"}
+                      </summary>
+                      <AppliedGuidelines ids={a.guidelineVersionIds} applied={applied} />
+                    </details>
                   ) : null}
 
                   {reviewable ? (
@@ -253,5 +275,43 @@ function ArtifactView({ body, markdown }: { body: Record<string, unknown>; markd
     <pre className="max-h-[480px] overflow-auto rounded-[5px] bg-paper px-4 py-3 text-[12px] leading-relaxed">
       {JSON.stringify(body, null, 2)}
     </pre>
+  );
+}
+
+const SCOPE_LABEL = { global: "공통", genre: "장르", series: "작품", episode: "회차" } as const;
+type Applied = {
+  id: string;
+  version: number;
+  body: { rules?: { code: string; text: string }[] };
+  guidelineId: string;
+  title: string;
+  scope: keyof typeof SCOPE_LABEL;
+  current: number;
+};
+
+/** 이 결과물을 만들 때 실제로 읽힌 지침 목록. 지금 최신 버전이 아니면 알려줘요. */
+function AppliedGuidelines({ ids, applied }: { ids: string[]; applied: Map<string, Applied> }) {
+  const rows = ids.map((id) => applied.get(id)).filter((v): v is Applied => !!v);
+  if (!rows.length) return <p className="mt-1.5">이 결과물에 기록된 지침이 없어요.</p>;
+  const old = rows.filter((v) => v.version < v.current).length;
+  return (
+    <div className="mt-1.5 rounded-[5px] bg-paper-sunk px-3 py-2 text-[12px] text-ink-soft">
+      <p className="mb-1">
+        만들 때 읽힌 지침이에요.{" "}
+        {old ? <span className="text-plum">그 뒤에 {old}개가 고쳐졌어요. 다시 만들면 최신 지침이 반영돼요.</span> : "모두 지금 최신 버전이에요."}
+      </p>
+      <ul className="space-y-0.5">
+        {rows.map((v) => (
+          <li key={v.id}>
+            <a href={`/studio/guidelines/${v.guidelineId}`} className="text-indigo underline-offset-2 hover:underline">
+              [{SCOPE_LABEL[v.scope]}] {v.title}
+            </a>{" "}
+            v{v.version} · 규칙 {v.body.rules?.length ?? 0}개
+            {v.body.rules?.length ? <span className="text-ink-faint"> ({v.body.rules.map((r) => r.code).join(", ")})</span> : null}
+            {v.version < v.current ? <span className="text-plum"> · 지금은 v{v.current}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
