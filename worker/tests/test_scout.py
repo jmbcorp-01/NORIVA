@@ -112,6 +112,20 @@ def test_research_resumes_after_pause_turn():
     assert sent == [["user"], ["user", "assistant"]]  # 이어 보낼 때 '계속' 같은 말을 덧붙이지 않아요
 
 
+def test_json_retries_with_bigger_limit_when_truncated():
+    msgs = [_msg("max_tokens", [_text('{"a": ')], 0), _msg("end_turn", [_text('{"a": 1}')], 0)]
+    limits = []
+
+    def stream(**kw):
+        limits.append(kw["max_tokens"])
+        return _Stream(msgs.pop(0))
+
+    client = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(stream=stream)))
+    r = TextModel("claude-opus-5-5", "high", client=client).json("sys", "task", {"type": "object"}, max_tokens=4000)
+    assert r.data == {"a": 1} and limits == [4000, 32000]
+    assert r.result.usage["output_tokens"] == 10  # 잘린 첫 호출 비용도 합쳐 기록
+
+
 # ── DB 흐름 ──
 
 

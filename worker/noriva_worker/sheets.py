@@ -239,7 +239,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                 ),
                 FIX_SCHEMA,
                 effort="medium",
-                max_tokens=8000,
+                max_tokens=32000,
             )
             costs.add(r.result.cost_entry())
             rule_suggestions = [x.strip() for x in r.data.get("rules") or [] if x and x.strip()][:6]
@@ -260,7 +260,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         task = render_task("characters", ctx).replace("# 과제: ③ 인물", "# 과제: ④+ 인물 시트 — 외모 명세 고정") + SPEC_TASK
         if instruction:
             task += f"\n\n## 대표의 추가 지시 (가장 우선)\n{instruction}"
-        r = llm.json(system, task, SPEC_SCHEMA, effort="medium", max_tokens=16000)
+        r = llm.json(system, task, SPEC_SCHEMA, effort="medium", max_tokens=32000)
         costs.add(r.result.cost_entry())
         chars = r.data["characters"][:12]
         seen: set[str] = set()
@@ -285,7 +285,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             MASTER_SCHEMA,
             images=[thumbnail(m, 1024) for m in masters],
             effort="medium",
-            max_tokens=4000,
+            max_tokens=16000,
         )
         costs.add(r.result.cost_entry())
         ids = {c["id"] for c in todo}
@@ -317,7 +317,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             CHECK_SCHEMA,
             images=[thumbnail(data)] + check_refs,
             effort="medium",
-            max_tokens=8000,
+            max_tokens=16000,
         )
         local.append(r.result.cost_entry())
         d = r.data
