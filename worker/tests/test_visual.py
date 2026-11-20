@@ -92,7 +92,9 @@ class FakeModel:
                 {"id": "Sun Jeong", "name": "순정", "kind": "person", "role": "main", "appearance": "man, 30, topknot, dark navy durumagi",
                  "period_notes": "straight ring-pommel sword, no guard", "never": ["curved katana", "tsuba"]},
                 {"id": "cow", "name": "누렁소", "kind": "animal", "role": "minor", "appearance": "yellow ox", "period_notes": "", "never": []},
-            ], "props": [{"id": "sword", "name": "환두대도", "owners": ["Sun Jeong", "nobody"], "description": "straight sword with a gold ring pommel"}]}
+            ], "props": [{"id": "sword", "name": "환두대도", "owners": ["Sun Jeong", "nobody"], "description": "straight sword with a gold ring pommel", "search": ["ring pommel sword"]}]}
+        elif "photos" in props:
+            data = {"photos": [{"index": 0, "prop_ids": ["sword"], "real_photo": True, "note": "실물"}]}
         elif "violations" in props:
             data = {"violations": [{"item": "긴 뿔", "character_ids": ["cow"], "note": "마스터의 소가 긴 뿔"}]}
         elif "updates" in props:
@@ -422,7 +424,20 @@ def test_kind_of_guesses_for_old_plans():
     assert kind_of({"id": "x", "name": "y", "kind": "creature", "appearance": "z"}) == "creature"
 
 
-def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path):
+def test_commons_license_filter():
+    from noriva_worker.commons import license_ok
+
+    assert license_ok("CC BY-SA 4.0") and license_ok("Public domain") and license_ok("CC0") and license_ok("KOGL Type 1")
+    assert not license_ok("CC BY-NC-SA 2.0") and not license_ok("CC BY-ND 4.0") and not license_ok("") and not license_ok("Fair use")
+
+
+def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path, monkeypatch):
+    from noriva_worker import commons
+
+    searched = []
+    monkeypatch.setattr(commons, "search_commons", lambda q, limit=6: searched.append(q) or [
+        {"title": "Ring sword.jpg", "url": "https://x/r.jpg", "page": "https://commons/r", "license": "CC BY-SA 4.0", "artist": "Museum"}])
+    monkeypatch.setattr(commons, "fetch", lambda url: png())
     c = store.conn
     sid, eid = _series(c)
     media = LocalMedia(str(tmp_path))
@@ -442,14 +457,20 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path):
     # 소품 시트를 먼저 그리고 검사(첫 장 불합격 → 둘째 합격), 주인은 명세에 있는 인물만
     prop = sheets["props"][0]
     assert prop["owners"] == ["sunjeong"] and prop["passed"] and prop["image"].endswith("prop-sword-2.png")
-    prop_prompts = [p for p, _ in images.prompts if p.count("Prop design sheet")]
-    assert len(prop_prompts) == 2 and "drawn with the blade fully visible" in prop_prompts[0]
+    prop_prompts = [(p, n) for p, n in images.prompts if p.count("Prop design sheet")]
+    assert len(prop_prompts) == 2 and "drawn with the blade fully visible" in prop_prompts[0][0]
+    # 업로드한 실물 사진이 없으면 공용에서 찾아, 검사를 통과한 사진을 소품 시트의 참고 그림으로
+    assert searched == [["ring pommel sword"]] and all(n == 1 for _, n in prop_prompts)
+    assert sheets["found_photos"][0]["license"] == "CC BY-SA 4.0" and sheets["found_photos"][0]["image"].endswith("ref-sword-1.jpg")
     # 금지 단어는 그림 지시에 넣지 않고 검사에서만 써요. 글자·장식 금지는 늘 넣어요.
     sheet_prompts = [(p, n) for p, n in images.prompts if "turnaround sheet" in p]
     assert not any("katana" in p or "Must not include" in p for p, _ in sheet_prompts)
     assert all("no view labels" in p for p, _ in sheet_prompts)
     assert sheets["summary"] == {"characters": 2, "passed": 2, "props": 1, "props_passed": 1}
-    assert len(images.prompts) == 6
+    assert len(images.prompts) == 7
+    # 마스터에 금지 소품이 있으면 그것을 지운 깨끗한 마스터를 먼저 만들어 씀
+    assert images.prompts[0][0].startswith("Edit reference image 1. Remove these things completely: 긴 뿔") and images.prompts[0][1] == 1
+    assert sheets["clean_masters"] and sheets["clean_masters"][0].endswith("master-clean-1.png")
     # 순정은 화풍 마스터 + 소품 시트를 참조로, 고증 사진은 넣지 않음. 마스터에 금지 소품이 있는 소는 마스터 없이.
     assert sheets["master_warnings"][0]["characters"] == ["cow"]
     assert all(n == 0 for p, n in sheet_prompts if "누렁소" in p)

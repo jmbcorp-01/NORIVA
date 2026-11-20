@@ -27,6 +27,9 @@ type SheetsBody = {
   redrawn?: string[];
   rule_suggestions?: string[];
   master_warnings?: { item: string; note: string; characters: string[] }[];
+  clean_masters?: string[];
+  found_photos?: { prop: string; image: string; title: string; page: string; license: string; artist: string }[];
+  photo_notes?: { index: number; real_photo: boolean; props: string[]; note: string }[];
   props?: { id: string; name: string; owners: string[]; description: string; image?: string; score?: number; passed?: boolean; defects?: Defect[] }[];
   summary: { characters: number; passed: number };
 };
@@ -80,6 +83,30 @@ export function SheetsView({
           <p className="mt-1 text-ink-faint">다시 그리면 지난 검사에서 걸린 치명·주요 문제를 자동으로 고치라고 넣어요. 지시는 더 바꾸고 싶은 것만 적으면 돼요.</p>
         </div>
       ) : null}
+      {body.clean_masters?.length ? (
+        <div className="mt-2 text-[12px] text-ink-soft">
+          <p>화풍 마스터에서 금지 소품과 장식을 지운 깨끗한 마스터로 그렸어요. ⑦ 작화도 이 그림을 써요.</p>
+          <div className="mt-1 flex gap-2">
+            {body.clean_masters.map((k) => (
+              <ZoomImage key={k} src={mediaUrl(k)} alt="깨끗한 화풍 마스터" className="h-24 w-auto rounded-[4px] border border-line" loading="lazy" />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {body.photo_notes?.some((p) => !p.real_photo || !p.props.length) ? (
+        <div className="mt-2 rounded-[5px] border border-plum/40 px-3 py-2 text-[12px]">
+          <p className="font-medium text-plum">쓰지 않은 고증 사진이 있어요. 박물관 실물 사진으로 바꿔 주세요 (예: e뮤지엄 emuseum.go.kr).</p>
+          <ul className="mt-1 space-y-0.5 text-ink-soft">
+            {body.photo_notes
+              .filter((p) => !p.real_photo || !p.props.length)
+              .map((p) => (
+                <li key={p.index}>
+                  {p.index + 1}번 사진: {p.real_photo ? "어느 소품과도 맞지 않아요." : "실물 사진이 아니에요."} {p.note}
+                </li>
+              ))}
+          </ul>
+        </div>
+      ) : null}
       {body.master_warnings?.length ? (
         <p className="mt-2 text-[12px] text-plum">
           화풍 마스터에 금지 소품이 있어서 해당 인물은 마스터 없이 그렸어요: {body.master_warnings.map((w) => `${w.item}${w.characters.length ? ` (${w.characters.join(", ")})` : ""}`).join(" · ")}
@@ -92,6 +119,25 @@ export function SheetsView({
         <div className="mt-4">
           <p className="text-[13px] font-medium">소품 시트</p>
           <p className="text-[12px] text-ink-faint">고증 사진을 보고 소품만 먼저 그렸어요. 인물 시트와 ⑦ 작화가 이 모양을 그대로 따라요.</p>
+          {body.found_photos?.length ? (
+            <div className="mt-2 text-[12px] text-ink-soft">
+              <p>직접 찾아 쓴 실물 사진 (위키미디어 공용, 자유 이용 라이선스)</p>
+              <ul className="mt-1 flex gap-3 overflow-x-auto pb-1">
+                {body.found_photos.map((f) => (
+                  <li key={f.image} className="w-[140px] flex-none">
+                    <ZoomImage src={mediaUrl(f.image)} alt={f.title} className="aspect-square w-full rounded-[4px] border border-line object-cover" loading="lazy" />
+                    <a href={f.page} target="_blank" rel="noreferrer" className="mt-0.5 block truncate text-indigo hover:underline">
+                      {f.title}
+                    </a>
+                    <span className="block truncate text-ink-faint">
+                      {f.license}
+                      {f.artist ? ` · ${f.artist}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <ul className="mt-2 grid gap-3 sm:grid-cols-2">
             {body.props.map((p) => (
               <li key={p.id} className="text-[12px]">

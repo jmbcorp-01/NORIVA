@@ -393,7 +393,9 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         plan["style_prompt"] = style_body["candidates"][chosen]["style_prompt"]
         chosen_medium = style_body["candidates"][chosen].get("medium") or "cel"
         base = base_for(chosen_medium)
-    masters = [m for m in (media.get(k) for k in (style_body.get("style_masters") or [])[:2]) if m]
+    # ④+에서 금지 소품·장식을 지운 깨끗한 마스터를 만들었으면 그것을 써요
+    master_keys = (sheets_body.get("clean_masters") or []) if sheets_body.get("kind") == "sheets" else []
+    masters = [m for m in (media.get(k) for k in (master_keys or style_body.get("style_masters") or [])[:2]) if m]
 
     style = plan["style_prompt"]
     chars = {c["id"]: dict(c) for c in plan["characters"]}
