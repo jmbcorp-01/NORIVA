@@ -311,6 +311,8 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "Q-8", text: "화풍 통일 5점" },
         { code: "Q-9", text: "합격: 80점 이상, AI 티 없음 16점 이상, 치명 결함 0개." },
         { code: "Q-11", text: "민감 사항(X-1~X-6)과 한국 고증(H-1~H-5) 위반은 치명 결함이다." },
+        ...SENSITIVITY_RULES,
+        ...HISTORY_RULES,
         { code: "Q-10", text: "연속성(K-1~K-7) 어긋남은 앞뒤 컷 번호와 함께 적는다. 얼굴이나 고정 소품이 다른 인물처럼 보이면 치명 결함이다." },
       ],
       banned: [...KO_BANNED, ...EN_BANNED],
