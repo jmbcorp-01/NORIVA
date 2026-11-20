@@ -209,8 +209,14 @@ def _organize_task(research_text: str, links: list[dict[str, str]]) -> str:
 
 
 MEASURE_TASK = CRITERIA_TASK.replace(
-    "첨부한 그림은 대표가 고른 시장 웹툰 화면 캡처예요.", "첨부한 그림은 시장 웹툰의 공식 대표 이미지(썸네일·캐릭터 일러스트)예요."
-) + "\n그림에서 확인되는 것만 적고, 이 이미지로 알 수 없는 항목(예: 컷 리듬)은 '대표 이미지로는 확인 불가'라고 적어라."
+    "첨부한 그림은 대표가 고른 시장 웹툰 화면 캡처예요.", "첨부한 그림은 시장 웹툰의 공식 대표 이미지(썸네일·캐릭터 일러스트)로 받은 것이에요."
+) + """
+먼저 is_artwork를 판정하라: 인물이나 장면이 그려진 웹툰 그림이면 true, 플랫폼·작품 로고, 글자만 있는 배너, 사진, 아이콘이면 false.
+false면 나머지 칸은 빈 문자열(그림자 단계는 0)로 두어라.
+true면 그림에서 확인되는 것만 적고, 이 이미지로 알 수 없는 항목(예: 컷 리듬)은 '대표 이미지로는 확인 불가'라고 적어라."""
+
+MEASURE_SCHEMA = _obj({"is_artwork": {"type": "boolean"}, **CRITERIA_SCHEMA["properties"]})
+MAX_MEASURES = 3  # 작품 하나에 그림 판정·측정은 최대 3번 (비용 상한)
 
 
 def run_style_scout(
@@ -246,29 +252,37 @@ def run_style_scout(
         page, img_urls = lookup(w["title"], w["author"], w["platform"])
         if page:
             w["url"] = page
-        raws = [b for b in (get_image(u) for u in img_urls) if b]
-        # 2) 못 찾으면 작품 주소·인용 링크의 대표 이미지(og:image)
         tried = _image_sources(w, w["url"], research.links)
-        if not raws:
+
+        # 2) 받을 그림 후보: 플랫폼 검색 그림, 그다음 작품 주소·인용 링크의 대표 이미지(og:image)
+        def candidates() -> Any:
+            for u in img_urls:
+                yield u, get_image(u)
             for src in tried:
-                b = fetch(src)
-                if b:
-                    raws = [b]
-                    break
-        if not raws:
-            log.info("화풍 참고작 대표 이미지 못 받음: %s (플랫폼 검색 %s, 시도 %d곳: %s)", w["title"], page or "없음", len(tried), ", ".join(tried) or "주소 없음")
-            continue
-        imgs = []
-        for b in raws[:2]:
+                yield src, fetch(src)
+
+        attempts: list[str] = []
+        for src, raw in candidates():
+            if len(attempts) >= MAX_MEASURES:
+                break
+            if not raw:
+                continue
             try:
-                imgs.append(thumbnail(b, 1280))
+                img = thumbnail(raw, 1280)
             except Exception:  # noqa: BLE001 - 깨진 그림은 건너뛰어요
-                pass
-        if not imgs:
-            continue
-        log.info("화풍 참고작 대표 이미지 %d장으로 측정: %s", len(imgs), w["title"])
-        r = model.json(SYSTEM, MEASURE_TASK, CRITERIA_SCHEMA, images=imgs, effort="medium", max_tokens=6000)
-        costs.append(r.result.cost_entry())
-        w["traits"] = r.data
-        w["measured"] = True
+                continue
+            r = model.json(SYSTEM, MEASURE_TASK, MEASURE_SCHEMA, images=[img], effort="medium", max_tokens=6000)
+            costs.append(r.result.cost_entry())
+            if not r.data.get("is_artwork"):
+                attempts.append(f"{src} (로고·글자 이미지)")
+                continue
+            w["traits"] = {k: v for k, v in r.data.items() if k != "is_artwork"}
+            w["measured"] = True
+            log.info("화풍 참고작 그림으로 측정: %s (%s)", w["title"], src)
+            break
+        if not w["measured"]:
+            log.info(
+                "화풍 참고작 그림 못 찾음: %s (플랫폼 검색 %s, 시도: %s)",
+                w["title"], page or "없음", ", ".join(attempts) or ", ".join(tried) or "주소 없음",
+            )
     return works, costs

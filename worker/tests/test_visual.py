@@ -80,6 +80,10 @@ class FakeModel:
                 {"title": "링크없음", "platform": "카카오", "author": "", "url": "https://made.up/x", "why": "", "traits": traits},
                 {"title": "공식작", "platform": "네이버웹툰", "author": "", "url": "https://comic.naver.com/webtoon/list?titleId=99", "why": "", "traits": traits},
             ]}
+        elif "is_artwork" in props:
+            w = Image.open(io.BytesIO(images[0])).size[0]
+            data = {"is_artwork": w >= 20, "line": "측정 선", "coloring": "셀", "shading_steps": 2, "palette": "", "proportions": "",
+                    "faces": "", "backgrounds": "", "effects": "집중선", "panel_rhythm": "", "avoid": ""}
         elif "shading_steps" in props:
             data = {"line": "굵은 외곽선", "coloring": "셀", "shading_steps": 2, "palette": "고채도", "proportions": "8등신",
                     "faces": "눈 중간", "backgrounds": "색면", "effects": "집중선", "panel_rhythm": "클로즈업 많음", "avoid": "수채"}
@@ -315,10 +319,11 @@ def test_style_scout_suggestions_feed_style_without_names(store, tmp_path, monke
 
     def lookup(title, author, platform):
         looked.append(title)
-        return ("https://comic.naver.com/webtoon/list?titleId=5", ["https://image-comic.pstatic.net/x.jpg"]) if title == "링크없음" else ("", [])
+        return ("https://comic.naver.com/webtoon/list?titleId=5", ["https://cdn/logo.png", "https://cdn/x.jpg"]) if title == "링크없음" else ("", [])
 
     monkeypatch.setattr(ss, "lookup_platform", lookup)
-    monkeypatch.setattr(ss, "fetch_image", lambda url: png())
+    # 첫 그림은 작은 로고 → 웹툰 그림이 아니라고 판정되고, 다음 그림으로 재요
+    monkeypatch.setattr(ss, "fetch_image", lambda url: png(size=(10, 10)) if "logo" in url else png())
     c = store.conn
     sid, _ = _series(c)
     model, images = FakeModel(), FakeImages()
@@ -339,7 +344,9 @@ def test_style_scout_suggestions_feed_style_without_names(store, tmp_path, monke
     # 플랫폼 검색 그림이 있으면 그걸로, 없으면 작품 주소의 대표 이미지로 재요
     assert fetched == ["https://comic.example/1", "https://comic.naver.com/webtoon/list?titleId=99"]
     assert not works[0]["measured"] and works[1]["measured"] and works[2]["measured"]
-    assert works[0]["traits"]["shading_steps"] == 3 and works[1]["traits"]["shading_steps"] == 2
+    assert works[0]["traits"]["shading_steps"] == 3 and works[1]["traits"]["line"] == "측정 선" and "is_artwork" not in works[1]["traits"]
+    measures = [call for call in model.calls if "is_artwork" in call[0]]
+    assert len(measures) == 3  # 링크없음: 로고 1 + 그림 1, 공식작: 그림 1
 
     c.execute("update series set brief = brief || %s where id = %s", (Jsonb({"styleChoice": [1]}), sid))
     model.calls.clear()
