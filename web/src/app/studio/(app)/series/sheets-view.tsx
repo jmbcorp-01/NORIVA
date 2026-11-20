@@ -1,7 +1,7 @@
 import { Badge, Button, Input } from "@/components/ui";
 import { ZoomImage } from "@/components/zoom-image";
 import { imageModelLabel } from "@/lib/pipeline";
-import { redrawSheets, updateHistoryRefs } from "../../actions";
+import { addSeriesRules, redrawSheets, updateHistoryRefs } from "../../actions";
 import { mediaUrl } from "./panel-views";
 
 type Defect = { code: string; severity: "critical" | "major" | "minor"; note: string };
@@ -25,6 +25,7 @@ type SheetsBody = {
   medium?: string;
   model?: string | null;
   redrawn?: string[];
+  rule_suggestions?: string[];
   summary: { characters: number; passed: number };
 };
 
@@ -51,6 +52,8 @@ export function SheetsView({
 }) {
   const pics = body.characters.filter((c) => c.sheet).map((c) => ({ src: mediaUrl(c.sheet!), alt: `${c.name} 인물 시트` }));
   return (
+    <div>
+      {body.rule_suggestions?.length ? <RuleSuggestions rules={body.rule_suggestions} seriesId={seriesId} back={back} /> : null}
     <form action={redrawSheets}>
       <input type="hidden" name="back" value={back} />
       <input type="hidden" name="artifactId" value={artifactId} />
@@ -117,6 +120,34 @@ export function SheetsView({
           <span className="w-full text-[11px] text-ink-faint">인물 한 명에 약 $0.3~0.6이에요. 외모 명세 자체를 바꾸려면 ③ 인물을 고쳐 승인한 뒤 이 단계를 다시 생성하세요.</span>
         </div>
       ) : null}
+    </form>
+    </div>
+  );
+}
+
+/** 대표 교정을 작품 지침으로: 한 번 더하면 이후 인물 시트, 작화, 검수가 모든 회차에서 지키고 검사해요 */
+function RuleSuggestions({ rules, seriesId, back }: { rules: string[]; seriesId: string; back: string }) {
+  return (
+    <form action={addSeriesRules} className="mb-4 rounded-[5px] border border-line px-4 py-3 text-[13px]">
+      <input type="hidden" name="back" value={back} />
+      <input type="hidden" name="seriesId" value={seriesId} />
+      <p className="font-medium">작품 지침 후보</p>
+      <p className="mt-0.5 text-[12px] text-ink-soft">
+        이번에 고친 내용을 작품 지침으로 남기면, 이후 인물 시트·작화·검수가 모든 회차에서 이 규칙을 지키고 검사해요. 이미 들어간 규칙은 다시 더하지 않아요.
+      </p>
+      <ul className="mt-2 space-y-1">
+        {rules.map((r) => (
+          <li key={r}>
+            <label className="inline-flex min-h-[32px] cursor-pointer items-start gap-2">
+              <input type="checkbox" name="rules" value={r} defaultChecked className="mt-0.5 size-4 flex-none accent-[var(--color-pine)]" />
+              <span>{r}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <Button type="submit" className="mt-2">
+        작품 지침에 더하기
+      </Button>
     </form>
   );
 }

@@ -83,7 +83,8 @@ FIX_SCHEMA = _obj(
     {
         "updates": _arr(
             _obj({"id": _STR, "appearance": _STR, "period_notes": _STR, "never": _arr(_STR), "edit": _STR})
-        )
+        ),
+        "rules": _arr(_STR),
     }
 )
 
@@ -96,6 +97,8 @@ FIX_TASK = """# 과제: ④+ 인물 시트 — 대표 지시를 고정 명세에
 - edit: 이전 시트 그림에서 바꿀 것만 적은 영어 편집 지시 한두 문장
   (예: Replace the sword with a straight single-edged Silla ring-pommel sword (hwandu daedo): no guard at all, plain grip, round ring at the pommel end, straight plain scabbard.).
   이 인물에 해당하는 지시가 없으면 빈 문자열.
+- rules: 이 지시를 이 작품의 모든 회차가 지켜야 할 규칙으로 바꾼 한국어 문장 목록. 인물 이름과 구체적인 생김새를 넣는다
+  (예: "순정의 칼은 코등이 없는 곧은 외날 환두대도로, 손잡이 끝에 둥근 고리가 있다."). 구도처럼 이번 그림에만 해당하는 지시는 빼고, 없으면 빈 목록.
 
 ## 대표 지시
 {instruction}
@@ -186,6 +189,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     # 1. 고정 명세: 고른 인물만 다시 그릴 때는 이전 명세를 쓰고, 대표 지시가 있으면 그 인물 명세에 반영해요
     #    (반영하지 않으면 ⑦ 작화가 예전 명세로 다시 그려요)
     edits: dict[str, str] = {}
+    rule_suggestions: list[str] = []
     if only and prev.get("kind") == "sheets":
         chars = [dict(c) for c in prev["characters"]]
         targets = [c for c in chars if c["id"] in only]
@@ -199,6 +203,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                 max_tokens=8000,
             )
             costs.add(r.result.cost_entry())
+            rule_suggestions = [x.strip() for x in r.data.get("rules") or [] if x and x.strip()][:6]
             for u in r.data.get("updates") or []:
                 c = next((x for x in targets if x["id"] == _slug(u.get("id", ""))), None)
                 if not c:
@@ -316,6 +321,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         "medium": medium,
         "model": model,
         "redrawn": [c["id"] for c in todo] if only else [],
+        "rule_suggestions": rule_suggestions,
         "summary": {"characters": len(final), "passed": sum(1 for c in final if c.get("passed"))},
     }
     return body, list(costs)

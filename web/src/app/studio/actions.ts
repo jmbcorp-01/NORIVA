@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNull, max, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { checkCredentials, endSession, requireOwner, startSession } from "@/lib/auth";
@@ -462,6 +462,72 @@ export async function redrawSheets(formData: FormData) {
   }
   revalidatePath(path);
   redirect(path);
+}
+
+/** 인물 시트를 고치며 나온 대표 교정을 작품 지침에 규칙(W-n)으로 더해요.
+ *  캐릭터·작화 디렉터·작화·검수 지침에 같이 들어가서, 이후 모든 단계와 회차가 지키고 검사해요. */
+export async function addSeriesRules(formData: FormData) {
+  const owner = await requireOwner();
+  const path = String(formData.get("back"));
+  const seriesId = String(formData.get("seriesId"));
+  const rules = formData
+    .getAll("rules")
+    .map((r) => String(r).trim())
+    .filter((r) => r && r.length <= 400)
+    .slice(0, 10);
+  try {
+    if (!rules.length) throw new StudioError("추가할 규칙을 하나 이상 골라 주세요");
+    const [s] = await db.select({ title: schema.series.title }).from(schema.series).where(eq(schema.series.id, seriesId));
+    if (!s) throw new StudioError("작품을 찾을 수 없어요");
+    await db.transaction(async (tx) => {
+      for (const agent of ["character", "art_director", "artist", "reviewer"] as const) {
+        let [g] = await tx
+          .select()
+          .from(schema.guidelines)
+          .where(and(eq(schema.guidelines.scope, "series"), eq(schema.guidelines.scopeRef, seriesId), eq(schema.guidelines.agent, agent)));
+        if (!g) {
+          [g] = await tx
+            .insert(schema.guidelines)
+            .values({ scope: "series", scopeRef: seriesId, agent, title: `${s.title} 작품 지침`, currentVersion: 0 })
+            .returning();
+        }
+        const [latest] = await tx
+          .select()
+          .from(schema.guidelineVersions)
+          .where(eq(schema.guidelineVersions.guidelineId, g.id))
+          .orderBy(desc(schema.guidelineVersions.version))
+          .limit(1);
+        const body: GuidelineBody = latest?.body ?? {
+          role: "위 단계 지침에 더해 이 작품에만 적용할 내용이에요.",
+          rules: [],
+          banned: [],
+          outputFormat: "",
+          examples: "",
+        };
+        const have = new Set(body.rules.map((r) => r.text));
+        let n = body.rules.filter((r) => /^W-\d+$/.test(r.code)).length;
+        const add = rules.filter((t) => !have.has(t)).map((text) => ({ code: `W-${++n}`, text }));
+        if (!add.length) continue;
+        const version = (latest?.version ?? 0) + 1;
+        await tx.insert(schema.guidelineVersions).values({
+          guidelineId: g.id,
+          version,
+          body: { ...body, rules: [...body.rules, ...add] },
+          note: "인물 시트 교정에서 추가",
+        });
+        await tx.update(schema.guidelines).set({ currentVersion: version, updatedAt: new Date() }).where(eq(schema.guidelines.id, g.id));
+      }
+      await tx.insert(schema.decisionLedger).values({
+        actor: owner.email,
+        action: "add_series_rules",
+        after: { seriesId, rules },
+      });
+    });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(`${path}${path.includes("?") ? "&" : "?"}rules=1`);
 }
 
 /** 회차 제작비 상한(달러)을 정해요. 작품의 모든 회차에 같이 적용돼요. 0이면 상한 없음. */
