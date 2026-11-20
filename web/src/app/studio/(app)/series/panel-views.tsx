@@ -27,6 +27,7 @@ type ArtBody = {
   characters: { id: string; name: string; appearance: string; sheet?: string }[];
   panels: ArtPanel[];
   flagged: number[];
+  rhythm_warnings?: string[];
   redrawn?: number[];
   pending?: number[];
   test_panels?: number[];
@@ -79,6 +80,16 @@ export function ArtView({
         {body.redrawn?.length ? <span> · 이번에 다시 그린 컷 {body.redrawn.join(", ")}</span> : null}
       </p>
 
+      {body.rhythm_warnings?.length ? (
+        <div className="rounded-[5px] border border-plum/40 px-3 py-2 text-[12px]">
+          <p className="font-medium text-plum">화면 리듬 점검: 콘티에서 고치면 다시 그리는 것보다 싸요.</p>
+          <ul className="mt-1 space-y-0.5 text-ink-soft">
+            {body.rhythm_warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <RuleTally panels={body.panels} />
 
       {body.characters.some((c) => c.sheet) ? (

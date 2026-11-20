@@ -99,6 +99,8 @@ PLAN_SCHEMA = _obj(
                 {
                     "index": _INT,
                     "shot": _STR,
+                    "camera": _STR,
+                    "depth": _STR,
                     "height": {"type": "string", "enum": ["short", "normal", "long"]},
                     "gap_before": {"type": "string", "enum": ["none", "normal", "long"]},
                     "description": _STR,
@@ -118,9 +120,13 @@ PLAN_TASK = """# 과제: ⑦ 작화 준비 — 승인된 콘티를 컷 목록으
 - panels: 콘티의 컷 순서를 지킨다. index는 1부터. 최대 {max_panels}컷.
 - description: 영어로, 대본 없이도 그릴 수 있게 구체적으로(장소, 시대 고증, 조명, 구도, 자세, 표정). 글자나 말풍선은 쓰지 않는다.
   ③+ 고증 자료가 있으면 옷, 머리, 무기, 건물, 동물·요괴는 그 자료 항목의 영어 생김새 문구를 그대로 쓴다. 금지 단어 목록은 쓰지 않는다.
+- camera: 콘티의 카메라 각도를 영어로 그대로 옮기고 구체적으로(예: low angle from knee height looking up, wide-angle lens, frame tilted 15 degrees / high angle from above the roof / over-the-shoulder from behind Suro).
+  웹툰은 입체적인 화면이 기본이다. 콘티가 정면 눈높이를 분명히 지시한 컷만 eye level로 쓰고, 나머지는 각도·렌즈·기울기로 깊이를 만든다.
+- depth: 앞·중간·뒤 층을 영어로(예: foreground: out-of-focus net poles; midground: Suro running; background: dry bay). 클로즈업은 배경 처리(색면, 효과선)로 쓴다.
+- 이웃한 컷끼리 샷 크기와 각도를 바꿔 리듬을 만든다(같은 샷 3번 연속 금지, S-12~S-16).
 - character_ids: 그 컷에 실제로 보이는 인물만.
 - dialogue: 콘티의 한국어 대사를 고치지 말고 그대로. speaker는 인물 id, 내레이션은 "narration".
-- sfx: 한국어 효과음, 없으면 빈 문자열. avoid: 이 컷에 보이면 안 되는 것(영어), 없으면 빈 문자열.
+- sfx: 한국어 효과음, 없으면 빈 문자열. avoid: 이 컷에 보이면 안 되는 것(영어, 검사에서만 쓴다), 없으면 빈 문자열.
 - characters: 등장하는 인물마다 짧은 id(영문 소문자)와 이름, kind(사람 person, 동물 animal, 용·요괴 같은 존재 creature), 모든 컷에 똑같이 쓸 영어 외모 명세(나이, 얼굴, 머리, 옷, 고정 소품). 동물도 그 컷에 보이면 character_ids에 넣는다.
 - style_prompt: 화풍 카드를 영어 한 단락으로(선, 채색, 명암, 팔레트, 질감). 특정 작가 이름은 쓰지 않는다.
 """
@@ -142,6 +148,8 @@ CHECK_TASK = """# 과제: 컷 그림 자동 결함 검사
 people_count에는 사람만 센다(동물과 요괴는 빼고).
 - 치명(critical): 글자·가짜 글자·한자·워터마크(간판과 부적의 글자 포함), 그림 안에 그린 컷 테두리·여백·한 장에 여러 컷(만화책 페이지처럼 보임), 인물 수가 틀림, 손·얼굴 해부학 붕괴, 일본·중국식 요소(도리이, 일본도, 기모노 등), 기존 작품과 닮음.
 - 주요(major): {medium_rule}, 인물 외모가 명세와 다름, 다른 컷과 등신·화풍이 다름, AI 특유의 매끈한 광택·과한 보케·무의미한 배경 디테일.
+- 구도(code C-1, 주요): 지시한 샷 크기나 카메라 각도(camera)와 다름, 원근·깊이 없이 인물을 정면 눈높이 가운데 세운 평면 구도(그림책·삽화식).
+  단, camera가 정면 눈높이를 지시한 컷은 평면 구도를 결함으로 보지 않는다. 'avoid'에 적힌 것이 보이면 주요다.
 - 경미(minor): 그 밖에 고치면 좋은 것.
 score는 0~100, 그대로 연재할 수 있을 때만 80 이상. 결함마다 code에 지침 규칙 코드(예: AI-03, R-5)를 적어라.
 인물마다 '절대 그리면 안 되는 것(never)'이 보이면 치명(critical)이다.
@@ -222,6 +230,24 @@ def choose_test_panels(panels: list[dict[str, Any]], n: int) -> list[int]:
     return sorted(picked)
 
 
+def rhythm_warnings(panels: list[dict[str, Any]]) -> list[str]:
+    """같은 샷 크기가 3컷 넘게 이어지거나, 각도가 정면 눈높이로만 이어지는 구간을 찾아요 (S-12~S-14)."""
+    out: list[str] = []
+    run = 1
+    for i in range(1, len(panels)):
+        same = (panels[i].get("shot") or "").strip().lower() == (panels[i - 1].get("shot") or "").strip().lower()
+        run = run + 1 if same else 1
+        if run == 3:
+            out.append(f"{panels[i - 2]['index']}~{panels[i]['index']}컷: 같은 샷({panels[i].get('shot', '')})이 3번 이어져요")
+    flat = 0
+    for p in panels:
+        cam = (p.get("camera") or "").lower()
+        flat = flat + 1 if (not cam or "eye level" in cam or "eye-level" in cam) else 0
+        if flat == 4:
+            out.append(f"{p['index']}컷 근처: 정면 눈높이 컷이 4번 이어져 화면이 평면적이에요")
+    return out
+
+
 def _panel_prompt(
     style: str,
     panel: dict[str, Any],
@@ -240,6 +266,9 @@ def _panel_prompt(
         base,
         f"One single webtoon panel, {panel['shot']} shot, one continuous image filling the whole frame edge to edge."
         " Not a comic page: no panel borders, no frames, no gutters, no split panels, no paper margins.",
+        f"Camera: {panel['camera']}." if panel.get("camera") else "",
+        f"Depth: {panel['depth']}." if panel.get("depth") else "",
+        "Dynamic cinematic webtoon composition with clear perspective and depth, not a flat centered storybook layout.",
         panel["description"],
         ("Characters: " + " | ".join(
             # 금지 목록은 검사에서만 써요. 그림 지시에 금지 단어를 넣으면 오히려 그 모양을 떠올려요.
@@ -264,10 +293,8 @@ def _panel_prompt(
         (f"Exactly {len(humans)} visible person(s)." if humans else "No people in this panel.")
         + (" Also visible: " + ", ".join(c["name"] for c in others) + "." if others else ""),
         f"Style: {style}",
-        "Korean setting: no Japanese or Chinese architecture, torii gates, kimono or kanji signage.",
         "Signs, papers and talismans are blank or carry only simple abstract red marks."
         " No text, letters, speech bubbles, signature or watermark anywhere.",
-        f"Avoid: {panel['avoid']}." if panel.get("avoid") else "",
         f"Director's note: {extra}" if extra else "",
     ]
     return " ".join(p for p in parts if p)
@@ -436,7 +463,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         r = llm.json(
             system,
             CHECK_TASK.format(
-                panel=json.dumps({k2: panel[k2] for k2 in ("shot", "description", "character_ids", "avoid")}, ensure_ascii=False),
+                panel=json.dumps({k2: panel.get(k2, "") for k2 in ("shot", "camera", "depth", "description", "character_ids", "avoid")}, ensure_ascii=False),
                 cast=json.dumps([{"id": c["id"], "kind": kind_of(c), "appearance": c["appearance"], "never": c.get("never") or []} for c in cast], ensure_ascii=False) or "(없음)",
                 sheet_order=", ".join(f"{i + 2}번째 그림 = {c['name']}" for i, c in enumerate(sheet_cast)) or "(시트 없음)",
                 style=style,
@@ -536,6 +563,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         "characters": list(chars.values()),
         "panels": panels,
         "flagged": flagged,
+        "rhythm_warnings": rhythm_warnings(panels),
         "redrawn": [] if test_run or payload.get("keep_adopted") else redraw,
         "pending": pending,
         "test_panels": redraw if test_run else (prev.get("test_panels") or []),
