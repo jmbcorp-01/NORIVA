@@ -26,6 +26,20 @@ def license_ok(name: str) -> bool:
     return bool(name) and bool(_OK.search(name)) and not _BAD.search(name)
 
 
+def _queries(queries: list[str]) -> list[str]:
+    """검색어를 짧게 다듬어요. 공용 검색은 긴 문장에 결과가 거의 없어서, 4단어가 넘으면 앞 3단어짜리도 함께 찾아요."""
+    out: list[str] = []
+    for q in queries:
+        q = " ".join((q or "").replace('"', " ").split())
+        if not q:
+            continue
+        words = q.split()
+        for v in ([q, " ".join(words[:3])] if len(words) > 4 else [q]):
+            if v not in out:
+                out.append(v)
+    return out[:5]
+
+
 def search_commons(queries: list[str], limit: int = 6, http: Any = None) -> list[dict[str, Any]]:
     """검색어마다 공용의 파일을 찾아, 쓸 수 있는 라이선스의 사진만 돌려줘요."""
     import httpx
@@ -33,7 +47,7 @@ def search_commons(queries: list[str], limit: int = 6, http: Any = None) -> list
     client = http or httpx.Client(timeout=30, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for q in [q for q in queries if q and q.strip()][:3]:
+    for q in _queries(queries):
         try:
             r = client.get(
                 API,
