@@ -10,14 +10,38 @@ from __future__ import annotations
 import html
 import re
 from typing import Any, Callable
-from urllib.parse import urljoin
+import logging
+from urllib.parse import urljoin, urlparse
 
 from .images import thumbnail
 from .scout import ROOT_RULES
 from .style import CRITERIA_SCHEMA, CRITERIA_TASK
 from .visual import _STR, _arr, _obj
 
+log = logging.getLogger(__name__)
+
 MAX_IMAGE_BYTES = 6 * 1024 * 1024
+# 공식 연재 플랫폼 주소는 인용 목록에 없어도 받아요 (받아서 열리는지는 대표 이미지를 받을 때 확인돼요)
+OFFICIAL_HOSTS = (
+    "comic.naver.com", "series.naver.com", "webtoon.kakao.com", "page.kakao.com", "webtoons.com",
+    "lezhin.com", "ridibooks.com", "toptoon.com", "bomtoon.com", "mrblue.com",
+)
+_URL = re.compile(r"https?://[^\s)\]>\"']+")
+
+
+def _official(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in OFFICIAL_HOSTS)
+
+
+def _image_sources(w: dict[str, Any], url: str, links: list[dict[str, str]]) -> list[str]:
+    """대표 이미지를 받아 볼 주소들: 작품 주소, 그 작품을 다룬 인용 링크(리뷰 글의 대표 이미지도 보통 작품 표지예요)."""
+    out = [url] if url else []
+    title = w["title"].replace(" ", "")
+    for l in links:
+        if title and title in (l.get("title") or "").replace(" ", "") and l["url"] not in out:
+            out.append(l["url"])
+    return out[:4]
 _OG = re.compile(r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\'][^>]*>', re.I)
 _CONTENT = re.compile(r'content=["\']([^"\']+)["\']', re.I)
 
@@ -97,7 +121,7 @@ def _organize_task(research_text: str, links: list[dict[str, str]]) -> str:
 ## 출력 형식 (JSON)
 - works: 조사에서 확인된 작품 최대 5편. 확인 안 된 작품은 넣지 않는다.
 - title: 작품 제목, platform: 연재 플랫폼, author: 작가(글/그림)
-- url: 위 링크 중 그 작품의 공식 연재 페이지(없으면 그 작품을 다룬 링크). 위 목록에 없는 주소는 쓰지 않는다.
+- url: 그 작품의 공식 연재 페이지 주소(네이버웹툰 comic.naver.com, 카카오웹툰 webtoon.kakao.com, 카카오페이지 page.kakao.com 등). 조사 결과나 위 링크에 있는 주소만 쓰고 지어내지 않는다. 공식 주소가 없으면 그 작품을 다룬 위 링크.
 - why: 우리 작품에 어울리는 이유 한두 문장 (장르, 시대, 분위기, 독자층)
 - traits: 측정 가능한 화풍 특징을 짧은 한국어로. 캐릭터 디자인·장면 묘사 금지.
   line(선 굵기·강약·색), coloring(채색 방식), shading_steps(그림자 단계 수, 정수), palette(채도·명도 경향),
@@ -117,7 +141,7 @@ def run_style_scout(
     fetch = fetch or fetch_cover
     research = model.research(SYSTEM, scout_task(ctx), max_searches=12)
     organized = model.json(SYSTEM, _organize_task(research.text, research.links), SCHEMA, effort="medium", max_tokens=16000)
-    allowed = {l["url"] for l in research.links}
+    allowed = {l["url"] for l in research.links} | set(_URL.findall(research.text))
     works = []
     for w in organized.data.get("works", [])[:5]:
         title = (w.get("title") or "").strip()
@@ -129,7 +153,7 @@ def run_style_scout(
                 "title": title[:100],
                 "platform": (w.get("platform") or "").strip()[:50],
                 "author": (w.get("author") or "").strip()[:100],
-                "url": url if url in allowed else "",
+                "url": url if url.startswith("http") and (url in allowed or _official(url)) else "",
                 "why": (w.get("why") or "").strip()[:500],
                 "traits": w.get("traits") or {},
                 "measured": False,
@@ -138,8 +162,14 @@ def run_style_scout(
     costs = [*research.cost_entries(), organized.result.cost_entry()]
     # 글로 추정한 특징을, 공식 대표 이미지를 직접 보고 잰 값으로 바꿔요 (그림은 저장하지 않아요)
     for w in works:
-        raw = fetch(w["url"]) if w["url"] else None
+        raw = None
+        tried = _image_sources(w, w["url"], research.links)
+        for src in tried:
+            raw = fetch(src)
+            if raw:
+                break
         if not raw:
+            log.info("화풍 참고작 대표 이미지 못 받음: %s (시도 %d곳: %s)", w["title"], len(tried), ", ".join(tried) or "주소 없음")
             continue
         try:
             img = thumbnail(raw, 1280)
