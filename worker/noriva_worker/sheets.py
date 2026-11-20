@@ -63,7 +63,11 @@ CHECK_TASK = """# 과제: 인물 시트 검사
 
 첫 번째 그림이 검사할 인물 시트(설정화)다. {master_note}
 이 시트는 작품의 모든 회차에서 이 인물의 기준이 된다. 엄격하게 검사하라.
+먼저 명세의 period_notes와 appearance를 항목별로 하나씩 그림과 맞춰 본다(무기 생김새, 머리 모양, 머리 장식, 의상).
 - 치명(critical): 명세의 'never'에 있는 것이 보임, 시대·나라가 다른 무기나 복식(일본도, 코등이, 하카마, 기모노, 중국 청나라 옷 등), 글자·워터마크, 얼굴·손 해부학 붕괴.
+  칼은 특히 엄격하게 본다: 명세가 코등이 없는 칼인데 손잡이와 칼날 사이에 둥근·네모 코등이가 있음, 일본도식으로 끈을 마름모로 감은 손잡이,
+  휜 칼날이나 휜 칼집, 명세에 있는 고리자루(ring pommel)가 없음 — 이 중 하나라도 보이면 치명이다.
+  명세와 다른 머리 모양(예: 높이 올린 쪽머리가 명세인데 낮게 묶음)도 이 인물의 기준을 바꾸므로 치명으로 적는다.
 - 주요(major): 외모 명세와 다름(머리 모양·색, 의상 형태·길이·색, 고정 소품, 신발, 나이, 체형), 정면·측면·뒷모습이 서로 다른 사람처럼 보임, 고른 화풍과 다름.
 - 경미(minor): 그 밖에 고치면 좋은 것.
 code에는 규칙 코드를 적는다(외모 불일치 K-1, 고증 H-1·GA-3, 화풍 V-7, AI 결함 AI-xx).
@@ -71,7 +75,7 @@ score는 0~100. 이 시트를 30화 동안 그대로 써도 될 때만 80 이상
 
 ## 인물
 {spec}
-"""
+{note}"""
 
 SHEET_PASS = 80
 
@@ -160,13 +164,24 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         if masters
         else ""
     )
+    if history:
+        a = len(masters) + 2
+        master_note += (
+            f" {a}번째부터 {len(history)}장은 대표가 올린 고증 참고 사진이다. "
+            "시트의 무기·의상·머리 모양이 이 사진의 실제 생김새와 같은지 본다(그림체는 보지 않는다). 생김새가 다르면 치명이다."
+        )
+    check_refs = [thumbnail(m, 640) for m in masters] + [thumbnail(h, 640) for h in history]
 
     def check(c: dict[str, Any], data: bytes, local: list[dict[str, Any]]) -> dict[str, Any]:
         r = llm.json(
             system,
-            CHECK_TASK.format(master_note=master_note, spec=_spec_json(c)),
+            CHECK_TASK.format(
+                master_note=master_note,
+                spec=_spec_json(c),
+                note=f"\n## 대표의 지시 (이것도 지켰는지 본다)\n{instruction}\n" if only and instruction else "",
+            ),
             CHECK_SCHEMA,
-            images=[thumbnail(data)] + [thumbnail(m, 640) for m in masters],
+            images=[thumbnail(data)] + check_refs,
             effort="medium",
             max_tokens=8000,
         )
