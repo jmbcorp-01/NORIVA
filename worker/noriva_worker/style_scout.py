@@ -26,6 +26,7 @@ OFFICIAL_HOSTS = (
     "comic.naver.com", "series.naver.com", "webtoon.kakao.com", "page.kakao.com", "webtoons.com",
     "lezhin.com", "ridibooks.com", "toptoon.com", "bomtoon.com", "mrblue.com",
 )
+_GENERIC_OG = re.compile(r"/shared/ogImage|/og[_-]?default|/common/og|logo", re.I)
 _URL = re.compile(r"https?://[^\s)\]>\"']+")
 
 
@@ -59,7 +60,10 @@ def fetch_cover(url: str) -> bytes | None:
             m = _CONTENT.search(tag.group(0)) if tag else None
             if not m:
                 return None
-            img = http.get(urljoin(str(page.url), html.unescape(m.group(1))))
+            src = urljoin(str(page.url), html.unescape(m.group(1)))
+            if _GENERIC_OG.search(src):
+                return None  # 사이트 공용 대표 이미지(로고)는 작품 그림이 아니에요
+            img = http.get(src)
             if img.status_code != 200 or not img.headers.get("content-type", "").startswith("image/") or len(img.content) > MAX_IMAGE_BYTES:
                 return None
             return img.content
