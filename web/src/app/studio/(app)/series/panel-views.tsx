@@ -79,6 +79,8 @@ export function ArtView({
         {body.redrawn?.length ? <span> · 이번에 다시 그린 컷 {body.redrawn.join(", ")}</span> : null}
       </p>
 
+      <RuleTally panels={body.panels} />
+
       {body.characters.some((c) => c.sheet) ? (
         <div className="mt-4">
           <p className="mb-2 text-[12px] font-medium text-ink-soft">인물 시트 (모든 컷이 이 얼굴과 옷을 따라요 · 누르면 크게 보여요)</p>
@@ -310,5 +312,55 @@ function CompareGrid({
       </div>
       <p className="mt-1 text-[12px] text-ink-faint">고른 모델은 이 작품의 작화 모델로 저장돼 다음 회차에도 쓰여요.</p>
     </div>
+  );
+}
+
+/** 지침 점검표: 자동 검사에서 나온 결함을 규칙 코드별로 모아, 어떤 규칙을 몇 컷이 어겼는지 보여줘요. */
+function RuleTally({ panels }: { panels: ArtPanel[] }) {
+  const checked = panels.filter((p) => typeof p.score === "number");
+  if (!checked.length) return null;
+  const by = new Map<string, { worst: Defect["severity"]; panels: number[]; note: string }>();
+  const rank = { critical: 0, major: 1, minor: 2 } as const;
+  for (const p of checked)
+    for (const d of p.defects ?? []) {
+      const row = by.get(d.code) ?? { worst: d.severity, panels: [], note: d.note };
+      if (rank[d.severity] < rank[row.worst]) row.worst = d.severity;
+      if (!row.panels.includes(p.index)) row.panels.push(p.index);
+      by.set(d.code, row);
+    }
+  const rows = [...by.entries()].sort((a, b) => rank[a[1].worst] - rank[b[1].worst] || b[1].panels.length - a[1].panels.length);
+  return (
+    <details className="mt-3 rounded-[5px] bg-paper-sunk px-4 py-3 text-[13px]" open={rows.length > 0}>
+      <summary className="cursor-pointer text-[12px] font-medium text-ink-soft">
+        지침 점검표 · 검사한 {checked.length}컷 중 {checked.filter((p) => !(p.defects ?? []).length).length}컷은 어긴 규칙 없음
+        {rows.length ? ` · 어긴 규칙 ${rows.length}가지` : ""}
+      </summary>
+      {rows.length ? (
+        <table className="mt-2 w-full text-left text-[12px]">
+          <thead className="text-ink-faint">
+            <tr>
+              <th className="py-1 pr-3 font-medium">규칙</th>
+              <th className="py-1 pr-3 font-medium">가장 심한 정도</th>
+              <th className="py-1 pr-3 font-medium">어긴 컷</th>
+              <th className="py-1 font-medium">예시</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([code, r]) => (
+              <tr key={code} className="border-t border-line align-top">
+                <td className="py-1 pr-3 font-medium">{code}</td>
+                <td className={`py-1 pr-3 ${r.worst === "critical" ? "text-plum" : ""}`}>{SEVERITY[r.worst]}</td>
+                <td className="py-1 pr-3">
+                  {r.panels.length}컷 ({r.panels.sort((a, b) => a - b).join(", ")})
+                </td>
+                <td className="py-1 text-ink-soft">{r.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="mt-1 text-ink-soft">자동 검사에서 어긴 규칙이 없어요.</p>
+      )}
+    </details>
   );
 }
