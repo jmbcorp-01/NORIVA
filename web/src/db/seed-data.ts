@@ -256,7 +256,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
       ],
       banned: [],
       outputFormat:
-        "콘티 2~3안. 컷마다 샷 크기, 카메라 각도, 컷 세로 길이, 앞 여백, 등장인물과 위치, 표정, 조명, 대사, 효과음, 보이면 안 되는 것, 그림 지시문.",
+        "콘티 1안을 표 하나로 (⑦ 작화가 이 표의 컷을 그대로 그려요). 컷마다 샷 크기, 카메라 각도, 컷 세로 길이, 앞 여백, 등장인물과 위치, 표정, 조명, 대사, 효과음, 보이면 안 되는 것, 그림 지시문.",
       examples: "",
     },
   },

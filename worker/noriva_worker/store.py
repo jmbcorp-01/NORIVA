@@ -15,6 +15,7 @@ STAGE_LABEL_KO = {
     "story": "스토리",
     "characters": "인물",
     "style": "화풍",
+    "sheets": "인물 시트",
     "plot": "대본",
     "storyboard": "콘티",
     "art": "작화",

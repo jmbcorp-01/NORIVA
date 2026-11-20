@@ -408,6 +408,62 @@ export async function updateStyleRefs(formData: FormData) {
   redirect(path);
 }
 
+/** ④+ 인물 시트에 참조로 넣을 고증 참고 그림(유물·복식 사진) 올리기·빼기. 비공개로 두고 시트를 그릴 때만 그림 모델에 보내요. */
+export async function updateHistoryRefs(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back"));
+  const seriesId = String(formData.get("seriesId"));
+  try {
+    const [s] = await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId));
+    if (!s) throw new StudioError("작품을 찾을 수 없어요");
+    let refs = [...(s.brief.historyRefs ?? [])];
+    const remove = String(formData.get("remove") ?? "");
+    if (remove) {
+      refs = refs.filter((r) => r !== remove);
+    } else {
+      const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+      if (!files.length) throw new StudioError("올릴 그림을 골라 주세요");
+      if (refs.length + files.length > 3) throw new StudioError("고증 참고 그림은 3장까지예요");
+      for (const f of files) {
+        const ext = REF_TYPES[f.type];
+        if (!ext) throw new StudioError("PNG, JPG, WEBP 그림만 올릴 수 있어요");
+        if (f.size > 5 * 1024 * 1024) throw new StudioError("한 장에 5MB까지 올릴 수 있어요");
+        const key = `series/${seriesId}/history-refs/${crypto.randomUUID()}.${ext}`;
+        await putPrivate(key, new Uint8Array(await f.arrayBuffer()), f.type);
+        refs.push(key);
+      }
+    }
+    await db.update(schema.series).set({ brief: { ...s.brief, historyRefs: refs } }).where(eq(schema.series.id, seriesId));
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+/** ④+ 인물 시트에서 고른 인물만 다시 그려요. 외모 명세는 그대로, 지시는 그 인물들에게만 들어가요. */
+export async function redrawSheets(formData: FormData) {
+  const owner = await requireOwner();
+  const path = String(formData.get("back"));
+  const chars = formData.getAll("chars").map(String).filter((c) => /^[a-z0-9_-]{1,40}$/.test(c));
+  try {
+    if (!chars.length) throw new StudioError("다시 그릴 인물을 하나 이상 골라 주세요");
+    await startStage({
+      seriesId: String(formData.get("seriesId")),
+      episodeId: null,
+      stage: "sheets",
+      actor: owner.email,
+      instruction: String(formData.get("instruction") ?? "").trim(),
+      baseArtifactId: String(formData.get("artifactId")),
+      extra: { chars, base_artifact_id: String(formData.get("artifactId")) },
+    });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
 /** 작품의 그림 모델을 정해요. ④ 화풍 샘플과 ⑦ 작화가 이 모델로 그려요. 빈 값이면 작업 서버 기본 모델. */
 export async function setImageModel(formData: FormData) {
   await requireOwner();

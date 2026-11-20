@@ -3,15 +3,16 @@ import type { ReactNode } from "react";
 import { Card, LinkButton, PageHeader } from "@/components/ui";
 import { ALL_STAGES, STAGE_HELP, STAGE_INFO, type Stage } from "@/lib/pipeline";
 
-// 단계별 대략적인 시간과 비용 (claude-opus-5-5, 그림 1장 $0.04 기준. 실제 금액은 대시보드의 이번 달 제작비에 쌓여요)
+// 단계별 대략적인 시간과 비용 (claude-opus-5-5, 그림 Nano Banana Pro 2K 1장 약 $0.15 기준, 2026-11 1화 실측. 실제 금액은 대시보드의 이번 달 제작비에 쌓여요)
 const COST: Record<Stage, string> = {
-  concept: "2~5분 · 약 $0.3",
-  story: "3~8분 · 약 $0.5",
-  characters: "3~6분 · 약 $0.4",
-  style: "2~5분 · 약 $0.3",
-  plot: "3~6분 · 약 $0.4",
-  storyboard: "3~6분 · 약 $0.5",
-  art: "20~60분 · 회차당 약 $5~15",
+  concept: "2~5분 · 약 $0.4",
+  story: "3~8분 · 약 $0.8",
+  characters: "3~6분 · 약 $1",
+  style: "5~10분 · 약 $1.5 (샘플 그림 9장)",
+  sheets: "5~10분 · 인물 8명 기준 약 $2~4",
+  plot: "3~6분 · 약 $0.6",
+  storyboard: "5~10분 · 약 $1.2",
+  art: "시험 컷 10~15분 · 약 $3, 전체 30~60분 · 회차당 약 $25~35",
   lettering: "5~10분 · 약 $1",
   review: "3~6분 · 약 $0.5",
 };

@@ -6,6 +6,7 @@ export type Stage =
   | "story"
   | "characters"
   | "style"
+  | "sheets"
   | "plot"
   | "storyboard"
   | "art"
@@ -21,7 +22,7 @@ export type ArtifactStatus =
   | "stale"
   | "failed";
 
-export const SERIES_STAGES: Stage[] = ["concept", "story", "characters", "style"];
+export const SERIES_STAGES: Stage[] = ["concept", "story", "characters", "style", "sheets"];
 export const EPISODE_STAGES: Stage[] = ["plot", "storyboard", "art", "lettering", "review"];
 export const ALL_STAGES: Stage[] = [...SERIES_STAGES, ...EPISODE_STAGES];
 
@@ -30,8 +31,9 @@ export const STAGE_INFO: Record<Stage, { no: string; label: string; agent: strin
   story: { no: "②", label: "스토리", agent: "story", desc: "시놉시스, 시즌 아크, 회차 요약, 떡밥 장부" },
   characters: { no: "③", label: "인물", agent: "character", desc: "인물 설정과 캐릭터 시트" },
   style: { no: "④", label: "화풍", agent: "art_director", desc: "화풍 카드와 시험 컷" },
+  sheets: { no: "④+", label: "인물 시트", agent: "art_director", desc: "모든 회차가 쓰는 인물 설정화, 자동 검사" },
   plot: { no: "⑤", label: "회차 플롯", agent: "story", desc: "전개 설계표와 대본" },
-  storyboard: { no: "⑥", label: "콘티", agent: "storyboard", desc: "컷 구성 2~3안" },
+  storyboard: { no: "⑥", label: "콘티", agent: "storyboard", desc: "컷 구성표" },
   art: { no: "⑦", label: "작화", agent: "artist", desc: "컷 그림, 자동 결함 검사" },
   lettering: { no: "⑧", label: "말풍선", agent: "letterer", desc: "한국어·영어 말풍선과 효과음" },
   review: { no: "⑨", label: "검수", agent: "reviewer", desc: "고정 채점표, 최종 승인" },
@@ -58,6 +60,11 @@ export const STAGE_HELP: Record<Stage, { ai: string; look: string; approve: stri
     ai: "기획안의 톤과 소재의 시각 요소로 화풍 후보 3개를 만들어요. 선, 채색, 명암, 팔레트, 배경 처리, 금지 요소가 화풍 카드에 들어가요.",
     look: "작품 분위기와 맞는지, 일본·중국풍이 섞이지 않았는지(R-5) 보세요.",
     approve: "하나를 골라 승인하면 회차 제작을 시작할 수 있어요.",
+  },
+  sheets: {
+    ai: "③ 인물 문서에서 인물마다 영어 외모 명세와 시대 고증(의상, 머리, 무기), 그리면 안 되는 것을 고정해요. 화풍 마스터와 고증 참고 그림을 참조로 설정화를 그리고, 명세·고증·화풍으로 자동 검사해서 불합격이면 한 번 더 그려요.",
+    look: "칼·옷·머리 모양이 시대에 맞는지(일본도, 하카마 금지), 정면·측면·뒷모습이 같은 사람인지, 화풍이 마스터와 같은지 크게 보며 확인하세요.",
+    approve: "승인하면 ⑦ 작화가 모든 회차에서 이 명세와 시트를 그대로 써요. 마음에 안 드는 인물만 골라 지시를 적어 다시 그릴 수 있어요.",
   },
   plot: {
     ai: "설정집과 이전 회차 대본을 읽고 이번 회차의 전개 설계표(훅, 박자, 절단, 떡밥)와 장면별 대본을 써요.",
@@ -99,6 +106,7 @@ export const JOB_LABEL: Record<JobType, string> = {
 
 /** 단계마다 함께 읽는 다른 에이전트의 지침 (말풍선은 영어 대사 지침도 따라요) */
 export const EXTRA_GUIDELINE_AGENTS: Partial<Record<Stage, string[]>> = {
+  sheets: ["character"],
   lettering: ["translator_en"],
 };
 
@@ -108,9 +116,10 @@ export const UPSTREAM: Record<Stage, Stage[]> = {
   story: ["concept"],
   characters: ["story"],
   style: ["characters"],
+  sheets: ["characters", "style"],
   plot: ["story", "characters"],
   storyboard: ["plot"],
-  art: ["storyboard", "style", "characters"],
+  art: ["storyboard", "style", "characters", "sheets"],
   lettering: ["art", "plot"],
   review: ["lettering"],
 };

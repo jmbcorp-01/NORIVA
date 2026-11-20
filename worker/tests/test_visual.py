@@ -87,6 +87,19 @@ class FakeModel:
         elif "shading_steps" in props:
             data = {"line": "굵은 외곽선", "coloring": "셀", "shading_steps": 2, "palette": "고채도", "proportions": "8등신",
                     "faces": "눈 중간", "backgrounds": "색면", "effects": "집중선", "panel_rhythm": "클로즈업 많음", "avoid": "수채"}
+        elif list(props) == ["characters"]:
+            data = {"characters": [
+                {"id": "Sun Jeong", "name": "순정", "kind": "person", "role": "main", "appearance": "man, 30, topknot, dark navy durumagi",
+                 "period_notes": "straight ring-pommel sword, no guard", "never": ["curved katana", "tsuba"]},
+                {"id": "cow", "name": "누렁소", "kind": "animal", "role": "minor", "appearance": "yellow ox", "period_notes": "", "never": []},
+            ]}
+        elif list(props) == ["score", "defects"]:
+            # 인물마다 첫 시트는 불합격, 둘째는 합격 (병렬로 돌아도 인물별로 셈)
+            key = task.split('"id": "')[1].split('"')[0]
+            self.sheet_seen = getattr(self, "sheet_seen", {})
+            self.sheet_seen[key] = self.sheet_seen.get(key, 0) + 1
+            ok = self.sheet_seen[key] % 2 == 0
+            data = {"score": 85 if ok else 50, "defects": [] if ok else [{"code": "GA-3", "severity": "critical", "note": "일본도"}]}
         elif "people_count" in props:
             self.checks += 1
             ok = self.checks % 2 == 0
@@ -399,3 +412,43 @@ def test_kind_of_guesses_for_old_plans():
     assert kind_of({"id": "cow", "name": "누렁소 (The Cow)", "appearance": "a yellow ox"}) == "animal"
     assert kind_of({"id": "oldman", "name": "노인", "appearance": "old man in his 70s, leading a cow"}) == "person"
     assert kind_of({"id": "x", "name": "y", "kind": "creature", "appearance": "z"}) == "creature"
+
+
+def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path):
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=0))
+    master = media.put(f"series/{sid}/style/m.png", png())
+    style = _approved(c, sid, None, "style", {"kind": "style", "markdown": "먹선", "chosen": 0, "style_masters": [master],
+                                              "candidates": [{"name": "먹선", "medium": "ink", "card": "", "style_prompt": "ink wash style", "samples": [master]}]})
+    chars = _approved(c, sid, None, "characters", {"markdown": "순정: 신라 화랑"})
+
+    sid_art, sheets = _run(store, tools, sid, None, "sheets", [chars, style])
+    assert sheets["kind"] == "sheets" and [x["id"] for x in sheets["characters"]] == ["sunjeong", "cow"]
+    sj = sheets["characters"][0]
+    # 첫 시트는 치명 결함(일본도)으로 불합격 → 한 번 더 그려 합격본을 남김
+    assert len(sj["candidates"]) == 2 and sj["passed"] and sj["score"] == 85
+    assert sj["sheet"].startswith(f"series/{sid}/sheets/")
+    assert "Must not include: curved katana, tsuba" in images.prompts[0][0]
+    assert images.prompts[0][1] == 1  # 화풍 마스터를 참조로
+    assert sheets["summary"] == {"characters": 2, "passed": 2}
+    assert len(images.prompts) == 4
+
+    # 고른 인물만 다시 그리기: 명세는 그대로, 지시는 그 인물에게만
+    images.prompts.clear()
+    c.execute("update artifacts set status='approved' where id=%s", (sid_art,))
+    _, again = _run(store, tools, sid, None, "sheets", [chars, style], payload={"chars": ["cow"], "base_artifact_id": str(sid_art), "instruction": "뿔을 짧게"}, attempt=2)
+    assert all("뿔을 짧게" in p for p, _ in images.prompts) and all("yellow ox" in p for p, _ in images.prompts)
+    assert again["characters"][0]["sheet"] == sj["sheet"] and again["redrawn"] == ["cow"]
+
+    # ⑦ 작화는 승인된 시트와 명세를 그대로 써요 (시트를 새로 그리지 않음)
+    images.prompts.clear()
+    board = _approved(c, sid, eid, "storyboard", {"markdown": "| 1 | 원경 | 마을 |"})
+    _, art = _run(store, tools, sid, eid, "art", [board, style, chars, sid_art])
+    assert not any("Character turnaround sheet" in p for p, _ in images.prompts)
+    assert [x["id"] for x in art["characters"]] == ["sunjeong", "cow"]
+    assert art["characters"][0]["sheet"] == sj["sheet"]
+    check_tasks = [t for props, t, _ in model.calls if "people_count" in props]
+    assert check_tasks and "먹선의 굵기 변화" in check_tasks[0]  # 먹선 화풍이면 잉크 질감을 결함으로 보지 않음

@@ -117,6 +117,8 @@ export type SeriesBrief = {
   imageModel?: string;
   /** 대표가 올린 참고 웹툰 캡처 (비공개 저장소 키). ④ 화풍에서 기준 값 분석에만 써요 */
   styleRefs?: string[];
+  /** ④+ 인물 시트를 그릴 때 참조로 넣는 고증 참고 그림 (비공개 보관, S3 키). 유물·복식 사진 등 */
+  historyRefs?: string[];
   /** AI가 ①~③에 맞춰 찾은 시장 웹툰과 화풍 특징. 특징만 화풍 후보에 쓰고 이름·그림은 그림 모델에 보내지 않아요 */
   styleSuggestions?: { at: string; works: StyleWork[] };
   /** styleSuggestions.works 중 대표가 고른 번호 (최대 3개) */
@@ -233,6 +235,7 @@ export const stage = pgEnum("stage", [
   "story", // ② 스토리
   "characters", // ③ 인물
   "style", // ④ 화풍
+  "sheets", // ④+ 인물 시트 (작품 전체가 쓰는 설정화)
   // 회차 단위
   "plot", // ⑤ 회차 플롯(대본)
   "storyboard", // ⑥ 콘티
