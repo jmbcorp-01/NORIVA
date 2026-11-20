@@ -4,6 +4,9 @@ import { db, schema } from "@/db";
 import { Badge, Card, Empty, formatDate, LinkButton, PageHeader } from "@/components/ui";
 import { JOB_LABEL, STAGE_INFO, type Stage } from "@/lib/pipeline";
 import { artifactHref } from "@/lib/links";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { JobProgressBar } from "@/components/job-progress";
+import { jobLabel, runningJobRows, typicalSeconds } from "@/lib/progress";
 
 export default async function Dashboard() {
   const { series, episodes, artifacts, jobs, costLedger } = schema;
@@ -62,6 +65,8 @@ export default async function Dashboard() {
       .orderBy(episodes.publishAt)
       .limit(10),
   ]);
+  const running = await runningJobRows();
+  const typical = await typicalSeconds(running.map((r) => r.job.type));
   const approved = new Set(approvedStages.map((a) => a.stage));
   const firstSteps = [
     { done: sourceCount.n > 0 || scoutDone.n > 0, label: "소재 찾기", hint: "소재 발굴로 시장 조사를 돌리거나 라이브러리에 소재를 넣어요", href: "/studio/scout" },
@@ -96,6 +101,27 @@ export default async function Dashboard() {
           </LinkButton>
         }
       />
+      <AutoRefresh active={running.length > 0} seconds={15} />
+      {running.length ? (
+        <section className="mb-9">
+          <h2 className="mb-3 text-[14px] font-semibold">지금 도는 작업</h2>
+          <Card>
+            <ul className="divide-y divide-line">
+              {running.map((r) => (
+                <li key={r.job.id}>
+                  <Link href={r.href} className="block px-4 py-3 hover:bg-paper-sunk">
+                    <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2 text-[14px]">
+                      <span className="font-medium">{r.name}</span>
+                      <span className="text-[13px] text-ink-soft">{jobLabel(r.job.type)}</span>
+                    </div>
+                    <JobProgressBar job={r.job} typical={typical[r.job.type]} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </section>
+      ) : null}
       <div className="mb-9 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {stats.map((s) => {
           const inner = (

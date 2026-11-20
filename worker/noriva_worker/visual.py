@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -60,6 +60,24 @@ def _clip(v: Any, lo: float = 0.0, hi: float = 100.0) -> float:
         return round(max(lo, min(hi, float(v))), 1)
     except (TypeError, ValueError):
         return lo
+
+
+def _report(ctx: dict[str, Any], step: str, done: int | None = None, total: int | None = None) -> None:
+    fn = ctx.get("progress")
+    if fn:
+        fn(step, done, total)
+
+
+def _map_progress(ctx: dict[str, Any], parallel: int, fn: Any, items: list[Any], step: str) -> list[Any]:
+    """병렬로 돌리면서 하나 끝날 때마다 진행 상황을 남겨요. 결과는 입력 순서대로 돌려줘요."""
+    out: list[Any] = [None] * len(items)
+    _report(ctx, step, 0, len(items))
+    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        futures = {pool.submit(fn, it): i for i, it in enumerate(items)}
+        for n, f in enumerate(as_completed(futures), 1):
+            out[futures[f]] = f.result()
+            _report(ctx, step, n, len(items))
+    return out
 
 
 class Costs(list):
@@ -178,6 +196,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         plan = {"style_prompt": prev["style_prompt"], "characters": prev["characters"], "panels": [dict(p) for p in prev["panels"]]}
     else:
         redraw = []
+        _report(ctx, "콘티를 컷 목록으로 정리 중")
         task = PLAN_TASK.format(max_panels=s.max_panels) + "\n" + _inputs_text(ctx)
         if instruction:
             task += f"\n\n## 대표의 추가 지시 (가장 우선)\n{instruction}"
@@ -195,6 +214,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     style = plan["style_prompt"]
     chars = {c["id"]: dict(c) for c in plan["characters"]}
 
+    _report(ctx, "인물 시트 준비 중")
     # 인물 시트: 외모 명세와 화풍이 같으면 한 번만 그려서 모든 회차가 같이 써요 (04번 일관성 1층).
     for c in chars.values():
         key = _sheet_key(ctx["series"]["id"], c, style)
@@ -259,8 +279,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         return out, local
 
     todo = [p for p in plan["panels"] if not redraw or p["index"] in redraw]
-    with ThreadPoolExecutor(max_workers=max(1, s.parallel)) as pool:
-        results = list(pool.map(draw, todo))
+    results = _map_progress(ctx, s.parallel, draw, todo, "컷 그리는 중")
     drawn = {p["index"]: p for p, _ in results}
     for _, local in results:
         costs.extend(local)
@@ -378,6 +397,7 @@ def run_lettering(ctx: dict[str, Any], llm: JSONModel, media: Media, s: ArtSetti
             task += "\n\n## 참고: 승인된 대본 (맥락용)\n" + plot["markdown"][:20000]
         if ctx.get("instruction"):
             task += f"\n\n## 대표의 추가 지시 (가장 우선)\n{ctx['instruction']}"
+        _report(ctx, "영어 대사 쓰는 중")
         r = llm.json(system, task, TRANSLATE_SCHEMA)
         costs.add(r.result.cost_entry())
         en = {x["id"]: x["en"] for x in r.data["lines"]}
@@ -437,8 +457,7 @@ def run_lettering(ctx: dict[str, Any], llm: JSONModel, media: Media, s: ArtSetti
             }
         return out, local
 
-    with ThreadPoolExecutor(max_workers=max(1, s.parallel)) as pool:
-        results = list(pool.map(place, panels))
+    results = _map_progress(ctx, s.parallel, place, panels, "말풍선 배치 중")
     for _, local in results:
         costs.extend(local)
     body = {
@@ -546,6 +565,7 @@ def run_review(ctx: dict[str, Any], llm: JSONModel, s: ArtSettings) -> tuple[dic
     )
     if ctx.get("instruction"):
         task += f"\n\n## 대표의 추가 지시\n{ctx['instruction']}"
+    _report(ctx, "채점표로 검수 중")
     r = llm.json(render_guidelines(ctx["guidelines"]), task, REVIEW_SCHEMA)
     costs.add(r.result.cost_entry())
 

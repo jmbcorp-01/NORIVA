@@ -259,6 +259,8 @@ export const artifacts = pgTable(
   (t) => [index("artifacts_scope").on(t.seriesId, t.episodeId, t.stage)],
 );
 
+export type JobProgress = { step: string; done?: number; total?: number; at: string };
+
 export const jobStatus = pgEnum("job_status", ["queued", "running", "done", "failed", "canceled"]);
 
 export const jobs = pgTable(
@@ -272,6 +274,8 @@ export const jobs = pgTable(
     artifactId: uuid("artifact_id").references(() => artifacts.id, { onDelete: "set null" }),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
     status: jobStatus("status").notNull().default("queued"),
+    // 실행 중 진행 상황 (작업 서버가 갱신): 단계 이름, 끝난 수 / 전체 수
+    progress: jsonb("progress").$type<JobProgress | null>(),
     attempts: integer("attempts").notNull().default(0),
     runAfter: timestamp("run_after", { withTimezone: true }).notNull().defaultNow(),
     lockedBy: text("locked_by"),

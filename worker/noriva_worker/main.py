@@ -51,14 +51,19 @@ def tools_from_config(cfg: Config) -> Tools:
 
 def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
     log.info("작업 시작 %s %s (시도 %s)", job["id"], job["type"], job["attempts"])
+    def report(step: str, done: int | None = None, total: int | None = None) -> None:
+        store.set_progress(job["id"], step, done, total)
+
     try:
         if job["type"] == "scout":
-            report, candidates, costs = run_scout(store.scout_context(job), tools.writer)
-            store.finish_scout(job, report, candidates, costs)
+            report("웹에서 시장 조사 중")
+            mreport, candidates, costs = run_scout(store.scout_context(job), tools.writer)
+            store.finish_scout(job, mreport, candidates, costs)
         elif job["type"] == "source_fill":
             source = store.source_for_fill(job)
             if source is None:
                 raise StageInputError("채울 소재를 찾지 못했어요 (지워졌을 수 있어요)")
+            report("원전·고증 자료 조사 중")
             values, costs = run_source_fill(source, tools.writer)
             filled = store.finish_source_fill(job, source, values, costs)
             log.info("소재 채움 %s: %s", source["name"], ", ".join(filled) or "채울 빈 칸 없음")
@@ -82,6 +87,8 @@ def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
             log.info("회차 정보 채움 %s화: %s", ectx["number"], ", ".join(filled) or "채울 빈 칸 없음")
         else:
             ctx = store.context(job)
+            ctx["progress"] = report
+            report("에이전트가 쓰는 중")
             body, costs = run_stage(job["type"], ctx, tools)
             store.finish(job, body, costs)
         log.info("작업 완료 %s 비용 $%.4f", job["id"], sum(c["cost_usd"] for c in costs))

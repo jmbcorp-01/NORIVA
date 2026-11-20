@@ -1,6 +1,9 @@
 import { Button, Card, formatDate, Input, Textarea } from "@/components/ui";
 import { StageBadge } from "@/components/stage-badge";
-import { canStart, STAGE_HELP, STAGE_INFO, stageStates, type LatestArtifact, type Stage } from "@/lib/pipeline";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { JobProgressBar } from "@/components/job-progress";
+import { activeJobs, type JobView, typicalSeconds } from "@/lib/progress";
+import { canStart, type JobType, STAGE_HELP, STAGE_INFO, stageStates, type LatestArtifact, type Stage } from "@/lib/pipeline";
 import type { Artifact } from "@/lib/studio";
 import { decideArtifact, runStage } from "../../actions";
 import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views";
@@ -20,11 +23,15 @@ function toLatest(m: Partial<Record<Stage, Artifact>>) {
 }
 
 /** 단계 진행 보드: 단계마다 상태, 최근 결과, 승인·반려·수정·다시 생성 */
-export function StageBoard({ stages, latest, seriesId, episodeId, back }: Props) {
+export async function StageBoard({ stages, latest, seriesId, episodeId, back }: Props) {
   const l = toLatest(latest);
   const states = stageStates(stages, l);
+  const generating = Object.values(latest).filter((a): a is Artifact => a?.status === "generating");
+  const jobs = await activeJobs({ artifactIds: generating.map((a) => a.id) });
+  const typical = await typicalSeconds(jobs.map((j) => j.type));
   return (
     <ol className="space-y-3">
+      <AutoRefresh active={generating.length > 0} />
       {stages.map((stage) => {
         const info = STAGE_INFO[stage];
         const a = latest[stage];
@@ -54,9 +61,7 @@ export function StageBoard({ stages, latest, seriesId, episodeId, back }: Props)
                     <p className="text-[13px] text-ink-faint">앞 단계가 승인되면 시작할 수 있어요.</p>
                   ) : null}
 
-                  {a?.status === "generating" ? (
-                    <p className="text-[13px] text-ink-soft">에이전트가 만들고 있어요. 작업 큐에서 진행 상황을 볼 수 있어요.</p>
-                  ) : null}
+                  {a?.status === "generating" ? <Generating job={jobs.find((j) => j.artifactId === a.id)} typical={typical} /> : null}
 
                   {a?.status === "failed" ? (
                     <p className="mb-3 text-[13px] text-plum">{String(a.body?.error ?? "생성에 실패했어요. 다시 생성해 주세요.")}</p>
@@ -157,6 +162,16 @@ export function StageBoard({ stages, latest, seriesId, episodeId, back }: Props)
         );
       })}
     </ol>
+  );
+}
+
+function Generating({ job, typical }: { job?: JobView; typical: Partial<Record<JobType, number>> }) {
+  if (!job) return <p className="text-[13px] text-ink-soft">에이전트가 만들고 있어요. 작업 큐에서 진행 상황을 볼 수 있어요.</p>;
+  return (
+    <div className="max-w-[520px]">
+      <JobProgressBar job={job} typical={typical[job.type]} />
+      <p className="mt-1.5 text-[11px] text-ink-faint">10초마다 저절로 새로 고쳐져요. 이 화면을 떠나도 작업은 계속돼요.</p>
+    </div>
   );
 }
 

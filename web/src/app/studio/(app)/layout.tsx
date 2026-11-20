@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/logo";
+import { JobNotifier } from "@/components/job-notifier";
 import { requireOwner } from "@/lib/auth";
 import { logout } from "../actions";
 import { StudioNav } from "./nav";
@@ -15,6 +16,9 @@ export default async function StudioLayout({ children }: { children: React.React
           </Link>
         </div>
         <StudioNav />
+        <div className="px-5 md:pt-4">
+          <JobNotifier />
+        </div>
         <form action={logout} className="hidden px-5 pt-6 md:block">
           <p className="mb-2 truncate text-[11px] text-ink-faint">{owner.email}</p>
           <button className="text-[12px] text-ink-soft underline-offset-4 hover:underline">로그아웃</button>
