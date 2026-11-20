@@ -176,7 +176,38 @@ export function ArtView({
 }
 
 export function LetteredView({ body }: { body: { panels: LetteredPanel[] } }) {
-  return <LetteredStrip panels={body.panels.map((p) => ({ ...p, image: p.image ? mediaUrl(p.image) : "" }))} />;
+  const lines = body.panels.flatMap((p) => p.bubbles.map((b, i) => ({ key: `${p.index}-${i}`, panel: p.index, ko: b.text.ko, en: b.text.en })));
+  return (
+    <div>
+      <LetteredStrip panels={body.panels.map((p) => ({ ...p, image: p.image ? mediaUrl(p.image) : "" }))} />
+      {lines.length ? (
+        <details className="mt-4 rounded-[5px] bg-paper-sunk px-4 py-3 text-[13px]">
+          <summary className="cursor-pointer text-[12px] font-medium text-ink-soft">
+            한국어·영어 대사 대조표 ({lines.length}줄{lines.some((l) => !l.en) ? ` · 영어 빠진 줄 ${lines.filter((l) => !l.en).length}개` : ""})
+          </summary>
+          <table className="mt-2 w-full text-left text-[12px]">
+            <thead className="text-ink-faint">
+              <tr>
+                <th className="py-1 pr-3 font-medium">컷</th>
+                <th className="py-1 pr-3 font-medium">한국어</th>
+                <th className="py-1 font-medium">영어</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.key} className="border-t border-line align-top">
+                  <td className="py-1 pr-3 text-ink-faint">{l.panel}</td>
+                  <td className="py-1 pr-3">{l.ko}</td>
+                  <td className={`py-1 ${l.en ? "" : "text-plum"}`}>{l.en || "(영어 없음)"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-2 text-[11px] text-ink-faint">영어를 고치려면 아래 “직접 고치기”에서 해당 줄의 en 값을 바꿔 저장하세요.</p>
+        </details>
+      ) : null}
+    </div>
+  );
 }
 
 type Hidden = { back: string; artifactId: string; seriesId: string; episodeId: string | null };

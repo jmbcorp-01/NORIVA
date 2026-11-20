@@ -147,7 +147,10 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                     ) : isLetteredBody(a.body) ? (
                       <LetteredView body={a.body} />
                     ) : (
-                      <ArtifactView body={a.body} markdown={markdown} />
+                      <>
+                        <TextChecks checks={a.body.checks as TextCheck | undefined} />
+                        <ArtifactView body={a.body} markdown={markdown} />
+                      </>
                     )
                   ) : null}
 
@@ -323,5 +326,36 @@ function AppliedGuidelines({ ids, applied }: { ids: string[]; applied: Map<strin
         ))}
       </ul>
     </div>
+  );
+}
+
+type TextCheck = {
+  items: { code: string; ok: boolean; severity: "major" | "minor"; note: string }[];
+  summary?: string;
+  revised?: boolean;
+  first_failed?: string[];
+};
+
+/** 글 단계 지침 점검표: 규칙별 통과/미통과. 빨간 줄부터 읽으면 돼요. */
+function TextChecks({ checks }: { checks?: TextCheck }) {
+  if (!checks?.items?.length) return null;
+  const items = [...checks.items].sort((x, y) => Number(x.ok) - Number(y.ok) || (x.severity === "major" ? -1 : 1));
+  const bad = items.filter((i) => !i.ok);
+  return (
+    <details className="mb-4 rounded-[5px] bg-paper-sunk px-4 py-3 text-[13px]" open={bad.some((i) => i.severity === "major")}>
+      <summary className="cursor-pointer text-[12px] font-medium text-ink-soft">
+        지침 점검표 · 규칙 {items.length}개 중 {items.length - bad.length}개 통과
+        {bad.length ? ` · 미통과 ${bad.length}개` : ""}
+        {checks.revised ? ` · 처음 걸린 ${checks.first_failed?.join(", ")}를 스스로 고쳐 썼어요` : ""}
+      </summary>
+      {checks.summary ? <p className="mt-2 text-ink-soft">{checks.summary}</p> : null}
+      <ul className="mt-2 space-y-1 text-[12px]">
+        {items.map((i) => (
+          <li key={i.code + i.note} className={i.ok ? "text-ink-soft" : i.severity === "major" ? "text-plum" : ""}>
+            <span className="font-medium">{i.ok ? "통과" : i.severity === "major" ? "미통과(주요)" : "미통과(경미)"}</span> {i.code} {i.note}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

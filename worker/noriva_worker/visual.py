@@ -137,7 +137,7 @@ CHECK_SCHEMA = _obj(
 CHECK_TASK = """# 과제: 컷 그림 자동 결함 검사
 
 첨부한 첫 번째 그림이 검사할 컷이다. 이 컷의 지시와 지침의 AI-01~AI-14, 한국 고증 규칙으로 검사하라.
-그 뒤에 붙은 그림은 등장인물의 인물 시트(설정화)다. 순서는 아래 '인물 시트 순서'와 같다. 컷 속 인물의 얼굴형, 머리 모양과 색, 옷의 형태와 색, 고정 소품, 신발이 시트와 같은지 하나씩 비교하라. 다르면 code K-1, 주요(major)로 무엇이 어떻게 다른지 적어라.
+그 뒤에 붙은 그림은 등장인물의 인물 시트(설정화)다. 순서는 아래 '인물 시트 순서'와 같다. {master_note} 컷 속 인물의 얼굴형, 머리 모양과 색, 옷의 형태와 색, 고정 소품, 신발이 시트와 같은지 하나씩 비교하라. 다르면 code K-1, 주요(major)로 무엇이 어떻게 다른지 적어라.
 people_count에는 사람만 센다(동물과 요괴는 빼고).
 - 치명(critical): 글자·가짜 글자·한자·워터마크(간판과 부적의 글자 포함), 그림 안에 그린 컷 테두리·여백·한 장에 여러 컷(만화책 페이지처럼 보임), 인물 수가 틀림, 손·얼굴 해부학 붕괴, 일본·중국식 요소(도리이, 일본도, 기모노 등), 기존 작품과 닮음.
 - 주요(major): {medium_rule}, 인물 외모가 명세와 다름, 다른 컷과 등신·화풍이 다름, AI 특유의 매끈한 광택·과한 보케·무의미한 배경 디테일.
@@ -434,9 +434,10 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                 sheet_order=", ".join(f"{i + 2}번째 그림 = {c['name']}" for i, c in enumerate(sheet_cast)) or "(시트 없음)",
                 style=style,
                 medium_rule=medium_rule(chosen_medium),
+                master_note="마지막 그림은 작품의 화풍 마스터다. 선 굵기, 채색, 명암, 질감이 마스터와 다르면 V-7 주요(major)로 적어라." if masters else "",
             ),
             CHECK_SCHEMA,
-            images=[thumbnail(data)] + [thumbnail(b, 640) for b in (sheets or [])],
+            images=[thumbnail(data)] + [thumbnail(b, 640) for b in (sheets or [])] + ([thumbnail(masters[0], 512)] if masters else []),
             effort=s.check_effort,
             max_tokens=8000,
         )
@@ -767,7 +768,10 @@ def _banned_hits(body: dict[str, Any], terms: list[dict[str, Any]]) -> list[dict
     return hits
 
 
-def run_review(ctx: dict[str, Any], llm: JSONModel, s: ArtSettings) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+REVIEW_MAX_IMAGES = 24
+
+
+def run_review(ctx: dict[str, Any], llm: JSONModel, s: ArtSettings, media: Media | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     costs = Costs()
     lettered = ctx["input_bodies"].get("lettering") or {}
     if lettered.get("kind") != "lettered":
@@ -802,10 +806,26 @@ def run_review(ctx: dict[str, Any], llm: JSONModel, s: ArtSettings) -> tuple[dic
         panels="\n".join(row(p) for p in panels),
         auto=json.dumps(auto, ensure_ascii=False, indent=2),
     )
+    # 실제 컷 그림을 작게 줄여 함께 봐요 (캐릭터 일관성, AI 티, 화풍 통일은 그림을 봐야 채점할 수 있어요)
+    shown: list[int] = []
+    pics: list[bytes] = []
+    if media is not None:
+        drawn = [p for p in panels if p.get("image")]
+        step = max(1, -(-len(drawn) // REVIEW_MAX_IMAGES))
+        for p in drawn[::step][:REVIEW_MAX_IMAGES]:
+            data = media.get(p["image"])
+            if data:
+                pics.append(thumbnail(data, 384))
+                shown.append(p["index"])
+    if shown:
+        task += (
+            f"\n\n## 첨부한 컷 그림\n첨부 그림은 순서대로 {', '.join(f'{i}컷' for i in shown)}이다. "
+            "Q-4 캐릭터 일관성, Q-5 AI 티, Q-6 고증, Q-8 화풍 통일은 그림을 직접 보고 채점하고, 근거에 컷 번호를 적어라."
+        )
     if ctx.get("instruction"):
         task += f"\n\n## 대표의 추가 지시\n{ctx['instruction']}"
     _report(ctx, "채점표로 검수 중")
-    r = llm.json(render_guidelines(ctx["guidelines"]), task, REVIEW_SCHEMA)
+    r = llm.json(render_guidelines(ctx["guidelines"]), task, REVIEW_SCHEMA, images=pics or None)
     costs.add(r.result.cost_entry())
 
     scores = {k: 0 for k in RUBRIC}
