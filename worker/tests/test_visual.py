@@ -230,6 +230,8 @@ def test_art_lettering_review_flow(store, tmp_path):
     assert rev["total"] == 91 and rev["passed"] is True
     assert rev["auto_checks"]["banned_terms"][0]["panel"] == 2
     assert "합격 (91/100)" in rev["markdown"]
+    review_call = [x for x in model.calls if "items" in x[0]][-1]
+    assert review_call[2] == 2 and "첨부 그림은 순서대로 1컷, 2컷" in review_call[1]  # 검수가 컷 그림을 직접 봄
 
 
 def test_review_fails_on_low_ai_score(store, tmp_path):

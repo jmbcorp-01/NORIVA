@@ -7,6 +7,7 @@ from .llm import LLMResult
 from .prompts import TEXT_STAGES, render_guidelines, render_task
 from .sheets import run_sheets
 from .style import run_style
+from .textcheck import write_checked
 from .visual import ArtSettings, run_art, run_lettering, run_review
 
 
@@ -39,12 +40,11 @@ def run_stage(stage: str, ctx: dict[str, Any], tools: Tools) -> tuple[dict[str, 
     if stage == "sheets":
         return run_sheets(ctx, tools.writer, tools.images(), tools.media)
     if stage in TEXT_STAGES:
-        r = tools.writer.write(render_guidelines(ctx["guidelines"]), render_task(stage, ctx))
-        return {"markdown": r.text, "stage": stage}, [r.cost_entry()]
+        return write_checked(stage, ctx, tools.writer, render_guidelines(ctx["guidelines"]), render_task(stage, ctx))
     if stage == "art":
         return run_art(ctx, tools.writer, tools.images(), tools.media, tools.art)
     if stage == "lettering":
         return run_lettering(ctx, tools.writer, tools.media, tools.art)
     if stage == "review":
-        return run_review(ctx, tools.writer, tools.art)
+        return run_review(ctx, tools.writer, tools.art, tools.media)
     raise ValueError(f"알 수 없는 단계: {stage}")

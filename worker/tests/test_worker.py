@@ -133,3 +133,30 @@ def test_has_pending_sees_queued_and_ignores_stale_running(store):
     assert not store.has_pending()
     c.execute("update jobs set updated_at = now() where artifact_id = %s", (aid,))
     assert store.has_pending()
+
+
+def test_text_stage_checks_rules_and_revises_once():
+    from noriva_worker.llm import JSONResult
+    from noriva_worker.textcheck import write_checked
+
+    class CheckingWriter(FakeWriter):
+        def __init__(self):
+            super().__init__()
+            self.checks = 0
+
+        def json(self, system, task, schema, images=None, effort=None, max_tokens=32000):
+            self.checks += 1
+            bad = self.checks == 1
+            items = [
+                {"code": "S-1", "ok": not bad, "severity": "major", "note": "첫 컷 훅이 약함" if bad else "훅 있음"},
+                {"code": "D-2", "ok": False, "severity": "minor", "note": "말투가 비슷함"},
+            ]
+            return JSONResult(data={"items": items, "summary": "요약"}, result=LLMResult("", "claude-opus-5-5", {}, 0.01))
+
+    w = CheckingWriter()
+    body, costs = write_checked("plot", {"guidelines": [{"scope": "global"}]}, w, "SYS", "TASK")
+    assert len(w.calls) == 2 and "S-1: 첫 컷 훅이 약함" in w.calls[1][1]  # 걸린 주요 규칙만 고쳐 쓰기
+    assert "D-2" not in w.calls[1][1]  # 경미한 건 고쳐 쓰기 대상이 아님
+    assert body["checks"]["revised"] is True and body["checks"]["first_failed"] == ["S-1"]
+    assert [i["ok"] for i in body["checks"]["items"]] == [True, False]
+    assert len(costs) == 4  # 초안, 점검, 고쳐 쓰기, 다시 점검
