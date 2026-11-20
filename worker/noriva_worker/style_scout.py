@@ -71,6 +71,80 @@ def fetch_cover(url: str) -> bytes | None:
         return None
 
 
+_UA = {"User-Agent": "Mozilla/5.0 (compatible; NorivaStudio/1.0)"}
+
+
+def _norm(t: str) -> str:
+    return re.sub(r"[^0-9a-z가-힣]", "", (t or "").lower())
+
+
+def _pick(items: list[dict[str, Any]], title: str, author: str, name_of: Callable[[dict[str, Any]], str], authors_of: Callable[[dict[str, Any]], str]) -> dict[str, Any] | None:
+    """제목이 같은 작품을 고르고, 여럿이면 작가 이름이 겹치는 쪽을 골라요."""
+    want = _norm(title)
+    same = [it for it in items if _norm(name_of(it)) == want] or [it for it in items if want and want in _norm(name_of(it))]
+    if not same:
+        return None
+    names = [_norm(a) for a in re.split(r"[,/·()]", author or "") if _norm(a)]
+    for it in same:
+        if any(n in _norm(authors_of(it)) for n in names):
+            return it
+    return same[0]
+
+
+def lookup_platform(title: str, author: str, platform: str) -> tuple[str, list[str]]:
+    """제목으로 네이버웹툰·카카오웹툰 검색을 불러 (작품 주소, 대표 그림 주소들)을 돌려줘요. 못 찾으면 ("", [])."""
+    import httpx
+
+    def naver(http: Any) -> tuple[str, list[str]]:
+        r = http.get("https://comic.naver.com/api/search/all", params={"keyword": title})
+        items = ((r.json().get("searchWebtoonResult") or {}).get("searchViewList")) or []
+        it = _pick(
+            items, title, author, lambda x: x.get("titleName", ""),
+            lambda x: (x.get("displayAuthor") or "") + " ".join(a.get("name", "") for a in x.get("communityArtists") or []),
+        )
+        if not it or not it.get("titleId"):
+            return "", []
+        return f"https://comic.naver.com/webtoon/list?titleId={it['titleId']}", [u for u in [it.get("thumbnailUrl")] if u]
+
+    def kakao(http: Any) -> tuple[str, list[str]]:
+        r = http.get("https://gateway-kw.kakao.com/search/v2/content", params={"word": title, "offset": 0, "limit": 5})
+        items = ((r.json().get("data") or {}).get("content")) or []
+        it = _pick(items, title, author, lambda x: x.get("title", ""), lambda x: " ".join(a.get("name", "") for a in x.get("authors") or []))
+        if not it or not it.get("id"):
+            return "", []
+        imgs = [it.get(k) for k in ("featuredCharacterImageA", "titleImageA", "featuredCharacterImageB")]
+        return f"https://webtoon.kakao.com/content/{it.get('seoId') or '-'}/{it['id']}", [u for u in imgs if u][:2]
+
+    order = [kakao, naver] if "카카오" in (platform or "") else [naver, kakao]
+    try:
+        with httpx.Client(timeout=15, follow_redirects=True, headers=_UA) as http:
+            for fn in order:
+                try:
+                    page, imgs = fn(http)
+                except Exception:  # noqa: BLE001 - 한 플랫폼이 실패하면 다음 플랫폼으로
+                    continue
+                if page:
+                    return page, imgs
+    except Exception:  # noqa: BLE001
+        pass
+    return "", []
+
+
+def fetch_image(url: str) -> bytes | None:
+    """그림 주소에서 바로 받아요. 확장자 없는 카카오 CDN 주소는 .webp도 시도해요."""
+    import httpx
+
+    try:
+        with httpx.Client(timeout=15, follow_redirects=True, headers=_UA) as http:
+            for u in (url, url + ".webp") if not re.search(r"\.(jpe?g|png|webp|gif)(\?|$)", url, re.I) else (url,):
+                r = http.get(u)
+                if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/") and len(r.content) <= MAX_IMAGE_BYTES:
+                    return r.content
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 SYSTEM = ROOT_RULES + """
 당신은 NORIVA의 아트 디렉터예요. 우리 작품에 맞는 화풍을 정하기 전에, 시장에서 검증된 웹툰 중 분위기·장르·독자층이 닮은 작품을 찾아요.
 - 네이버웹툰, 카카오웹툰, 카카오페이지, 레진, 리디, 네이버 시리즈 등 공식 플랫폼에서 연재 중이거나 완결된 세로 스크롤 컬러 웹툰만 골라요.
@@ -135,7 +209,7 @@ def _organize_task(research_text: str, links: list[dict[str, str]]) -> str:
 
 
 MEASURE_TASK = CRITERIA_TASK.replace(
-    "첨부한 그림은 대표가 고른 시장 웹툰 화면 캡처예요.", "첨부한 그림은 시장 웹툰의 공식 대표 이미지예요."
+    "첨부한 그림은 대표가 고른 시장 웹툰 화면 캡처예요.", "첨부한 그림은 시장 웹툰의 공식 대표 이미지(썸네일·캐릭터 일러스트)예요."
 ) + "\n그림에서 확인되는 것만 적고, 이 이미지로 알 수 없는 항목(예: 컷 리듬)은 '대표 이미지로는 확인 불가'라고 적어라."
 
 
@@ -143,6 +217,8 @@ def run_style_scout(
     ctx: dict[str, Any], model: Any, fetch: Callable[[str], bytes | None] | None = None
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     fetch = fetch or fetch_cover
+    lookup = lookup_platform
+    get_image = fetch_image
     research = model.research(SYSTEM, scout_task(ctx), max_searches=12)
     organized = model.json(SYSTEM, _organize_task(research.text, research.links), SCHEMA, effort="medium", max_tokens=16000)
     allowed = {l["url"] for l in research.links} | set(_URL.findall(research.text))
@@ -166,20 +242,32 @@ def run_style_scout(
     costs = [*research.cost_entries(), organized.result.cost_entry()]
     # 글로 추정한 특징을, 공식 대표 이미지를 직접 보고 잰 값으로 바꿔요 (그림은 저장하지 않아요)
     for w in works:
-        raw = None
+        # 1) 플랫폼 검색으로 작품 주소와 대표 그림을 직접 찾아요 (AI가 적은 주소에 기대지 않아요)
+        page, img_urls = lookup(w["title"], w["author"], w["platform"])
+        if page:
+            w["url"] = page
+        raws = [b for b in (get_image(u) for u in img_urls) if b]
+        # 2) 못 찾으면 작품 주소·인용 링크의 대표 이미지(og:image)
         tried = _image_sources(w, w["url"], research.links)
-        for src in tried:
-            raw = fetch(src)
-            if raw:
-                break
-        if not raw:
-            log.info("화풍 참고작 대표 이미지 못 받음: %s (시도 %d곳: %s)", w["title"], len(tried), ", ".join(tried) or "주소 없음")
+        if not raws:
+            for src in tried:
+                b = fetch(src)
+                if b:
+                    raws = [b]
+                    break
+        if not raws:
+            log.info("화풍 참고작 대표 이미지 못 받음: %s (플랫폼 검색 %s, 시도 %d곳: %s)", w["title"], page or "없음", len(tried), ", ".join(tried) or "주소 없음")
             continue
-        try:
-            img = thumbnail(raw, 1280)
-        except Exception:  # noqa: BLE001 - 깨진 그림은 건너뛰어요
+        imgs = []
+        for b in raws[:2]:
+            try:
+                imgs.append(thumbnail(b, 1280))
+            except Exception:  # noqa: BLE001 - 깨진 그림은 건너뛰어요
+                pass
+        if not imgs:
             continue
-        r = model.json(SYSTEM, MEASURE_TASK, CRITERIA_SCHEMA, images=[img], effort="medium", max_tokens=6000)
+        log.info("화풍 참고작 대표 이미지 %d장으로 측정: %s", len(imgs), w["title"])
+        r = model.json(SYSTEM, MEASURE_TASK, CRITERIA_SCHEMA, images=imgs, effort="medium", max_tokens=6000)
         costs.append(r.result.cost_entry())
         w["traits"] = r.data
         w["measured"] = True

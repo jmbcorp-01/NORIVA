@@ -311,6 +311,14 @@ def test_style_scout_suggestions_feed_style_without_names(store, tmp_path, monke
 
     fetched = []
     monkeypatch.setattr(ss, "fetch_cover", lambda url: fetched.append(url) or (None if "comic.example" in url else png()))
+    looked = []
+
+    def lookup(title, author, platform):
+        looked.append(title)
+        return ("https://comic.naver.com/webtoon/list?titleId=5", ["https://image-comic.pstatic.net/x.jpg"]) if title == "링크없음" else ("", [])
+
+    monkeypatch.setattr(ss, "lookup_platform", lookup)
+    monkeypatch.setattr(ss, "fetch_image", lambda url: png())
     c = store.conn
     sid, _ = _series(c)
     model, images = FakeModel(), FakeImages()
@@ -323,12 +331,13 @@ def test_style_scout_suggestions_feed_style_without_names(store, tmp_path, monke
     brief = c.execute("select brief from series where id=%s", (sid,)).fetchone()["brief"]
     works = brief["styleSuggestions"]["works"]
     assert [w["title"] for w in works] == ["참고작", "링크없음", "공식작"]
-    assert works[1]["url"] == ""  # 인용 안 된 지어낸 주소는 버려요
+    assert looked == ["참고작", "링크없음", "공식작"]
+    assert works[1]["url"] == "https://comic.naver.com/webtoon/list?titleId=5"  # 지어낸 주소 대신 플랫폼 검색 주소
     assert works[2]["url"].startswith("https://comic.naver.com/")  # 공식 플랫폼 주소는 인용 없어도 받아요
     assert "styleChoice" not in brief  # 새로 찾으면 전에 고른 건 풀어요
     # 링크가 있는 작품은 공식 대표 이미지를 보고 다시 재요 (글로 추정한 값 대신)
-    # 작품 주소에서 못 받으면 그 작품을 다룬 인용 링크의 대표 이미지로 재요
-    assert fetched == ["https://comic.example/1", "https://review.example/9", "https://comic.naver.com/webtoon/list?titleId=99"]
+    # 플랫폼 검색 그림이 있으면 그걸로, 없으면 작품 주소의 대표 이미지로 재요
+    assert fetched == ["https://comic.example/1", "https://comic.naver.com/webtoon/list?titleId=99"]
     assert not works[0]["measured"] and works[1]["measured"] and works[2]["measured"]
     assert works[0]["traits"]["shading_steps"] == 3 and works[1]["traits"]["shading_steps"] == 2
 
