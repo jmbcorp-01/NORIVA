@@ -340,4 +340,4 @@ def test_request_for_maps_models():
     ep, body = request_for("fal-ai/bytedance/seedream/v4", "p", "9:16", None)
     assert ep.endswith("/text-to-image") and body["image_size"] == {"width": 1152, "height": 2048} and "aspect_ratio" not in body
     ep, body = request_for("fal-ai/nano-banana-pro", "p", "4:3", [b"x"])
-    assert ep == "fal-ai/nano-banana-pro/edit" and body["resolution"] == "1K" and body["aspect_ratio"] == "4:3" and len(body["image_urls"]) == 1
+    assert ep == "fal-ai/nano-banana-pro/edit" and body["resolution"] == "2K" and body["aspect_ratio"] == "4:3" and len(body["image_urls"]) == 1

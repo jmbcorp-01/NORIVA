@@ -65,7 +65,7 @@ def request_for(model: str, prompt: str, aspect_ratio: str, references: list[byt
         return model + ("/edit" if urls else "/text-to-image"), body
     body["aspect_ratio"] = aspect_ratio
     if model.endswith("-pro"):
-        body["resolution"] = "1K"
+        body["resolution"] = "2K"
     if urls:
         body["image_urls"] = urls
         return model + "/edit", body
