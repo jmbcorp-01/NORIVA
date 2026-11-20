@@ -236,6 +236,7 @@ export const stage = pgEnum("stage", [
   "concept", // ① 장르·소재 → 기획안
   "story", // ② 스토리
   "characters", // ③ 인물
+  "research", // ③+ 고증 자료 (옷·머리·무기·건물의 시대 고증과 실물 사진)
   "style", // ④ 화풍
   "sheets", // ④+ 인물 시트 (작품 전체가 쓰는 설정화)
   // 회차 단위

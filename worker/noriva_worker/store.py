@@ -14,6 +14,7 @@ STAGE_LABEL_KO = {
     "concept": "기획안",
     "story": "스토리",
     "characters": "인물",
+    "research": "고증 자료",
     "style": "화풍",
     "sheets": "인물 시트",
     "plot": "대본",

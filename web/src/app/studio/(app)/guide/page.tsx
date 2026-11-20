@@ -8,6 +8,7 @@ const COST: Record<Stage, string> = {
   concept: "2~5분 · 약 $0.4",
   story: "3~8분 · 약 $0.8",
   characters: "3~6분 · 약 $1",
+  research: "3~6분 · 약 $1~2 (실물 사진 확인 포함)",
   style: "5~10분 · 약 $1.5 (샘플 그림 9장)",
   sheets: "5~10분 · 인물 8명 기준 약 $2~4",
   plot: "3~6분 · 약 $0.6",

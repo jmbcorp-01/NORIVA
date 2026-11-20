@@ -87,6 +87,14 @@ class FakeModel:
         elif "shading_steps" in props:
             data = {"line": "굵은 외곽선", "coloring": "셀", "shading_steps": 2, "palette": "고채도", "proportions": "8등신",
                     "faces": "눈 중간", "backgrounds": "색면", "effects": "집중선", "panel_rhythm": "클로즈업 많음", "avoid": "수채"}
+        elif list(props) == ["era", "items"]:
+            data = {"era": "통일신라 8세기", "items": [
+                {"id": "sword", "category": "weapon", "name": "환두대도", "who": ["순정"], "description": "straight sword with a gold ring pommel",
+                 "mistakes": ["코등이 있는 일본도"], "search": ["ring pommel sword"], "certainty": "high"},
+                {"id": "dragon", "category": "creature", "name": "동해 용", "who": [], "description": "seal-like sea dragon", "mistakes": [], "search": [], "certainty": "low"},
+            ]}
+        elif "photos" in props and "matches:" in task:
+            data = {"photos": [{"index": 0, "matches": True, "real_photo": True, "note": "실물"}]}
         elif "scenes" in props and "candidates" not in props:
             data = {"scenes": [{"title": f"장면{i}", "prompt": f"reviewed scene {i}. Avoid: katana, tsuba", "changes": "칼을 뺐어요" if i == 2 else ""} for i in range(1, 4)]}
         elif "issues" in props:
@@ -528,3 +536,42 @@ def test_commons_queries_are_shortened():
 
     assert _queries(['"Gyeongju National Museum iron sword"', "환두대도", "", "ring pommel sword"]) == [
         "Gyeongju National Museum iron sword", "Gyeongju National Museum", "환두대도", "ring pommel sword"]
+
+
+def test_research_stage_feeds_style_and_sheets(store, tmp_path, monkeypatch):
+    """③+ 고증 자료: 항목과 확인된 실물 사진을 정리하고, ④ 화풍 장면 점검과 ④+ 소품 시트가 같은 자료를 써요."""
+    from noriva_worker import commons
+
+    searched = []
+    monkeypatch.setattr(commons, "search_commons", lambda q, limit=6: searched.append(q) or [
+        {"title": "Sword.jpg", "url": "https://x/s.jpg", "page": "https://commons/s", "license": "CC0", "artist": "Museum"}])
+    monkeypatch.setattr(commons, "fetch", lambda url: png())
+    c = store.conn
+    sid, _ = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=0))
+    chars = _approved(c, sid, None, "characters", {"markdown": "순정: 신라 화랑"})
+
+    rid, research = _run(store, tools, sid, None, "research", [chars])
+    assert research["kind"] == "research" and research["era"] == "통일신라 8세기"
+    sword, story_dragon = research["items"]
+    assert sword["id"] == "sword" and sword["photos"][0]["license"] == "CC0" and sword["photos"][0]["image"].endswith("sword-1.jpg")
+    assert story_dragon["photos"] == [] and searched == [["ring pommel sword"]]  # 설화 속 존재는 사진을 찾지 않아요
+    assert "생김새: straight sword" in research["markdown"] and not images.prompts  # 그림은 그리지 않아요
+
+    # ④ 화풍: 장면 점검과 샘플 검사가 고증 자료를 기준으로 봐요
+    _, style = _run(store, tools, sid, None, "style", [chars, rid])
+    review = [t for props, t, _ in model.calls if list(props) == ["scenes"]][-1]
+    assert "③+ 고증 자료" in review and "straight sword with a gold ring pommel" in review
+
+    # ④+: 고증 자료의 사진을 소품 시트에 쓰고 공용을 다시 찾지 않아요
+    searched.clear()
+    master = media.put(f"series/{sid}/style/m.png", png())
+    style_ok = _approved(c, sid, None, "style", {"kind": "style", "markdown": "셀", "chosen": 0, "style_masters": [master],
+                                                 "candidates": [{"name": "셀", "medium": "cel", "card": "", "style_prompt": "cel style", "samples": [master]}]})
+    _, sheets = _run(store, tools, sid, None, "sheets", [chars, style_ok, rid])
+    assert sheets["found_photos"][0]["image"] == sword["photos"][0]["image"]
+    assert searched == [["Silla clay figurine"]]  # 의상은 고증 자료에 사진이 없어서 공용에서 찾음
+    spec_task = [t for props, t, _ in model.calls if list(props) == ["characters", "props", "attire"]][-1]
+    assert "고증 자료" in spec_task

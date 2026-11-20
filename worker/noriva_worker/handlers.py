@@ -5,6 +5,7 @@ from typing import Any, Callable, Protocol
 
 from .llm import LLMResult
 from .prompts import TEXT_STAGES, render_guidelines, render_task
+from .research import run_research
 from .sheets import run_sheets
 from .style import run_style
 from .textcheck import write_checked
@@ -35,6 +36,8 @@ class Tools:
 
 def run_stage(stage: str, ctx: dict[str, Any], tools: Tools) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """단계 하나를 실행하고 (결과물 본문, 비용 기록 목록)을 돌려줘요."""
+    if stage == "research":
+        return run_research(ctx, tools.writer, tools.media)
     if stage == "style":
         return run_style(ctx, tools.writer, tools.images(), tools.media)
     if stage == "sheets":

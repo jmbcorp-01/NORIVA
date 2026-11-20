@@ -117,6 +117,7 @@ PLAN_TASK = """# 과제: ⑦ 작화 준비 — 승인된 콘티를 컷 목록으
 아래 승인된 콘티, 화풍 카드, 인물 설정을 그림 모델이 그대로 그릴 수 있는 컷 목록으로 바꿔라.
 - panels: 콘티의 컷 순서를 지킨다. index는 1부터. 최대 {max_panels}컷.
 - description: 영어로, 대본 없이도 그릴 수 있게 구체적으로(장소, 시대 고증, 조명, 구도, 자세, 표정). 글자나 말풍선은 쓰지 않는다.
+  ③+ 고증 자료가 있으면 옷, 머리, 무기, 건물, 동물·요괴는 그 자료 항목의 영어 생김새 문구를 그대로 쓴다. 금지 단어 목록은 쓰지 않는다.
 - character_ids: 그 컷에 실제로 보이는 인물만.
 - dialogue: 콘티의 한국어 대사를 고치지 말고 그대로. speaker는 인물 id, 내레이션은 "narration".
 - sfx: 한국어 효과음, 없으면 빈 문자열. avoid: 이 컷에 보이면 안 되는 것(영어), 없으면 빈 문자열.
@@ -156,7 +157,7 @@ score는 0~100, 그대로 연재할 수 있을 때만 80 이상. 결함마다 co
 
 ## 화풍
 {style}
-"""
+{research}"""
 
 
 # 플랫폼 공통 화풍 바탕: 작품 화풍 카드보다 앞에 붙여 "웹툰 디지털 채색"에서 벗어나지 않게 해요.
@@ -329,6 +330,9 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     redraw = [int(i) for i in payload.get("panels") or []]
     # ④+ 인물 시트가 승인돼 있으면 외모 명세와 시트를 그대로 써요 (작화가 외모를 새로 쓰지 않아요)
     sheets_body = (ctx.get("input_bodies") or {}).get("sheets") or {}
+    from .research import research_text  # research가 visual을 불러 써서 여기서 불러요
+
+    research = research_text((ctx.get("input_bodies") or {}).get("research"))
     fixed = [
         {k: c.get(k) for k in ("id", "name", "kind", "appearance", "never", "sheet")}
         for c in (sheets_body.get("characters") or [])
@@ -438,6 +442,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                 style=style,
                 medium_rule=medium_rule(chosen_medium),
                 master_note="마지막 그림은 작품의 화풍 마스터다. 선 굵기, 채색, 명암, 질감이 마스터와 다르면 V-7 주요(major)로 적어라." if masters else "",
+                research=f"\n## ③+ 고증 자료 (옷·머리·무기·건물은 이것과 맞아야 한다)\n{research}\n" if research else "",
             ),
             CHECK_SCHEMA,
             images=[thumbnail(data)] + [thumbnail(b, 640) for b in (sheets or [])] + ([thumbnail(masters[0], 512)] if masters else []),
