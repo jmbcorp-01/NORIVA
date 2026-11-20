@@ -77,6 +77,18 @@ def _criteria_text(c: dict[str, Any]) -> str:
     return "\n".join(f"- {labels[k]}: {c[k]}" for k in labels if c.get(k) not in (None, ""))
 
 
+def picked_traits(brief: dict[str, Any]) -> list[dict[str, Any]]:
+    works = ((brief.get("styleSuggestions") or {}).get("works")) or []
+    idx = [i for i in (brief.get("styleChoice") or []) if isinstance(i, int) and 0 <= i < len(works)]
+    return [works[i].get("traits") or {} for i in idx[:3]]
+
+
+def picked_titles(brief: dict[str, Any]) -> list[str]:
+    works = ((brief.get("styleSuggestions") or {}).get("works")) or []
+    idx = [i for i in (brief.get("styleChoice") or []) if isinstance(i, int) and 0 <= i < len(works)]
+    return [f"{works[i].get('title', '')} ({works[i].get('platform', '')})" for i in idx[:3]]
+
+
 def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     costs = Costs()
     system = render_guidelines(ctx["guidelines"])
@@ -93,11 +105,19 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
         costs.add(r.result.cost_entry())
         criteria = r.data
 
+    # 1-1. 대표가 고른 시장 참고작의 화풍 특징 (작품·작가 이름은 빼고 특징만)
+    picked = picked_traits(brief)
+
     # 2. 화풍 후보와 시험 장면
     _report(ctx, "화풍 후보 3개 쓰는 중")
     task = render_task("style", ctx) + PLAN_TASK
     if criteria:
         task += "\n\n## 대표가 고른 시장 기준 값 (이 완성도를 목표로, 그대로 베끼지 말 것)\n" + _criteria_text(criteria)
+    if picked:
+        task += "\n\n## 대표가 고른 참고 화풍의 특징 (완성도와 결의 기준으로만 쓰고 그대로 베끼지 말 것)"
+        for i, t in enumerate(picked):
+            task += f"\n### 참고 화풍 {chr(65 + i)}\n" + _criteria_text(t)
+        task += "\n후보 1은 참고 화풍의 결에 가장 가깝게, 후보 2·3은 같은 완성도에서 변주한다."
     r = llm.json(system, task, PLAN_SCHEMA, effort="medium", max_tokens=32000)
     costs.add(r.result.cost_entry())
     cands = r.data["candidates"][:3]
@@ -141,6 +161,8 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
         "markdown": "\n".join(md),
         "stage": "style",
         "criteria": criteria,
+        # 화면 표시용. 작품 이름은 markdown에 넣지 않아요 (다음 단계 에이전트가 읽지 않게)
+        "picked": picked_titles(brief) if picked else [],
         "candidates": out_cands,
         "scenes": scenes,
         "model": model,

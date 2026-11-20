@@ -44,6 +44,12 @@ class FakeModel:
     def write(self, system, task):
         return _r()
 
+    def research(self, system, task, max_searches=15, max_rounds=6):
+        from noriva_worker.llm import ResearchResult
+
+        self.calls.append((["research"], task, 0))
+        return ResearchResult(text="조사", links=[{"title": "공식", "url": "https://comic.example/1"}], searches=2, results=[_r()])
+
     def json(self, system, task, schema, images=None, effort=None, max_tokens=32000):
         props = schema["properties"]
         self.calls.append((list(props), task, len(images or [])))
@@ -61,6 +67,13 @@ class FakeModel:
                 "candidates": [{"name": f"후보{i}", "card": f"카드 {i}", "style_prompt": f"style {i}"} for i in range(1, 4)],
                 "scenes": [{"title": f"장면{i}", "prompt": f"scene {i}"} for i in range(1, 4)],
             }
+        elif "works" in props:
+            traits = {"line": "가는 선", "coloring": "셀", "shading_steps": 3, "palette": "저채도", "proportions": "8등신",
+                      "faces": "눈 작게", "backgrounds": "실사풍", "effects": "역광", "panel_rhythm": "와이드 많음", "avoid": "과한 광택"}
+            data = {"works": [
+                {"title": "참고작", "platform": "네이버웹툰", "author": "작가", "url": "https://comic.example/1", "why": "시대극", "traits": traits},
+                {"title": "링크없음", "platform": "카카오", "author": "", "url": "https://made.up/x", "why": "", "traits": traits},
+            ]}
         elif "shading_steps" in props:
             data = {"line": "굵은 외곽선", "coloring": "셀", "shading_steps": 2, "palette": "고채도", "proportions": "8등신",
                     "faces": "눈 중간", "backgrounds": "색면", "effects": "집중선", "panel_rhythm": "클로즈업 많음", "avoid": "수채"}
@@ -283,6 +296,30 @@ def test_style_samples_criteria_and_masters_feed_art(store, tmp_path):
     assert art["style_prompt"] == "style 2"
     assert images.prompts[0][1] == 2  # 인물 시트도 마스터 2장을 보고 그림
     assert images.prompts[-1][1] == 3 and "style masters" in images.prompts[-1][0]  # 마스터 2 + 인물 시트 1
+
+
+def test_style_scout_suggestions_feed_style_without_names(store, tmp_path):
+    c = store.conn
+    sid, _ = _series(c)
+    model, images = FakeModel(), FakeImages()
+    tools = Tools(writer=model, media=LocalMedia(str(tmp_path)), image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=0))
+    concept = _approved(c, sid, None, "concept", {"markdown": "조선 기획"})
+    c.execute("update series set brief = %s where id = %s", (Jsonb({"styleChoice": [4]}), sid))
+    jid = c.execute("insert into jobs (type, series_id) values ('style_scout', %s) returning id", (sid,)).fetchone()["id"]
+    process(store, store.claim_by_id(jid, "test"), tools, Config.from_env())
+    assert c.execute("select status from jobs where id=%s", (jid,)).fetchone()["status"] == "done"
+    brief = c.execute("select brief from series where id=%s", (sid,)).fetchone()["brief"]
+    works = brief["styleSuggestions"]["works"]
+    assert [w["title"] for w in works] == ["참고작", "링크없음"] and works[1]["url"] == ""  # 인용 안 된 주소는 버려요
+    assert "styleChoice" not in brief  # 새로 찾으면 전에 고른 건 풀어요
+
+    c.execute("update series set brief = brief || %s where id = %s", (Jsonb({"styleChoice": [0]}), sid))
+    model.calls.clear()
+    _, style = _run(store, tools, sid, None, "style", [concept])
+    plan = next(call for call in model.calls if "candidates" in call[0])
+    assert "참고 화풍 A" in plan[1] and "역광" in plan[1] and "참고작" not in plan[1]  # 특징만, 이름은 빼고
+    assert style["picked"] == ["참고작 (네이버웹툰)"] and "참고작" not in style["markdown"]
+    assert all("참고작" not in p for p, _ in images.prompts)
 
 
 # ── 시험 컷, 모델 요청 모양 (DB 없이) ──

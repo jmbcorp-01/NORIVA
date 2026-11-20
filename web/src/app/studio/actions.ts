@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, max, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { checkCredentials, endSession, requireOwner, startSession } from "@/lib/auth";
@@ -401,6 +401,56 @@ export async function updateStyleRefs(formData: FormData) {
       }
     }
     await db.update(schema.series).set({ brief: { ...s.brief, styleRefs: refs } }).where(eq(schema.series.id, seriesId));
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+/** ④ 화풍: 승인한 ①~③에 맞는 시장 웹툰을 AI가 웹에서 찾아 화풍 특징을 정리해요. */
+export async function findStyleWorks(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back"));
+  const seriesId = String(formData.get("seriesId"));
+  try {
+    const [concept] = await db
+      .select({ id: schema.artifacts.id })
+      .from(schema.artifacts)
+      .where(
+        and(
+          eq(schema.artifacts.seriesId, seriesId),
+          isNull(schema.artifacts.episodeId),
+          eq(schema.artifacts.stage, "concept"),
+          inArray(schema.artifacts.status, ["approved", "edited"]),
+        ),
+      )
+      .limit(1);
+    if (!concept) throw new StudioError("① 기획안을 먼저 승인해 주세요");
+    const busy = await db
+      .select({ id: schema.jobs.id })
+      .from(schema.jobs)
+      .where(and(eq(schema.jobs.type, "style_scout"), eq(schema.jobs.seriesId, seriesId), inArray(schema.jobs.status, ["queued", "running"])));
+    if (!busy.length) await enqueueJob({ type: "style_scout", seriesId });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+/** ④ 화풍: 찾은 웹툰 중 참고할 화풍을 최대 3개 골라요. 고른 작품의 특징만 화풍 후보에 반영돼요. */
+export async function setStyleChoice(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back"));
+  const seriesId = String(formData.get("seriesId"));
+  try {
+    const [s] = await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId));
+    if (!s) throw new StudioError("작품을 찾을 수 없어요");
+    const n = s.brief.styleSuggestions?.works.length ?? 0;
+    const picked = [...new Set(formData.getAll("pick").map(Number))].filter((i) => Number.isInteger(i) && i >= 0 && i < n);
+    if (picked.length > 3) throw new StudioError("참고 화풍은 3개까지 고를 수 있어요");
+    await db.update(schema.series).set({ brief: { ...s.brief, styleChoice: picked } }).where(eq(schema.series.id, seriesId));
   } catch (e) {
     back(path, e);
   }

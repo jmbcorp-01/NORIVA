@@ -87,13 +87,14 @@ export const STAGE_HELP: Record<Stage, { ai: string; look: string; approve: stri
 };
 
 /** 작품 밖에서 도는 작업 (작업 큐 표시용) */
-export type JobType = Stage | "scout" | "source_fill" | "series_meta" | "episode_meta";
+export type JobType = Stage | "scout" | "source_fill" | "series_meta" | "episode_meta" | "style_scout";
 export const JOB_LABEL: Record<JobType, string> = {
   ...Object.fromEntries(Object.entries(STAGE_INFO).map(([k, v]) => [k, `${v.no} ${v.label}`])),
   scout: "소재 발굴 (시장 분석)",
   source_fill: "소재 AI로 채우기",
   series_meta: "연재 설정 AI로 채우기",
   episode_meta: "회차 제목 가져오기",
+  style_scout: "어울리는 웹툰 화풍 찾기",
 } as Record<JobType, string>;
 
 /** 단계마다 함께 읽는 다른 에이전트의 지침 (말풍선은 영어 대사 지침도 따라요) */
