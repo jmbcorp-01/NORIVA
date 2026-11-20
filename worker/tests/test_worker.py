@@ -160,3 +160,77 @@ def test_text_stage_checks_rules_and_revises_once():
     assert body["checks"]["revised"] is True and body["checks"]["first_failed"] == ["S-1"]
     assert [i["ok"] for i in body["checks"]["items"]] == [True, False]
     assert len(costs) == 4  # 초안, 점검, 고쳐 쓰기, 다시 점검
+
+
+def test_reclaim_stale_running_jobs(store):
+    """작업 서버가 꺼져 '실행 중'에 묶인 작업: 시도가 남았으면 다시 대기열, 다 썼으면 실패."""
+    c = store.conn
+    _, a1 = make_job(store, stage="art")
+    _, a2 = make_job(store, stage="art")
+    _, a3 = make_job(store, stage="art")
+    c.execute("update jobs set status='running', attempts=1, updated_at=now() - interval '40 minutes' where artifact_id=%s", (a1,))
+    c.execute("update jobs set status='running', attempts=3, updated_at=now() - interval '40 minutes' where artifact_id=%s", (a2,))
+    c.execute("update jobs set status='running', attempts=1, updated_at=now() - interval '5 minutes' where artifact_id=%s", (a3,))
+    store.reclaim_stale(max_attempts=3)
+    st = {r["artifact_id"]: r for r in c.execute("select artifact_id, status, error from jobs where artifact_id = any(%s)", ([a1, a2, a3],)).fetchall()}
+    assert st[a1]["status"] == "queued" and "멈췄" in st[a1]["error"]
+    assert st[a2]["status"] == "failed"
+    assert st[a3]["status"] == "running"  # 아직 진행 중인 작업은 건드리지 않아요
+    assert c.execute("select status from artifacts where id=%s", (a2,)).fetchone()["status"] == "failed"
+
+
+def test_credit_error_fails_with_clear_message(store):
+    import anthropic
+    import httpx
+
+    sid, aid = make_job(store)
+    job = store.claim_by_id(store.conn.execute("select id from jobs where artifact_id=%s", (aid,)).fetchone()["id"], "test")
+
+    class Broke(FakeWriter):
+        def write(self, system, task):
+            req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            raise anthropic.BadRequestError(
+                "Your credit balance is too low to access the Anthropic API.",
+                response=httpx.Response(400, request=req), body=None)
+
+    process(store, job, Tools(writer=Broke()), Config.from_env())
+    j = store.conn.execute("select status, error from jobs where artifact_id=%s", (aid,)).fetchone()
+    assert j["status"] == "failed" and "크레딧" in j["error"]
+
+
+def test_map_progress_stops_starting_new_work_after_error():
+    import threading
+    import time as _t
+
+    from noriva_worker.visual import _map_progress
+
+    started = []
+    lock = threading.Lock()
+
+    def fn(i):
+        with lock:
+            started.append(i)
+        if i == 0:
+            raise RuntimeError("boom")
+        _t.sleep(0.05)
+        return i
+
+    with pytest.raises(RuntimeError):
+        _map_progress({}, 2, fn, list(range(40)), "x")
+    assert len(started) < 10
+
+
+def test_shrink_ref_limits_reference_size():
+    import io
+
+    from PIL import Image
+
+    from noriva_worker.images import shrink_ref
+
+    buf = io.BytesIO()
+    Image.new("RGB", (3000, 2000), "white").save(buf, "PNG")
+    small = shrink_ref(buf.getvalue())
+    assert max(Image.open(io.BytesIO(small)).size) == 1536
+    tiny = io.BytesIO()
+    Image.new("RGB", (100, 100)).save(tiny, "PNG")
+    assert shrink_ref(tiny.getvalue()) == tiny.getvalue()

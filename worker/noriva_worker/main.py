@@ -110,7 +110,10 @@ def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
         again = store.fail(job, f"일시적 오류: {e}", cfg.max_attempts, retryable=True)
         log.warning("일시적 오류 %s, 다시 시도: %s", job["id"], again)
     except anthropic.APIStatusError as e:
-        store.fail(job, f"API 오류 {e.status_code}: {e.message}", cfg.max_attempts, retryable=False)
+        msg = f"API 오류 {e.status_code}: {e.message}"
+        if "credit balance" in str(e.message).lower():
+            msg = "Anthropic API 크레딧이 부족해요. Anthropic 콘솔의 Plans & Billing에서 충전한 뒤 다시 실행해 주세요."
+        store.fail(job, msg, cfg.max_attempts, retryable=False)
     except httpx.HTTPStatusError as e:
         retry = e.response.status_code >= 500 or e.response.status_code == 429
         store.fail(job, f"그림 API 오류 {e.response.status_code}: {e.response.text[:300]}", cfg.max_attempts, retryable=retry)
@@ -194,6 +197,9 @@ def main() -> None:
                     process(store, job, tools, cfg)
                 sqs.delete_message(QueueUrl=cfg.sqs_queue_url, ReceiptHandle=m["ReceiptHandle"])
                 idle.worked()
+            # 작업 서버가 꺼져 '실행 중'에 묶인 작업을 되살려요
+            for r in store.reclaim_stale(cfg.max_attempts):
+                log.warning("멈춘 작업 되살림 %s (다시 대기열: %s)", r["id"], r["requeued"])
             # 재시도 대기 중인 작업은 SQS 메시지가 없으므로 DB에서도 확인해요
             job = store.claim_next(worker_id)
             if job:

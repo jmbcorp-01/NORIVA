@@ -36,6 +36,19 @@ class Store:
         row = self.conn.execute("select 1 from jobs where status = 'queued' or (status = 'running' and updated_at > now() - interval '2 hours') limit 1").fetchone()
         return row is not None
 
+    def reclaim_stale(self, max_attempts: int, minutes: int = 30) -> list[dict[str, Any]]:
+        """작업 서버가 꺼져서(메모리 초과, 배포 교체) '실행 중'에 묶인 작업을 되살려요.
+        진행 기록이 오래 멈춘 작업만 봐요. 시도 횟수가 남았으면 다시 대기열에, 아니면 실패로 끝내요."""
+        rows = self.conn.execute(
+            "select * from jobs where status = 'running' and updated_at < now() - %s",
+            (timedelta(minutes=minutes),),
+        ).fetchall()
+        out = []
+        for job in rows:
+            again = self.fail(job, f"작업 서버가 도중에 멈췄어요 ({minutes}분 넘게 진행 없음). 다시 시작해요.", max_attempts, retryable=True)
+            out.append({"id": job["id"], "requeued": again})
+        return out
+
     def claim_next(self, worker_id: str) -> dict[str, Any] | None:
         """대기 중인 작업 하나를 잠그고 실행 중으로 바꿔요 (여러 실행기가 동시에 돌아도 겹치지 않음)."""
         with self.conn.transaction():

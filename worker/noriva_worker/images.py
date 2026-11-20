@@ -67,9 +67,29 @@ _SEEDREAM_SIZE = {
 }
 
 
+REF_MAX_SIDE = 1536  # 참고 그림은 이 크기면 충분해요. 2K 원본을 그대로 보내면 메모리와 전송량만 커져요.
+
+
+def shrink_ref(data: bytes, max_side: int = REF_MAX_SIDE) -> bytes:
+    """큰 참고 그림을 줄여요. 작거나 읽을 수 없으면 그대로 둬요."""
+    from PIL import Image
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        if max(img.size) <= max_side:
+            return data
+        img = img.convert("RGB")
+        img.thumbnail((max_side, max_side))
+        out = io.BytesIO()
+        img.save(out, "PNG", optimize=True)
+        return out.getvalue()
+    except Exception:
+        return data
+
+
 def request_for(model: str, prompt: str, aspect_ratio: str, references: list[bytes] | None) -> tuple[str, dict]:
     """모델마다 다른 호출 주소와 입력 이름을 맞춰요."""
-    urls = ["data:image/png;base64," + base64.b64encode(ref).decode() for ref in references or []]
+    urls = ["data:image/png;base64," + base64.b64encode(shrink_ref(ref)).decode() for ref in references or []]
     body: dict = {"prompt": prompt, "num_images": 1, "sync_mode": True}
     if "seedream" in model:
         body["image_size"] = _SEEDREAM_SIZE.get(aspect_ratio, _SEEDREAM_SIZE["3:4"])
