@@ -38,7 +38,7 @@ class Config:
             image_price=float(os.environ.get("NORIVA_IMAGE_PRICE", "0.04")),
             art_candidates=int(os.environ.get("NORIVA_ART_CANDIDATES", "2")),
             art_pass_score=int(os.environ.get("NORIVA_ART_PASS_SCORE", "80")),
-            art_max_panels=int(os.environ.get("NORIVA_ART_MAX_PANELS", "60")),
+            art_max_panels=int(os.environ.get("NORIVA_ART_MAX_PANELS", "80")),
             art_parallel=int(os.environ.get("NORIVA_ART_PARALLEL", "4")),
             # AWS: 할 일이 없는 상태가 이만큼 이어지면 작업 서버를 0대로 줄이고 끝나요 (0이면 끄지 않음)
             idle_minutes=float(os.environ.get("WORKER_IDLE_MINUTES", "0")),

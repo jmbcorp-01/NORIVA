@@ -29,7 +29,7 @@ class JSONModel(Protocol):
 class ArtSettings:
     candidates: int = 2  # 컷마다 그려 볼 후보 수 (04번: 2~4장)
     pass_score: int = 80
-    max_panels: int = 60
+    max_panels: int = 80  # 02번 S-16: 한 화 50~70컷, 1화·시즌 마지막 화는 80컷까지
     parallel: int = 4
     check_effort: str = "medium"
 
@@ -181,7 +181,8 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         task = PLAN_TASK.format(max_panels=s.max_panels) + "\n" + _inputs_text(ctx)
         if instruction:
             task += f"\n\n## 대표의 추가 지시 (가장 우선)\n{instruction}"
-        r = llm.json(system, task, PLAN_SCHEMA)
+        # 컷이 70~80개면 컷 목록 JSON만 3만 토큰을 넘어요. 생각 토큰도 같은 한도를 쓰니 넉넉히 줘요.
+        r = llm.json(system, task, PLAN_SCHEMA, effort="medium", max_tokens=96000)
         costs.add(r.result.cost_entry())
         plan = r.data
         plan["panels"] = plan["panels"][: s.max_panels]
