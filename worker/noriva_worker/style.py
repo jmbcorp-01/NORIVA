@@ -22,6 +22,7 @@ from typing import Any
 from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
 from .media import Media
 from .prompts import PERIOD_JUDGE_NOTE, render_guidelines, render_task
+from .research import research_text
 from .visual import BASES, Costs, JSONModel, _arr, _map_progress, _obj, _report, base_for
 
 _STR = {"type": "string"}
@@ -85,6 +86,7 @@ PLAN_TASK = """
   - 머리 모양은 그 시대에 맞는 단순한 모양 하나를 구조까지 적는다(예: hair gathered into one small low knot at the back of the head, tied with a thin dark cord, no band across the forehead).
   - 옷은 형태를 구조까지 긍정형으로 적는다(길이, 여밈 방향과 방법, 깃 모양, 소매, 허리띠, 바지·치마, 신발). 장식 끈이나 매듭 같은 모호한 말은 쓰지 않는다.
   - 건물은 멀리 작게, 단순한 형태(초가, 낮은 흙담)로. 고증이 어려운 건축은 크게 넣지 않는다.
+  - ③+ 고증 자료가 있으면 옷, 머리 모양, 건물, 동물·요괴는 그 자료 항목의 영어 생김새 문구를 그대로 옮긴다. 자료에 없는 고증 요소는 넣지 않는다.
   - 'Avoid:', 'no katana' 같은 금지 단어 목록은 쓰지 않는다. 금지 단어는 이미지 모델이 오히려 그 모양을 떠올리게 한다. 맞는 모습만 쓴다.
 """
 
@@ -98,7 +100,7 @@ SCENE_REVIEW_TASK = """# 과제: 시험 장면 지시 고증 점검 (그리기 �
 그림 모델은 다른 시대·나라 모양(일본도와 코등이, 발목까지 오는 기모노와 오비, 망건과 이마 띠, 그 이전 시대 작품의 고름, 조선 양반가 한옥)으로 잘못 그리기 쉽다.
 장면마다 지시를 다시 써라.
 - 칼·창 같은 무기와 관모·머리띠·머리 장식이 보이면 화면에서 뺀다(맨손, 몸짓, 효과선으로 같은 감정과 긴장을 살린다).
-- 머리 모양과 옷은 이 시대에 맞는 단순한 모양을 구조까지 긍정형으로 적는다. 모호한 말(headwrap, robe, decorative cord)은 구체적인 형태로 바꾼다.
+- 머리 모양과 옷, 건물은 아래 '작품의 시대와 고증'에 고증 자료 항목이 있으면 그 영어 문구를 그대로 쓴다. 없으면 이 시대에 맞는 단순한 모양을 구조까지 긍정형으로 적는다. 모호한 말(headwrap, robe, decorative cord)은 구체적인 형태로 바꾼다.
 - 고증이 어려운 건물은 멀리 작게, 단순한 형태로 바꾼다. 지붕은 처마 곡선이 낮고 완만하다고 구체적으로 적는다.
 - 화면의 모든 사람(조연·노인·군중 포함)의 옷을 같은 방식으로 적는다: 저고리 길이, 깃이 여며지는 방향과 깃 가장자리 띠, 허리띠로 여밈, 소매 폭, 바지·치마, 신발.
 - 'Avoid:' 목록과 'no ...' 같은 금지 단어는 모두 지운다(글자·말풍선 금지만 남긴다).
@@ -144,6 +146,10 @@ def _strip_avoid(prompt: str) -> str:
 
 
 def _era_text(ctx: dict[str, Any]) -> str:
+    """검사와 장면 점검에 쓰는 시대 기준. ③+ 고증 자료가 있으면 그것이 기준이에요."""
+    research = research_text((ctx.get("input_bodies") or {}).get("research"))
+    if research:
+        return "③+ 고증 자료 (대표 승인):\n" + research
     out = []
     for src in ctx.get("sources") or []:
         line = f"- {src.get('name', '')} ({src.get('era', '')})"

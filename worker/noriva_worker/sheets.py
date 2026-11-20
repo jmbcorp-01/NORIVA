@@ -22,6 +22,7 @@ from . import commons
 from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
 from .media import Media
 from .prompts import PERIOD_JUDGE_NOTE, render_guidelines, render_task
+from .research import research_text
 from .visual import Costs, StageInputError, _arr, _map_progress, _obj, _report, base_for
 
 _STR = {"type": "string"}
@@ -63,6 +64,8 @@ SPEC_TASK = """
   straight scabbard). 금지할 것의 이름(일본도, 코등이 등)은 여기 쓰지 않고 never에만 쓴다.
 - never: 이 인물에 절대 그리면 안 되는 것 영어 목록 (예: curved katana, round tsuba guard, Japanese hakama, Chinese Qing robe, modern clothing).
   검사에서만 쓰고 그림 지시에는 넣지 않는다.
+- ③+ 고증 자료가 있으면 그것이 기준이다. period_notes와 appearance의 옷·머리는 그 자료의 영어 문구를 따르고,
+  props와 attire는 그 자료의 항목(무기·도구 → props, 옷·머리 → attire)에서 고르며 id와 description을 그 항목 그대로 쓴다.
 - props: 그림 모델이 흔히 잘못 그리는 시대 소품 중 주요 인물이 늘 지니는 **모양이 단단한 물건**(칼·창·활 같은 무기, 도구, 장신구), 많아야 4개.
   두건·옷·머리 모양처럼 몸에 걸친 것은 소품이 아니라 appearance에 쓴다.
   id(영문 소문자), name(한국어), owners(지니는 인물 id 목록),
@@ -105,7 +108,7 @@ code에는 규칙 코드를 적는다(외모 불일치 K-1, 고증 H-1~H-8, 화�
 
 ## 인물
 {spec}
-{note}"""
+{note}{research}"""
 
 SHEET_PASS = 80
 # 점수는 결함 개수로 계산해요: 치명 하나면 불합격, 주요 둘까지는 합격선(80)
@@ -151,7 +154,7 @@ MASTER_TASK = """# 과제: 화풍 마스터의 소품 검사
 
 ## 인물
 {specs}
-"""
+{research}"""
 
 PHOTO_SCHEMA = _obj(
     {"photos": _arr(_obj({"index": {"type": "integer"}, "prop_ids": _arr(_STR), "real_photo": {"type": "boolean"}, "note": _STR}))}
@@ -345,6 +348,9 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     masters = [m for m in (media.get(k) for k in (style_body.get("style_masters") or [])[:2]) if m]
     history = [h for h in (media.get_private(k) for k in (brief.get("historyRefs") or [])[:3]) if h]
     history = [thumbnail(h, 1280) for h in history]
+    research_body = (ctx.get("input_bodies") or {}).get("research") or {}
+    research = research_text(research_body)
+    research_items = {it["id"]: it for it in research_body.get("items") or []} if research_body.get("kind") == "research" else {}
 
     # 1. 고정 명세: 고른 인물만 다시 그릴 때는 이전 명세를 쓰고, 대표 지시가 있으면 그 인물 명세에 반영해요
     #    (반영하지 않으면 ⑦ 작화가 예전 명세로 다시 그려요)
@@ -433,7 +439,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     def screen(imgs: list[bytes]) -> list[dict[str, Any]]:
         r = llm.json(
             system,
-            MASTER_TASK.format(specs="\n".join(_spec_json(c) for c in todo)),
+            MASTER_TASK.format(specs="\n".join(_spec_json(c) for c in todo), research=f"\n## ③+ 고증 자료\n{research}\n" if research else ""),
             MASTER_SCHEMA,
             images=[thumbnail(m, 1024) for m in imgs],
             effort="medium",
@@ -504,6 +510,16 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     # 맞는 실물 사진이 없는 소품은 위키미디어 공용에서 자유 이용 사진을 찾아, 검사를 통과한 것만 써요
     found_photos: list[dict[str, Any]] = []
     search_log: list[dict[str, Any]] = []
+    # ③+ 고증 자료에서 확인한 실물 사진이 있으면 그것을 먼저 써요 (다시 찾지 않아요)
+    for p in prop_todo:
+        it = research_items.get(p["id"])
+        if photos_for.get(p["id"]) or not it:
+            continue
+        for ph in (it.get("photos") or [])[:2]:
+            data = media.get(ph["image"])
+            if data:
+                photos_for.setdefault(p["id"], []).append(thumbnail(data, 1024))
+                found_photos.append({"prop": p["id"], **{k: ph.get(k, "") for k in ("image", "title", "page", "license", "artist")}})
     for p in prop_todo:
         if photos_for.get(p["id"]):
             continue
@@ -600,6 +616,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                 master_note=" ".join(notes),
                 spec=_spec_json(c),
                 note=f"\n## 대표의 지시 (이것도 지켰는지 본다)\n{instruction}\n" if only and instruction else "",
+                research=f"\n## ③+ 고증 자료 (이 시대 기준, 대표 승인)\n{research}\n" if research else "",
             ),
             CHECK_SCHEMA,
             images=[thumbnail(data)] + [thumbnail(m, 640) for m in masters] + [thumbnail(prop_imgs[p["id"]], 640) for p in mine],

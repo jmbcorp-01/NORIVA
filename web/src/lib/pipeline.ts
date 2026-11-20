@@ -5,6 +5,7 @@ export type Stage =
   | "concept"
   | "story"
   | "characters"
+  | "research"
   | "style"
   | "sheets"
   | "plot"
@@ -22,7 +23,7 @@ export type ArtifactStatus =
   | "stale"
   | "failed";
 
-export const SERIES_STAGES: Stage[] = ["concept", "story", "characters", "style", "sheets"];
+export const SERIES_STAGES: Stage[] = ["concept", "story", "characters", "research", "style", "sheets"];
 export const EPISODE_STAGES: Stage[] = ["plot", "storyboard", "art", "lettering", "review"];
 export const ALL_STAGES: Stage[] = [...SERIES_STAGES, ...EPISODE_STAGES];
 
@@ -30,6 +31,7 @@ export const STAGE_INFO: Record<Stage, { no: string; label: string; agent: strin
   concept: { no: "①", label: "장르·소재", agent: "planner", desc: "뿌리를 연결한 기획안 3개" },
   story: { no: "②", label: "스토리", agent: "story", desc: "시놉시스, 시즌 아크, 회차 요약, 떡밥 장부" },
   characters: { no: "③", label: "인물", agent: "character", desc: "인물 설정과 캐릭터 시트" },
+  research: { no: "③+", label: "고증 자료", agent: "art_director", desc: "옷·머리·무기·건물의 시대 고증과 실물 사진" },
   style: { no: "④", label: "화풍", agent: "art_director", desc: "화풍 카드와 시험 컷" },
   sheets: { no: "④+", label: "인물 시트", agent: "art_director", desc: "모든 회차가 쓰는 인물 설정화, 자동 검사" },
   plot: { no: "⑤", label: "회차 플롯", agent: "story", desc: "전개 설계표와 대본" },
@@ -55,6 +57,11 @@ export const STAGE_HELP: Record<Stage, { ai: string; look: string; approve: stri
     ai: "인물마다 결핍, 원하는 것, 말투, 호칭 관계, 시대에 맞는 이름, 외모 명세를 써요.",
     look: "대사만 읽어도 누가 말하는지 구분되는지, 이름과 복식이 시대에 맞는지 보세요.",
     approve: "인물을 고치면 스토리의 이름·관계도 다시 맞춰야 할 수 있어요. 승인하면 화풍 단계가 열려요.",
+  },
+  research: {
+    ai: "①~③ 승인 내용을 읽고 작품에 나오는 옷, 머리 모양, 관모, 무기·도구, 건물, 동물·요괴의 시대 고증을 항목별로 정리해요. 항목마다 맞는 생김새(영어, 구조까지), 그림 모델이 잘 틀리는 모습, 위키미디어 공용의 자유 이용 실물 사진을 붙여요.",
+    look: "항목의 생김새가 작품 시대와 맞는지, 붙은 사진이 그 시대 실물인지 보세요. 맞지 않는 사진이 있으면 지시에 적어 다시 만들어요.",
+    approve: "승인하면 ④ 화풍, ④+ 인물 시트, ⑦ 작화와 모든 검사가 이 자료를 기준으로 그려요. 화풍 단계는 선과 채색만 정해요.",
   },
   style: {
     ai: "기획안의 톤과 소재의 시각 요소로 화풍 후보 3개를 만들어요. 선, 채색, 명암, 팔레트, 배경 처리, 금지 요소가 화풍 카드에 들어가요.",
@@ -115,11 +122,12 @@ export const UPSTREAM: Record<Stage, Stage[]> = {
   concept: [],
   story: ["concept"],
   characters: ["story"],
-  style: ["characters"],
-  sheets: ["characters", "style"],
+  research: ["concept", "story", "characters"],
+  style: ["characters", "research"],
+  sheets: ["characters", "style", "research"],
   plot: ["story", "characters"],
   storyboard: ["plot"],
-  art: ["storyboard", "style", "characters", "sheets"],
+  art: ["storyboard", "style", "characters", "sheets", "research"],
   lettering: ["art", "plot"],
   review: ["lettering"],
 };
