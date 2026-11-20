@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 import re
 from typing import Any
 
+from . import commons
 from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
 from .media import Media
 from .prompts import render_guidelines, render_task
@@ -40,7 +41,7 @@ SPEC_SCHEMA = _obj(
             )
         ),
         "props": _arr(
-            _obj({"id": _STR, "name": _STR, "owners": _arr(_STR), "description": _STR})
+            _obj({"id": _STR, "name": _STR, "owners": _arr(_STR), "description": _STR, "search": _arr(_STR)})
         ),
     }
 )
@@ -58,9 +59,11 @@ SPEC_TASK = """
   straight scabbard). 금지할 것의 이름(일본도, 코등이 등)은 여기 쓰지 않고 never에만 쓴다.
 - never: 이 인물에 절대 그리면 안 되는 것 영어 목록 (예: curved katana, round tsuba guard, Japanese hakama, Chinese Qing robe, modern clothing).
   검사에서만 쓰고 그림 지시에는 넣지 않는다.
-- props: 그림 모델이 흔히 잘못 그리는 시대 소품(무기, 관모, 장신구 등) 중 주요 인물이 늘 지니는 것, 많아야 4개.
+- props: 그림 모델이 흔히 잘못 그리는 시대 소품 중 주요 인물이 늘 지니는 **모양이 단단한 물건**(칼·창·활 같은 무기, 도구, 장신구), 많아야 4개.
+  두건·옷·머리 모양처럼 몸에 걸친 것은 소품이 아니라 appearance에 쓴다.
   id(영문 소문자), name(한국어), owners(지니는 인물 id 목록),
-  description(영어, 실제 생김새를 긍정형으로 구체적으로: 길이와 비율, 날·자루·고리·장식의 모양과 재질과 색). 없으면 빈 목록.
+  description(영어, 실제 생김새를 긍정형으로 구체적으로: 길이와 비율, 날·자루·고리·장식의 모양과 재질과 색),
+  search(위키미디어 공용에서 이 소품의 실제 유물 사진을 찾을 검색어 2~3개, 영어 위주로 유물 이름·시대·박물관 이름. 예: "ring pommel sword Silla", "환두대도", "Gyeongju National Museum sword"). 없으면 빈 목록.
 """
 
 CHECK_SCHEMA = _obj(
@@ -130,6 +133,30 @@ MASTER_TASK = """# 과제: 화풍 마스터의 소품 검사
 ## 인물
 {specs}
 """
+
+PHOTO_SCHEMA = _obj(
+    {"photos": _arr(_obj({"index": {"type": "integer"}, "prop_ids": _arr(_STR), "real_photo": {"type": "boolean"}, "note": _STR}))}
+)
+
+PHOTO_TASK = """# 과제: 고증 참고 사진 확인
+
+첨부한 그림 {n}장은 대표가 올린 고증 참고 사진이다(순서대로 index 0부터). 사진마다 확인하라.
+- prop_ids: 이 사진이 아래 소품 중 어느 것의 실제 생김새를 보여 주는지(없으면 빈 목록).
+- real_photo: 박물관·유물·실물 사진이면 true. AI로 만든 그림(구석의 별·반짝임 표시, 깨진 글자, 비현실적인 구조, 사진 같지만 고증과 맞지 않는 모양)이거나
+  삽화·게임 그림이면 false. 확신이 없으면 false.
+- note: 대표에게 보여줄 한 문장(예: "오른쪽 아래에 AI 생성 표시가 있고 칼날이 휘어 있어요").
+
+## 소품
+{props}
+"""
+
+CLEAN_PROMPT = (
+    "Edit reference image 1. Remove these things completely: {items}. "
+    "Also remove every floating particle, glowing shard, sparkle, ribbon effect and decorative effect. "
+    "Where a weapon or prop is removed, show plain empty hands and a plain belt. "
+    "Keep everything else exactly the same: the character's face, body, pose, clothing, line weight, coloring, shading and background. "
+    "Do not add any text."
+)
 
 FIX_SCHEMA = _obj(
     {
@@ -346,47 +373,127 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         for p in (r.data.get("props") or [])[:4]:
             owners = [_slug(o) for o in p.get("owners") or [] if _slug(o) in seen]
             if owners and (p.get("description") or "").strip():
-                props.append({"id": _slug(p.get("id", "")), "name": p.get("name", ""), "owners": owners, "description": p["description"].strip()})
+                props.append({"id": _slug(p.get("id", "")), "name": p.get("name", ""), "owners": owners,
+                              "description": p["description"].strip(), "search": [str(x) for x in p.get("search") or []][:3]})
 
     out_base = f"series/{ctx['series']['id']}/sheets/{ctx['artifact_id']}"
     todo = [c for c in chars if not only or c["id"] in only]
 
-    # 2. 화풍 마스터에 금지 소품(일본도 등)이 있으면, 그 소품을 따라 그리면 안 되는 인물은 마스터를 참고 그림에서 빼요
+    # 2. 화풍 마스터에 금지 소품(일본도 등)이나 장식 효과가 있으면, 마스터에서 그것만 지운 '깨끗한 마스터'를 만들어 모든 인물에 써요.
+    #    지우고도 남아 있으면 그 소품과 엮인 인물만 마스터를 빼요.
     master_warnings: list[dict[str, Any]] = []
     no_master: set[str] = set()
-    if masters and any(c.get("never") for c in todo):
-        _report(ctx, "화풍 마스터의 소품 검사 중")
+    clean_keys: list[str] = list(prev.get("clean_masters") or []) if only else []
+    ids = {c["id"] for c in todo}
+
+    def screen(imgs: list[bytes]) -> list[dict[str, Any]]:
         r = llm.json(
             system,
             MASTER_TASK.format(specs="\n".join(_spec_json(c) for c in todo)),
             MASTER_SCHEMA,
-            images=[thumbnail(m, 1024) for m in masters],
+            images=[thumbnail(m, 1024) for m in imgs],
             effort="medium",
             max_tokens=16000,
         )
         costs.add(r.result.cost_entry())
-        ids = {c["id"] for c in todo}
-        for v in r.data.get("violations") or []:
-            hit = [_slug(x) for x in v.get("character_ids") or [] if _slug(x) in ids]
-            master_warnings.append({"item": v.get("item", ""), "note": v.get("note", ""), "characters": hit})
-            no_master.update(hit)
+        return [
+            {"item": v.get("item", ""), "note": v.get("note", ""), "characters": [_slug(x) for x in v.get("character_ids") or [] if _slug(x) in ids]}
+            for v in r.data.get("violations") or []
+        ]
+
+    if clean_keys and all(media.get(k) for k in clean_keys):
+        masters = [m for m in (media.get(k) for k in clean_keys) if m]
+    elif masters and any(c.get("never") for c in todo):
+        _report(ctx, "화풍 마스터의 소품 검사 중")
+        found = screen(masters)
+        if found:
+            _report(ctx, "화풍 마스터에서 금지 소품과 장식 지우는 중")
+            items = "; ".join(v["item"] for v in found)
+            cleaned = []
+            for i, m in enumerate(masters):
+                img = images.generate(CLEAN_PROMPT.format(items=items), seed=3 + i, aspect_ratio="3:4", references=[m], model=model)
+                costs.add(img.cost_entry())
+                data = trim_border(img.data)
+                clean_keys.append(media.put(f"{out_base}/master-clean-{i + 1}.png", data))
+                cleaned.append(data)
+            masters = cleaned
+            found = screen(masters)
+        for v in found:
+            master_warnings.append(v)
+            no_master.update(v["characters"])
     def ok(x: dict[str, Any]) -> bool:
         return x["score"] >= SHEET_PASS and not any(d["severity"] == "critical" for d in x["defects"])
 
     # 3. 소품 시트: 고증 사진을 보고 소품만 먼저 그려요. 다시 그리기에서는 그 인물의 소품 중 불합격이었던 것만 다시 그려요.
     todo_ids = {c["id"] for c in todo}
     prop_todo = [p for p in props if (not only or (set(p["owners"]) & todo_ids and not p.get("passed")))]
-    photos = [thumbnail(h, 1024) for h in history]
+    # 고증 사진마다 어떤 소품의 사진인지, 실제 사진인지 먼저 봐요. AI 그림이나 관계없는 사진은 쓰지 않아요.
+    photo_notes: list[dict[str, Any]] = []
+    photos_for: dict[str, list[bytes]] = {}
+    if history and prop_todo:
+        _report(ctx, "고증 사진 확인 중")
+        r = llm.json(
+            system,
+            PHOTO_TASK.format(n=len(history), props="\n".join(json.dumps({k: p.get(k) for k in ("id", "name", "description")}, ensure_ascii=False) for p in prop_todo)),
+            PHOTO_SCHEMA,
+            images=[thumbnail(h, 1024) for h in history],
+            effort="medium",
+            max_tokens=16000,
+        )
+        costs.add(r.result.cost_entry())
+        for ph in r.data.get("photos") or []:
+            i = ph.get("index")
+            if not isinstance(i, int) or not 0 <= i < len(history):
+                continue
+            used = [_slug(x) for x in ph.get("prop_ids") or []] if ph.get("real_photo") else []
+            photo_notes.append({"index": i, "real_photo": bool(ph.get("real_photo")), "props": used, "note": ph.get("note", "")})
+            for pid in used:
+                photos_for.setdefault(pid, []).append(history[i])
+
+    # 맞는 실물 사진이 없는 소품은 위키미디어 공용에서 자유 이용 사진을 찾아, 검사를 통과한 것만 써요
+    found_photos: list[dict[str, Any]] = []
+    for p in prop_todo:
+        if photos_for.get(p["id"]):
+            continue
+        queries = p.get("search") or [p["name"], p["description"].split(",")[0]]
+        _report(ctx, f"{p['name']} 실물 사진 찾는 중")
+        cands = []
+        for c in commons.search_commons(queries, limit=6):
+            data = commons.fetch(c["url"])
+            if data:
+                cands.append((c, thumbnail(data, 1024)))
+        if not cands:
+            continue
+        r = llm.json(
+            system,
+            PHOTO_TASK.format(n=len(cands), props=json.dumps({k: p.get(k) for k in ("id", "name", "description")}, ensure_ascii=False)),
+            PHOTO_SCHEMA,
+            images=[d for _, d in cands],
+            effort="medium",
+            max_tokens=16000,
+        )
+        costs.add(r.result.cost_entry())
+        for ph in r.data.get("photos") or []:
+            i = ph.get("index")
+            if not isinstance(i, int) or not 0 <= i < len(cands):
+                continue
+            if ph.get("real_photo") and p["id"] in [_slug(x) for x in ph.get("prop_ids") or []] and len(photos_for.get(p["id"], [])) < 2:
+                meta, data = cands[i]
+                photos_for.setdefault(p["id"], []).append(data)
+                key = media.put(f"{out_base}/ref-{p['id']}-{len(photos_for[p['id']])}.jpg", data, "image/jpeg")
+                found_photos.append({"prop": p["id"], "image": key, **{k: meta[k] for k in ("title", "page", "license", "artist")}})
 
     def draw_prop(p: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
         tries: list[dict[str, Any]] = []
-        for k in range(2):
-            prompt = _prop_prompt(base, style, p, len(history))
+        refs = photos_for.get(p["id"], [])[:3]
+        photos = [thumbnail(h, 1024) for h in refs]
+        for k in range(3):
+            prompt = _prop_prompt(base, style, p, len(refs))
             if tries:
                 fix = _issue_lines(tries[-1]["defects"])
                 prompt += f" Fix these problems found in the previous attempt: {fix}" if fix else ""
-            img = images.generate(prompt, seed=7 + k + 10 * (ctx.get("attempt") or 1), aspect_ratio="4:3", references=history or None, model=model)
+            img = images.generate(prompt, seed=7 + k + 10 * (ctx.get("attempt") or 1), aspect_ratio="4:3", references=refs or None, model=model)
             local.append(img.cost_entry())
             data = trim_border(img.data)
             key = media.put(f"{out_base}/prop-{p['id']}-{k + 1}.png", data)
@@ -414,7 +521,8 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         for _, local in done:
             costs.extend(local)
         props = [new_props.get(p["id"], p) for p in props]
-    prop_imgs = {p["id"]: thumbnail(img, 1024) for p in props if p.get("image") and (img := media.get(p["image"]))}
+    # 검사를 통과한 소품 시트만 인물 시트의 참고 그림으로 써요. 틀린 소품을 넣으면 인물도 같이 틀려요.
+    prop_imgs = {p["id"]: thumbnail(img, 1024) for p in props if p.get("passed") and p.get("image") and (img := media.get(p["image"]))}
 
     def props_of(c: dict[str, Any]) -> list[dict[str, Any]]:
         return [p for p in props if c["id"] in p["owners"] and p["id"] in prop_imgs][:2]
@@ -452,7 +560,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         tries: list[dict[str, Any]] = []
         # 대표가 고칠 곳을 지시했으면 첫 번째는 이전 시트를 그대로 두고 그 부분만 고쳐요. 두 번째는 새 명세로 새로 그려요.
         old = media.get(c["sheet"]) if edits.get(c["id"]) and c.get("sheet") else None
-        for k in range(2):
+        for k in range(3 if c.get("role") == "main" else 2):
             seed = 1 + k + 10 * (ctx.get("attempt") or 1)
             if k == 0 and old:
                 img = images.generate(_edit_prompt(c, edits[c["id"]], mine), seed=seed, aspect_ratio="4:3", references=[old, *[prop_imgs[p["id"]] for p in mine]], model=model)
@@ -509,6 +617,9 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         "rule_suggestions": rule_suggestions,
         "master_warnings": master_warnings,
         "props": props,
+        "clean_masters": clean_keys,
+        "photo_notes": photo_notes,
+        "found_photos": found_photos,
         "summary": {"characters": len(final), "passed": sum(1 for c in final if c.get("passed")),
                     "props": len(props), "props_passed": sum(1 for p in props if p.get("passed"))},
     }
