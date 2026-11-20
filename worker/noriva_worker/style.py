@@ -21,7 +21,7 @@ from typing import Any
 
 from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
 from .media import Media
-from .prompts import render_guidelines, render_task
+from .prompts import PERIOD_JUDGE_NOTE, render_guidelines, render_task
 from .visual import BASES, Costs, JSONModel, _arr, _map_progress, _obj, _report, base_for
 
 _STR = {"type": "string"}
@@ -95,11 +95,12 @@ SCENE_REVIEW_SCHEMA = _obj({"scenes": _arr(_obj({"title": _STR, "prompt": _STR, 
 SCENE_REVIEW_TASK = """# 과제: 시험 장면 지시 고증 점검 (그리기 전)
 
 아래 시험 장면 3개는 화풍 후보 샘플을 그릴 영어 지시다. 고른 샘플은 화풍 마스터가 되어 이후 모든 인물과 컷이 옷·머리·소품까지 따라 그린다.
-그림 모델은 다른 시대·나라 모양(일본도와 코등이, 기모노식 옷깃, 망건과 이마 띠, 조선 한복의 고름, 조선 양반가 한옥)으로 잘못 그리기 쉽다.
+그림 모델은 다른 시대·나라 모양(일본도와 코등이, 발목까지 오는 기모노와 오비, 망건과 이마 띠, 그 이전 시대 작품의 고름, 조선 양반가 한옥)으로 잘못 그리기 쉽다.
 장면마다 지시를 다시 써라.
 - 칼·창 같은 무기와 관모·머리띠·머리 장식이 보이면 화면에서 뺀다(맨손, 몸짓, 효과선으로 같은 감정과 긴장을 살린다).
 - 머리 모양과 옷은 이 시대에 맞는 단순한 모양을 구조까지 긍정형으로 적는다. 모호한 말(headwrap, robe, decorative cord)은 구체적인 형태로 바꾼다.
-- 고증이 어려운 건물은 멀리 작게, 단순한 형태로 바꾼다.
+- 고증이 어려운 건물은 멀리 작게, 단순한 형태로 바꾼다. 지붕은 처마 곡선이 낮고 완만하다고 구체적으로 적는다.
+- 화면의 모든 사람(조연·노인·군중 포함)의 옷을 같은 방식으로 적는다: 저고리 길이, 깃이 여며지는 방향과 깃 가장자리 띠, 허리띠로 여밈, 소매 폭, 바지·치마, 신발.
 - 'Avoid:' 목록과 'no ...' 같은 금지 단어는 모두 지운다(글자·말풍선 금지만 남긴다).
 - 카메라, 구도, 표정, 조명, 팔레트, 장면의 핵심 순간은 그대로 둔다. title은 그대로.
 - changes: 무엇을 바꿨는지 한국어 한 문장(바꾼 게 없으면 빈 문자열).
@@ -119,11 +120,12 @@ SAMPLE_CHECK_TASK = """# 과제: 화풍 샘플의 시대 검사
 
 첨부한 그림은 화풍 후보 샘플이다. 대표가 고르면 '화풍 마스터'가 되어, 이후 모든 인물 시트와 컷이 선과 채색뿐 아니라
 이 그림의 옷·머리 모양·소품·장식까지 따라 그린다. 그래서 이 작품의 시대·나라와 맞지 않는 것이 보이면 모두 적어라.
-- critical: 다른 시대·나라의 복식(조선 한복의 고름, 기모노식 옷깃, 하카마, 사무에, 청나라 옷), 머리 모양·머리 장식(망건, 이마 띠, 드러난 상투, 변발),
+- critical: 다른 시대·나라의 복식(그 이전 시대 작품의 고름, 발목까지 오는 기모노와 오비, 하카마, 사무에, 청나라 옷), 머리 모양·머리 장식(망건, 이마 띠, 드러난 상투, 변발),
   무기(코등이 있는 칼, 일본도, 휜 칼), 건축(도리이, 일본·중국식 지붕), 글자·워터마크.
 - major: 떠다니는 조각, 반짝임, 리본 같은 장식 효과(모든 컷에 옮겨 그려져요), 장면 지시와 다른 시대 소품.
 - item: 보이는 것(한국어, 짧게), fix: 이미지 모델에 줄 영어 한 문장. 맞는 모습을 긍정형으로 쓴다.
 - 문제가 없으면 빈 목록. 그림 솜씨나 구도는 보지 않는다.
+- {judge}
 
 ## 작품의 시대와 고증
 {era}
@@ -233,7 +235,7 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
     def check(data: bytes, si: int, local: list[dict[str, Any]]) -> list[dict[str, Any]]:
         r = llm.json(
             system,
-            SAMPLE_CHECK_TASK.format(era=era, scene=scenes[si]["prompt"]),
+            SAMPLE_CHECK_TASK.format(era=era, scene=scenes[si]["prompt"], judge=PERIOD_JUDGE_NOTE),
             SAMPLE_CHECK_SCHEMA,
             images=[thumbnail(data, 1024)],
             effort="medium",

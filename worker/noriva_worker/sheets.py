@@ -21,7 +21,7 @@ from typing import Any
 from . import commons
 from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
 from .media import Media
-from .prompts import render_guidelines, render_task
+from .prompts import PERIOD_JUDGE_NOTE, render_guidelines, render_task
 from .visual import Costs, StageInputError, _arr, _map_progress, _obj, _report, base_for
 
 _STR = {"type": "string"}
@@ -101,6 +101,7 @@ CHECK_TASK = """# 과제: 인물 시트 검사
 - 경미(minor): 그 밖에 고치면 좋은 것.
 - 글자, 제목, 라벨, 회차 번호가 그려져 있으면 치명이다. 화풍 마스터의 장식(떠다니는 조각, 반짝임)을 옮겨 그린 것은 주요다.
 code에는 규칙 코드를 적는다(외모 불일치 K-1, 고증 H-1~H-8, 화풍 V-7, AI 결함 AI-xx). 같은 문제는 한 번만 적는다.
+""" + PERIOD_JUDGE_NOTE + """
 
 ## 인물
 {spec}
@@ -123,8 +124,9 @@ PROP_CHECK_TASK = """# 과제: 소품 시트 검사
 - 주요(major): 비율·길이·장식·재질·색이 사진이나 설명과 다름, 칼집과 뽑은 칼이 서로 다른 물건처럼 보임.
 - 경미(minor): 그 밖에 고치면 좋은 것.
 - 의상 시트면 저고리 길이, 깃과 여밈, 소매, 허리띠, 바지·치마, 신발, 머리 모양을 설명·사진과 맞춰 본다.
-  다른 시대·나라의 옷(조선 한복의 고름, 기모노식 옷깃, 사무에, 하카마)이나 머리 장식(망건, 이마 띠, 드러난 상투)은 치명이다.
+  다른 시대·나라의 옷(그 이전 시대 작품의 고름, 발목까지 오는 기모노와 오비, 사무에, 하카마)이나 명세에 없는 머리 장식(망건, 이마 띠)은 치명이다.
 code는 H-2(복식), H-6(무기), H-7(관모·장신구·머리), AI-xx(그림 결함) 등.
+""" + PERIOD_JUDGE_NOTE + """
 
 ## 소품
 {spec}
@@ -140,6 +142,7 @@ MASTER_TASK = """# 과제: 화풍 마스터의 소품 검사
 첨부한 그림은 이 작품의 화풍 마스터다. 인물 시트를 그릴 때 선과 채색의 기준으로 참고 그림에 넣는다.
 그런데 그림 모델은 참고 그림의 칼·옷·머리 모양까지 따라 그린다. 마스터에 아래 인물들의 '그리면 안 되는 것'이나
 시대·나라가 다른 무기·복식(일본도와 코등이, 하카마, 기모노, 변발 등)이 보이면 모두 적어라.
+""" + PERIOD_JUDGE_NOTE + """
 머리 모양·머리 장식(망건, 이마 띠, 드러난 상투), 다른 시대 옷(고름, 일본식 옷깃)도 소품과 똑같이 본다.
 - item: 보이는 것(한국어), character_ids: 그 소품을 따라 그리면 안 되는 인물 id, note: 어디에 어떻게 보이는지 한 문장.
 - fix: 그림 편집 모델에 줄 영어 한 문장. 지우기만 하면 빈자리가 어색한 것(머리 모양, 옷)은 무엇으로 바꿀지 긍정형으로 쓴다
