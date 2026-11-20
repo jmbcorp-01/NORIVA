@@ -219,7 +219,8 @@ def test_art_lettering_review_flow(store, tmp_path):
     p2 = art["panels"][1]
     assert p2["passed"] and p2["score"] == 88 and len(p2["candidates"]) == 2
     assert images.prompts[-1][1] == 1  # 인물 시트를 참조로 넘김
-    assert "torii" in images.prompts[-1][0]
+    assert "torii" not in images.prompts[-1][0]  # 금지 단어는 검사에서만 써요
+    assert "Dynamic cinematic webtoon composition" in images.prompts[-1][0]
     assert (tmp_path / p2["image"]).exists()
     assert art["characters"][0]["sheet"].startswith(f"series/{sid}/refs/")
     cost = c.execute("select provider, units, cost_usd from cost_ledger where series_id=%s order by provider", (sid,)).fetchall()
@@ -575,3 +576,12 @@ def test_research_stage_feeds_style_and_sheets(store, tmp_path, monkeypatch):
     assert searched == [["Silla clay figurine"]]  # 의상은 고증 자료에 사진이 없어서 공용에서 찾음
     spec_task = [t for props, t, _ in model.calls if list(props) == ["characters", "props", "attire"]][-1]
     assert "고증 자료" in spec_task
+
+
+def test_rhythm_warnings_find_repeated_shots_and_flat_angles():
+    from noriva_worker.visual import rhythm_warnings
+
+    ps = [{"index": i + 1, "shot": s, "camera": c} for i, (s, c) in enumerate(
+        [("wide", "high angle"), ("close-up", "eye level"), ("close-up", "eye level"), ("close-up", "eye level"), ("medium", "eye level"), ("wide", "low angle")])]
+    w = rhythm_warnings(ps)
+    assert any(x.startswith("2~4컷") for x in w) and any("정면 눈높이" in x for x in w)
