@@ -761,8 +761,8 @@ def test_art_resumes_after_interruption(store, tmp_path):
     class Dies(FakeImages):
         def generate(self, prompt, seed=None, references=None, aspect_ratio="3:4", model=None):
             if len(self.prompts) >= 2:  # 인물 시트 1장, 첫 컷 1장을 그린 뒤 멈춰요 (다시 해도 안 되는 오류)
-                from noriva_worker.images import NoImageError
-                raise NoImageError("그림 없음")
+                from noriva_worker.images import ImageNotConfiguredError
+                raise ImageNotConfiguredError("키 없음")
             return super().generate(prompt, seed, references, aspect_ratio, model)
 
     first, second = Dies(), FakeImages()
@@ -798,3 +798,48 @@ def test_art_resumes_after_interruption(store, tmp_path):
     # 첫 시도에서 쓴 그림 값도 비용에 남아요
     n = c.execute("select coalesce(sum((units->>'images')::int), 0) as n from cost_ledger where job_id=%s and provider='fal'", (jid,)).fetchone()["n"]
     assert n == len(a["body"]["panels"])
+
+
+def test_art_skips_panel_blocked_by_safety_filter(store, tmp_path):
+    """그림 모델이 한 컷을 거부해도(안전 필터) 작업은 끝나고, 그 컷만 이유와 함께 비워 둬요."""
+    from noriva_worker.images import NoImageError
+
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model = FakeModel()
+
+    class Strict(FakeImages):
+        def generate(self, prompt, seed=None, references=None, aspect_ratio="3:4", model=None):
+            if "Hana stares at salt" in prompt:
+                raise NoImageError("그림 모델의 안전 필터에 걸렸어요")
+            return super().generate(prompt, seed, references, aspect_ratio, model)
+
+    images = Strict()
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=2, parallel=1, test_panels=0))
+    inputs = [
+        _approved(c, sid, eid, "storyboard", {"markdown": "| 1 | 원경 | 마을 |"}),
+        _approved(c, sid, None, "style", {"markdown": "먹선, 한지색"}),
+        _approved(c, sid, None, "characters", {"markdown": "하나: 17세"}),
+    ]
+    _, art = _run(store, tools, sid, eid, "art", inputs)
+    assert [b["index"] for b in art["blocked"]] == [2] and "안전 필터" in art["blocked"][0]["note"]
+    assert art["panels"][0]["image"] and art["panels"][1]["image"] is None and 2 not in art["pending"]
+
+
+def test_fal_content_policy_is_no_image(monkeypatch):
+    import httpx
+
+    from noriva_worker.images import FalImage, NoImageError
+
+    monkeypatch.setenv("FAL_KEY", "test")
+    fal = FalImage("fal-ai/nano-banana-pro", 0.15)
+
+    def post(url, body):
+        req = httpx.Request("POST", url)
+        raise httpx.HTTPStatusError("422", request=req, response=httpx.Response(
+            422, text='{"detail":[{"type":"content_policy_violation","msg":"flagged by a content checker"}]}', request=req))
+
+    monkeypatch.setattr(fal, "_post", post)
+    with pytest.raises(NoImageError, match="안전 필터"):
+        fal.generate("p", seed=1)

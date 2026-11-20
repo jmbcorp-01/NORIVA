@@ -47,7 +47,8 @@ NO_OUTPUT_TRIES = 3  # 422 '그림 없음'이면 씨앗을 바꿔 다시 그려 
 
 def _no_output(e: Exception) -> bool:
     r = getattr(e, "response", None)
-    return r is not None and r.status_code == 422 and "did not generate" in r.text
+    # 그림이 안 나왔거나(did not generate) 그림 모델의 안전 필터에 걸린 경우(content_policy_violation)
+    return r is not None and r.status_code == 422 and ("did not generate" in r.text or "content_policy_violation" in r.text)
 
 
 # 비교 시험에 쓰는 그림 모델. 가격은 fal 안내 기준 어림값이에요 (실제 청구는 fal 대시보드).
@@ -159,7 +160,8 @@ class FalImage:
                 if t == NO_OUTPUT_TRIES - 1:
                     raise NoImageError(
                         f"그림 모델이 이 지시로 그림을 만들지 못했어요 ({NO_OUTPUT_TRIES}번 시도). "
-                        "참고 사진이나 지시 문구가 안전 필터에 걸렸을 수 있어요."
+                        + ("그림 모델의 안전 필터에 걸렸어요 (폭력·피·노출 표현 등)." if "content_policy" in e.response.text
+                           else "참고 사진이나 지시 문구가 안전 필터에 걸렸을 수 있어요.")
                     ) from e
         url = r.json()["images"][0]["url"]
         if url.startswith("data:"):

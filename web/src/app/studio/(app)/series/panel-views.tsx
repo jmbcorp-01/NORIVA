@@ -30,6 +30,7 @@ type ArtBody = {
   rhythm_warnings?: string[];
   redrawn?: number[];
   pending?: number[];
+  blocked?: { index: number; note: string }[];
   test_panels?: number[];
   model?: string | null;
   compare_models?: string[];
@@ -125,7 +126,11 @@ export function ArtView({
                   <ZoomImage src={mediaUrl(p.image)} alt={`${p.index}컷`} gallery={panelPics} className="w-full rounded-[5px] border border-line" loading="lazy" />
                 ) : (
                   <div className="grid aspect-[3/4] place-items-center rounded-[5px] border border-dashed border-line px-3 text-center text-[12px] text-ink-faint">
-                    {pending.includes(p.index) ? "아직 안 그림 · 시험 컷을 보고 '나머지 그리기'를 누르면 그려요" : "그림 없음"}
+                    {pending.includes(p.index)
+                      ? "아직 안 그림 · 시험 컷을 보고 '나머지 그리기'를 누르면 그려요"
+                      : body.blocked?.some((x) => x.index === p.index)
+                        ? `그림 모델이 이 컷을 거부했어요. ${body.blocked.find((x) => x.index === p.index)?.note ?? ""} 지시에 표현을 순화해 적고 이 컷만 다시 그려 주세요.`
+                        : "그림 없음"}
                   </div>
                 )}
                 {p.candidates && p.candidates.length > 1 ? (
