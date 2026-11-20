@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { Badge, Button, Card, Empty, Input, Label, Notice, PageHeader, Textarea } from "@/components/ui";
 import { coverCandidates } from "@/lib/studio-publish";
@@ -45,6 +45,25 @@ export default async function SeriesPage({
     db.select().from(schema.episodes).where(eq(schema.episodes.seriesId, id)).orderBy(asc(schema.episodes.number)),
     coverCandidates(id),
   ]);
+  const epIds = episodes.map((e) => e.id);
+  const costs = epIds.length
+    ? await db
+        .select({ ep: schema.costLedger.episodeId, total: sql<string>`sum(${schema.costLedger.costUsd})` })
+        .from(schema.costLedger)
+        .where(inArray(schema.costLedger.episodeId, epIds))
+        .groupBy(schema.costLedger.episodeId)
+    : [];
+  const reviews = epIds.length
+    ? await db
+        .selectDistinctOn([schema.artifacts.episodeId], { ep: schema.artifacts.episodeId, body: schema.artifacts.body })
+        .from(schema.artifacts)
+        .where(and(inArray(schema.artifacts.episodeId, epIds), eq(schema.artifacts.stage, "review")))
+        .orderBy(schema.artifacts.episodeId, desc(schema.artifacts.createdAt))
+    : [];
+  const costOf = new Map(costs.map((c) => [c.ep, Number(c.total)]));
+  const scoreOf = new Map(
+    reviews.map((r) => [r.ep, r.body as { total?: number; passed?: boolean }]),
+  );
   const [metaJob] = await db
     .select({ status: schema.jobs.status, error: schema.jobs.error })
     .from(schema.jobs)
@@ -103,7 +122,11 @@ export default async function SeriesPage({
                     <Link href={`${back}/episodes/${e.number}`} className="flex items-center gap-3 px-4 py-3 hover:bg-paper-sunk">
                       <span className="w-9 font-serif text-[15px] font-semibold tabular-nums">{e.number}화</span>
                       <span className="truncate text-[13px]">{e.title || e.logline || "제목 미정"}</span>
-                      <span className="ml-auto">
+                      <span className="ml-auto flex items-center gap-3 text-[12px] text-ink-soft tabular-nums">
+                        {typeof scoreOf.get(e.id)?.total === "number" ? (
+                          <span className={scoreOf.get(e.id)?.passed ? "text-pine" : "text-plum"}>검수 {scoreOf.get(e.id)?.total}점</span>
+                        ) : null}
+                        {costOf.get(e.id) ? <span>${costOf.get(e.id)!.toFixed(2)}</span> : null}
                         <Badge tone={e.status === "published" ? "pine" : "neutral"}>{EP_STATUS[e.status]}</Badge>
                       </span>
                     </Link>

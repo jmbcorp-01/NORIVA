@@ -464,6 +464,24 @@ export async function redrawSheets(formData: FormData) {
   redirect(path);
 }
 
+/** 회차 제작비 상한(달러)을 정해요. 작품의 모든 회차에 같이 적용돼요. 0이면 상한 없음. */
+export async function setEpisodeBudget(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back"));
+  const seriesId = String(formData.get("seriesId"));
+  try {
+    const v = Number(formData.get("budget"));
+    if (!Number.isFinite(v) || v < 0 || v > 1000) throw new StudioError("0~1000 사이 금액(달러)을 넣어 주세요");
+    const [s] = await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId));
+    if (!s) throw new StudioError("작품을 찾을 수 없어요");
+    await db.update(schema.series).set({ brief: { ...s.brief, episodeBudgetUsd: Math.round(v * 100) / 100 } }).where(eq(schema.series.id, seriesId));
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
 /** 작품의 그림 모델을 정해요. ④ 화풍 샘플과 ⑦ 작화가 이 모델로 그려요. 빈 값이면 작업 서버 기본 모델. */
 export async function setImageModel(formData: FormData) {
   await requireOwner();
