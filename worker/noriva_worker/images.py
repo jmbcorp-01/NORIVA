@@ -44,8 +44,14 @@ IMAGE_MODELS: dict[str, float] = {
     "fal-ai/bytedance/seedream/v4": 0.03,
 }
 
-# Seedream은 비율 대신 크기 이름을 받아요
-_SEEDREAM_SIZE = {"3:4": "portrait_4_3", "9:16": "portrait_16_9", "4:3": "landscape_4_3", "16:9": "landscape_16_9", "1:1": "square_hd"}
+# Seedream은 비율 대신 크기를 받아요. 이름 프리셋은 해상도가 낮아서 픽셀로 줘요.
+_SEEDREAM_SIZE = {
+    "3:4": {"width": 1536, "height": 2048},
+    "9:16": {"width": 1152, "height": 2048},
+    "4:3": {"width": 2048, "height": 1536},
+    "16:9": {"width": 2048, "height": 1152},
+    "1:1": {"width": 2048, "height": 2048},
+}
 
 
 def request_for(model: str, prompt: str, aspect_ratio: str, references: list[bytes] | None) -> tuple[str, dict]:
@@ -53,7 +59,7 @@ def request_for(model: str, prompt: str, aspect_ratio: str, references: list[byt
     urls = ["data:image/png;base64," + base64.b64encode(ref).decode() for ref in references or []]
     body: dict = {"prompt": prompt, "num_images": 1, "sync_mode": True}
     if "seedream" in model:
-        body["image_size"] = _SEEDREAM_SIZE.get(aspect_ratio, "portrait_4_3")
+        body["image_size"] = _SEEDREAM_SIZE.get(aspect_ratio, _SEEDREAM_SIZE["3:4"])
         if urls:
             body["image_urls"] = urls
         return model + ("/edit" if urls else "/text-to-image"), body

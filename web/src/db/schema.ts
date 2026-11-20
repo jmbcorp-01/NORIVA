@@ -115,6 +115,8 @@ export type SeriesBrief = {
   memo: string;
   /** 작화에 쓸 그림 모델 (모델 비교 시험에서 대표가 고름). 없으면 작업 서버 기본값 */
   imageModel?: string;
+  /** 대표가 올린 참고 웹툰 캡처 (비공개 저장소 키). ④ 화풍에서 기준 값 분석에만 써요 */
+  styleRefs?: string[];
 };
 
 export const series = pgTable("series", {

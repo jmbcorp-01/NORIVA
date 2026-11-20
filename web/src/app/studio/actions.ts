@@ -16,6 +16,7 @@ import {
 import { ALL_STAGES, IMAGE_MODELS, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
 import { enqueueJob, notifyWorker } from "@/lib/queue";
+import { putPrivate } from "@/lib/private-media";
 import type { GuidelineBody } from "@/db/schema";
 
 const lines = (v: FormDataEntryValue | null) =>
@@ -365,6 +366,66 @@ export async function artNextStep(formData: FormData) {
       baseArtifactId: String(formData.get("artifactId")),
       extra,
     });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+const REF_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+
+/** ④ 화풍 참고 캡처 올리기·빼기. 그림 모델에는 보내지 않고 기준 값 분석에만 써요. */
+export async function updateStyleRefs(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back"));
+  const seriesId = String(formData.get("seriesId"));
+  try {
+    const [s] = await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId));
+    if (!s) throw new StudioError("작품을 찾을 수 없어요");
+    let refs = [...(s.brief.styleRefs ?? [])];
+    const remove = String(formData.get("remove") ?? "");
+    if (remove) {
+      refs = refs.filter((r) => r !== remove);
+    } else {
+      const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+      if (!files.length) throw new StudioError("올릴 그림을 골라 주세요");
+      if (refs.length + files.length > 8) throw new StudioError("참고 캡처는 8장까지예요");
+      for (const f of files) {
+        const ext = REF_TYPES[f.type];
+        if (!ext) throw new StudioError("PNG, JPG, WEBP 그림만 올릴 수 있어요");
+        if (f.size > 5 * 1024 * 1024) throw new StudioError("한 장에 5MB까지 올릴 수 있어요");
+        const key = `series/${seriesId}/style-refs/${crypto.randomUUID()}.${ext}`;
+        await putPrivate(key, new Uint8Array(await f.arrayBuffer()), f.type);
+        refs.push(key);
+      }
+    }
+    await db.update(schema.series).set({ brief: { ...s.brief, styleRefs: refs } }).where(eq(schema.series.id, seriesId));
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+/** ④ 화풍: 후보 하나와 화풍 마스터 그림을 골라 승인해요. 마스터는 ⑦ 작화의 모든 컷에 화풍 참조로 들어가요. */
+export async function approveStyle(formData: FormData) {
+  const owner = await requireOwner();
+  const path = String(formData.get("back"));
+  const id = String(formData.get("artifactId"));
+  try {
+    const [a] = await db.select().from(schema.artifacts).where(eq(schema.artifacts.id, id));
+    const body = a?.body as { kind?: string; candidates?: { samples: (string | null)[] }[] } | undefined;
+    if (!a || body?.kind !== "style" || !body.candidates) throw new StudioError("화풍 샘플이 있는 결과물이 아니에요");
+    const samples = new Set(body.candidates.flatMap((c) => c.samples.filter(Boolean) as string[]));
+    const masters = formData.getAll("masters").map(String).filter((k) => samples.has(k));
+    if (masters.length < 1 || masters.length > 5) throw new StudioError("화풍 마스터로 쓸 그림을 1~5장 골라 주세요");
+    const chosen = body.candidates.findIndex((c) => c.samples.includes(masters[0]));
+    await db
+      .update(schema.artifacts)
+      .set({ body: { ...(a.body as Record<string, unknown>), chosen, style_masters: masters } })
+      .where(eq(schema.artifacts.id, id));
+    await approveArtifact(id, owner.email, `화풍 후보 ${chosen + 1}, 마스터 ${masters.length}장`);
   } catch (e) {
     back(path, e);
   }

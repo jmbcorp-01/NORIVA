@@ -56,6 +56,14 @@ class FakeModel:
                     {"index": 9, "shot": "close-up", "height": "normal", "gap_before": "none", "description": "Hana stares at salt", "character_ids": ["hana"], "dialogue": [{"speaker": "hana", "text": "이게 왜 안 녹아?"}], "sfx": "사각", "avoid": "torii"},
                 ],
             }
+        elif "candidates" in props and "scenes" in props:
+            data = {
+                "candidates": [{"name": f"후보{i}", "card": f"카드 {i}", "style_prompt": f"style {i}"} for i in range(1, 4)],
+                "scenes": [{"title": f"장면{i}", "prompt": f"scene {i}"} for i in range(1, 4)],
+            }
+        elif "shading_steps" in props:
+            data = {"line": "굵은 외곽선", "coloring": "셀", "shading_steps": 2, "palette": "고채도", "proportions": "8등신",
+                    "faces": "눈 중간", "backgrounds": "색면", "effects": "집중선", "panel_rhythm": "클로즈업 많음", "avoid": "수채"}
         elif "people_count" in props:
             self.checks += 1
             ok = self.checks % 2 == 0
@@ -247,6 +255,36 @@ def test_art_test_panels_compare_and_adopt(store, tmp_path):
     assert images.calls[-1]["model"] == models[1]
 
 
+def test_style_samples_criteria_and_masters_feed_art(store, tmp_path):
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    media.put("_private/refs/a.png", png())
+    c.execute("update series set brief = %s where id = %s", (Jsonb({"styleRefs": ["refs/a.png"]}), sid))
+    model, images = FakeModel(), FakeImages()
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=0))
+    concept = _approved(c, sid, None, "concept", {"markdown": "기획"})
+    chars = _approved(c, sid, None, "characters", {"markdown": "하나: 17세"})
+
+    style_id, style = _run(store, tools, sid, None, "style", [concept, chars])
+    assert style["kind"] == "style" and style["criteria"]["shading_steps"] == 2
+    assert len(style["candidates"]) == 3 and all(len(cd["samples"]) == 3 and all(cd["samples"]) for cd in style["candidates"])
+    assert len(images.prompts) == 9 and "기준 값" in style["markdown"]
+    crit_call = next(call for call in model.calls if "shading_steps" in call[0])
+    assert crit_call[2] == 1  # 참고 캡처는 기준 값 분석에만 쓰여요
+    assert all(n == 0 for _, n in images.prompts)  # 그림 모델에는 참고 캡처를 보내지 않아요
+
+    # 대표가 후보 2와 그림 두 장을 고른 상태로 승인 → 작화가 그 화풍 문구와 마스터를 참조로 씀
+    masters = [style["candidates"][1]["samples"][0], style["candidates"][1]["samples"][1]]
+    c.execute("update artifacts set body = body || %s, status='approved' where id=%s", (Jsonb({"chosen": 1, "style_masters": masters}), style_id))
+    images.prompts.clear()
+    inputs = [_approved(c, sid, eid, "storyboard", {"markdown": "| 1 |"}), style_id, chars]
+    _, art = _run(store, tools, sid, eid, "art", inputs)
+    assert art["style_prompt"] == "style 2"
+    assert images.prompts[0][1] == 2  # 인물 시트도 마스터 2장을 보고 그림
+    assert images.prompts[-1][1] == 3 and "style masters" in images.prompts[-1][0]  # 마스터 2 + 인물 시트 1
+
+
 # ── 시험 컷, 모델 요청 모양 (DB 없이) ──
 
 from noriva_worker.images import request_for  # noqa: E402
@@ -263,6 +301,6 @@ def test_choose_test_panels_keeps_first_last_and_people():
 
 def test_request_for_maps_models():
     ep, body = request_for("fal-ai/bytedance/seedream/v4", "p", "9:16", None)
-    assert ep.endswith("/text-to-image") and body["image_size"] == "portrait_16_9" and "aspect_ratio" not in body
+    assert ep.endswith("/text-to-image") and body["image_size"] == {"width": 1152, "height": 2048} and "aspect_ratio" not in body
     ep, body = request_for("fal-ai/nano-banana-pro", "p", "4:3", [b"x"])
     assert ep == "fal-ai/nano-banana-pro/edit" and body["resolution"] == "1K" and body["aspect_ratio"] == "4:3" and len(body["image_urls"]) == 1

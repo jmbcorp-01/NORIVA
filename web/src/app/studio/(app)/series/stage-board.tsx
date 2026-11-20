@@ -6,7 +6,10 @@ import { activeJobs, type JobView, typicalSeconds } from "@/lib/progress";
 import { canStart, type JobType, STAGE_HELP, STAGE_INFO, stageStates, type LatestArtifact, type Stage } from "@/lib/pipeline";
 import type { Artifact } from "@/lib/studio";
 import { decideArtifact, runStage } from "../../actions";
+import { eq } from "drizzle-orm";
+import { db, schema } from "@/db";
 import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views";
+import { isStyleBody, StyleRefs, StyleView } from "./style-view";
 
 type Props = {
   stages: Stage[];
@@ -29,6 +32,9 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
   const generating = Object.values(latest).filter((a): a is Artifact => a?.status === "generating");
   const jobs = await activeJobs({ artifactIds: generating.map((a) => a.id) });
   const typical = await typicalSeconds(jobs.map((j) => j.type));
+  const styleRefs = stages.includes("style")
+    ? ((await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId)))[0]?.brief.styleRefs ?? [])
+    : [];
   return (
     <ol className="space-y-3">
       <AutoRefresh active={generating.length > 0} />
@@ -57,6 +63,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                 </summary>
                 <div className="border-t border-line px-4 py-4">
                   <StageHelp stage={stage} open={!a} />
+                  {stage === "style" && state !== "locked" ? <StyleRefs seriesId={seriesId} refs={styleRefs} back={back} /> : null}
                   {state === "locked" ? (
                     <p className="text-[13px] text-ink-faint">앞 단계가 승인되면 시작할 수 있어요.</p>
                   ) : null}
@@ -74,7 +81,9 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                   ) : null}
 
                   {a && a.status !== "generating" && a.status !== "failed" ? (
-                    isArtBody(a.body) ? (
+                    isStyleBody(a.body) ? (
+                      <StyleView body={a.body} artifactId={a.id} back={back} canApprove={!!reviewable} />
+                    ) : isArtBody(a.body) ? (
                       <ArtView
                         body={a.body}
                         canRedraw={a.status !== "stale" && canStart(stage, l)}
