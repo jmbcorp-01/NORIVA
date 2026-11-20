@@ -13,7 +13,7 @@ import {
   startStage,
   StudioError,
 } from "@/lib/studio";
-import { ALL_STAGES, type Stage } from "@/lib/pipeline";
+import { ALL_STAGES, IMAGE_MODELS, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
 import { enqueueJob, notifyWorker } from "@/lib/queue";
 import type { GuidelineBody } from "@/db/schema";
@@ -302,6 +302,68 @@ export async function redrawPanels(formData: FormData) {
       instruction: String(formData.get("instruction") ?? "").trim(),
       panels,
       baseArtifactId: String(formData.get("artifactId")),
+    });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+/**
+ * 작화 시험 컷 다음 단계.
+ * - rest: 나머지 컷 그리기
+ * - compare: 시험 컷을 여러 모델로 그려 비교
+ * - adopt: 비교한 모델 중 하나로 정하고(작품 설정에 저장) 나머지 컷 그리기
+ */
+export async function artNextStep(formData: FormData) {
+  const owner = await requireOwner();
+  const path = String(formData.get("back"));
+  const mode = String(formData.get("mode"));
+  const seriesId = String(formData.get("seriesId"));
+  const nums = (key: string) =>
+    String(formData.get(key) ?? "")
+      .split(",")
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 0);
+  const known = new Set<string>(IMAGE_MODELS.map((m) => m.id));
+  try {
+    let panels: number[] = [];
+    let extra: Record<string, unknown> = {};
+    if (mode === "rest") {
+      panels = nums("pending");
+      if (!panels.length) throw new StudioError("남은 컷이 없어요");
+    } else if (mode === "compare") {
+      const models = formData.getAll("models").map(String).filter((m) => known.has(m));
+      if (models.length < 2) throw new StudioError("비교할 모델을 두 개 이상 골라 주세요");
+      panels = nums("test");
+      extra = { compare_models: models };
+    } else if (mode === "adopt") {
+      const model = String(formData.get("model"));
+      if (!known.has(model)) throw new StudioError("모르는 그림 모델이에요");
+      const [s] = await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId));
+      if (!s) throw new StudioError("작품을 찾을 수 없어요");
+      await db.update(schema.series).set({ brief: { ...s.brief, imageModel: model } }).where(eq(schema.series.id, seriesId));
+      panels = nums("pending");
+      extra = { adopt_model: model };
+      if (!panels.length) {
+        // 남은 컷이 없으면 시험 컷만 고른 모델 그림으로 바꿔 끝내요 (그리는 비용 없음)
+        panels = nums("test");
+        extra = { adopt_model: model, keep_adopted: true };
+      }
+    } else {
+      throw new StudioError("모르는 동작이에요");
+    }
+    if (!panels.length) throw new StudioError("그릴 컷이 없어요");
+    await startStage({
+      seriesId,
+      episodeId: (formData.get("episodeId") as string) || null,
+      stage: "art",
+      actor: owner.email,
+      instruction: "",
+      panels,
+      baseArtifactId: String(formData.get("artifactId")),
+      extra,
     });
   } catch (e) {
     back(path, e);

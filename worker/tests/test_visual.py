@@ -79,10 +79,12 @@ class FakeModel:
 class FakeImages:
     def __init__(self):
         self.prompts = []
+        self.calls = []
 
-    def generate(self, prompt, seed=None, references=None, aspect_ratio="3:4"):
+    def generate(self, prompt, seed=None, references=None, aspect_ratio="3:4", model=None):
         self.prompts.append((prompt, len(references or [])))
-        return ImageResult(data=png(border=4), model="fake/img", cost_usd=0.04)
+        self.calls.append({"aspect": aspect_ratio, "model": model})
+        return ImageResult(data=png(border=4), model=model or "fake/img", cost_usd=0.04)
 
 
 @pytest.fixture
@@ -145,7 +147,8 @@ def test_art_lettering_review_flow(store, tmp_path):
     assert [p["index"] for p in art["panels"]] == [1, 2]  # 번호를 1부터 다시 매김
     # 인물 시트 1장 + 컷 2개 x 후보 최대 2장. 첫 후보 불합격 → 둘째 합격
     assert len(images.prompts) == 1 + 4
-    assert images.prompts[0][0].startswith("Character design sheet")
+    assert "Character turnaround sheet" in images.prompts[0][0]
+    assert [c["aspect"] for c in images.calls[1:]][:1] == ["9:16"]  # 긴 컷은 세로로 길게
     p2 = art["panels"][1]
     assert p2["passed"] and p2["score"] == 88 and len(p2["candidates"]) == 2
     assert images.prompts[-1][1] == 1  # 인물 시트를 참조로 넘김
@@ -211,3 +214,55 @@ def test_review_fails_on_low_ai_score(store, tmp_path):
 def test_trim_border_removes_flat_frame():
     out = Image.open(io.BytesIO(trim_border(png(size=(200, 260), border=10))))
     assert out.size[0] < 200 and out.size[1] < 260
+
+
+def test_art_test_panels_compare_and_adopt(store, tmp_path):
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=1))
+    inputs = [
+        _approved(c, sid, eid, "storyboard", {"markdown": "| 1 | 원경 | 마을 |"}),
+        _approved(c, sid, None, "style", {"markdown": "먹선"}),
+        _approved(c, sid, None, "characters", {"markdown": "하나: 17세"}),
+    ]
+    # 처음 작화: 시험 컷 1장만 그리고 나머지는 대기
+    art_id, art = _run(store, tools, sid, eid, "art", inputs)
+    assert art["pending"] == [2] and art["test_panels"] == [1] and art["summary"]["drawn"] == 1
+
+    # 같은 시험 컷을 두 모델로 비교
+    c.execute("update artifacts set status='pending_review' where id=%s", (art_id,))
+    models = ["fal-ai/nano-banana", "fal-ai/nano-banana-pro"]
+    cmp_id, cmp = _run(store, tools, sid, eid, "art", inputs, payload={"panels": [1], "base_artifact_id": str(art_id), "compare_models": models}, attempt=2)
+    v = cmp["panels"][0]["variants"]
+    assert [x["model"] for x in v] == models and all(x["image"] for x in v)
+    assert cmp["pending"] == [2]
+
+    # Pro로 정하고 나머지 그리기: 시험 컷은 Pro 그림을 쓰고, 2컷은 Pro로 그림
+    images.calls.clear()
+    _, done = _run(store, tools, sid, eid, "art", inputs, payload={"panels": [2], "base_artifact_id": str(cmp_id), "adopt_model": models[1]}, attempt=3)
+    assert done["pending"] == [] and done["panels"][0]["image"] == v[1]["image"]
+    assert "variants" not in done["panels"][0]
+    assert images.calls[-1]["model"] == models[1]
+
+
+# ── 시험 컷, 모델 요청 모양 (DB 없이) ──
+
+from noriva_worker.images import request_for  # noqa: E402
+from noriva_worker.visual import choose_test_panels  # noqa: E402
+
+
+def test_choose_test_panels_keeps_first_last_and_people():
+    panels = [{"index": i, "character_ids": ["a"] if i % 3 == 0 else []} for i in range(1, 41)]
+    picked = choose_test_panels(panels, 5)
+    assert picked[0] == 1 and picked[-1] == 40 and len(picked) == 5
+    assert all(i % 3 == 0 for i in picked[1:-1])
+    assert choose_test_panels(panels[:3], 5) == [1, 2, 3]
+
+
+def test_request_for_maps_models():
+    ep, body = request_for("fal-ai/bytedance/seedream/v4", "p", "9:16", None)
+    assert ep.endswith("/text-to-image") and body["image_size"] == "portrait_16_9" and "aspect_ratio" not in body
+    ep, body = request_for("fal-ai/nano-banana-pro", "p", "4:3", [b"x"])
+    assert ep == "fal-ai/nano-banana-pro/edit" and body["resolution"] == "1K" and body["aspect_ratio"] == "4:3" and len(body["image_urls"]) == 1
