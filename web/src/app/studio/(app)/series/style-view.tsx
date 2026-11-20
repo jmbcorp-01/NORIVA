@@ -3,6 +3,7 @@ import { IMAGE_MODELS, imageModelLabel } from "@/lib/pipeline";
 import type { StyleWork } from "@/db/schema";
 import { approveStyle, findStyleWorks, setImageModel, setStyleChoice, updateStyleRefs } from "../../actions";
 import { mediaUrl } from "./panel-views";
+import { ZoomImage } from "@/components/zoom-image";
 
 type StyleBody = {
   kind: "style";
@@ -38,6 +39,9 @@ export function isStyleBody(b: Record<string, unknown>): b is StyleBody {
 /** ④ 화풍 결과: 기준 값, 후보별 샘플 그림, 화풍 마스터 고르기 */
 export function StyleView({ body, artifactId, back, canApprove }: { body: StyleBody; artifactId: string; back: string; canApprove: boolean }) {
   const masters = new Set(body.style_masters ?? []);
+  const samplePics = body.candidates.flatMap((c, ci) =>
+    c.samples.flatMap((k, si) => (k ? [{ src: mediaUrl(k), alt: `후보 ${ci + 1} 장면 ${si + 1}` }] : [])),
+  );
   return (
     <div className="space-y-5">
       {body.criteria ? (
@@ -78,14 +82,19 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
               <div className="grid grid-cols-3 gap-2">
                 {c.samples.map((k, si) =>
                   k ? (
-                    <label key={k} className="block cursor-pointer">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={mediaUrl(k)} alt={`후보 ${ci + 1} 장면 ${si + 1}`} className="w-full rounded-[5px] border border-line" loading="lazy" />
-                      <span className="mt-1 inline-flex min-h-[36px] items-center gap-1.5 text-[12px]">
+                    <div key={k}>
+                      <ZoomImage
+                        src={mediaUrl(k)}
+                        alt={`후보 ${ci + 1} 장면 ${si + 1}`}
+                        gallery={samplePics}
+                        className="w-full rounded-[5px] border border-line"
+                        loading="lazy"
+                      />
+                      <label className="mt-1 inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 text-[12px]">
                         <input type="checkbox" name="masters" value={k} defaultChecked={masters.has(k)} disabled={!canApprove} className="size-4 accent-[var(--color-pine)]" />
                         마스터로
-                      </span>
-                    </label>
+                      </label>
+                    </div>
                   ) : (
                     <div key={si} className="grid aspect-[3/4] place-items-center rounded-[5px] border border-dashed border-line text-[12px] text-ink-faint">
                       그림 없음
