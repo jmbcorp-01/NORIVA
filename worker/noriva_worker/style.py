@@ -5,6 +5,8 @@
 2. 화풍 후보 3개를 화풍 카드(한국어)와 영어 화풍 문구로 쓰고, 시험 장면 3개를 정해요.
 3. 후보 3개 × 장면 3개 = 9장을 그려 대표가 고르게 해요. 고른 그림은 '화풍 마스터'가 되어
    ⑦ 작화의 모든 컷에 화풍 참조 이미지로 들어가요.
+4. 그림 모델은 마스터의 옷·머리·소품·장식까지 따라 그려요. 그래서 샘플마다 시대 검사를 하고,
+   걸리면 고쳐서 한 번 더 그려요. 그래도 남은 문제는 그림 아래에 표시해 대표가 피해서 고르게 해요.
 """
 
 from __future__ import annotations
@@ -78,6 +80,39 @@ PLAN_TASK = """
 
 SCENE_ASPECT = ["3:4", "9:16", "4:3"]
 
+SAMPLE_CHECK_SCHEMA = _obj(
+    {"issues": _arr(_obj({"item": _STR, "severity": {"type": "string", "enum": ["critical", "major"]}, "fix": _STR}))}
+)
+
+SAMPLE_CHECK_TASK = """# 과제: 화풍 샘플의 시대 검사
+
+첨부한 그림은 화풍 후보 샘플이다. 대표가 고르면 '화풍 마스터'가 되어, 이후 모든 인물 시트와 컷이 선과 채색뿐 아니라
+이 그림의 옷·머리 모양·소품·장식까지 따라 그린다. 그래서 이 작품의 시대·나라와 맞지 않는 것이 보이면 모두 적어라.
+- critical: 다른 시대·나라의 복식(조선 한복의 고름, 기모노식 옷깃, 하카마, 사무에, 청나라 옷), 머리 모양·머리 장식(망건, 이마 띠, 드러난 상투, 변발),
+  무기(코등이 있는 칼, 일본도, 휜 칼), 건축(도리이, 일본·중국식 지붕), 글자·워터마크.
+- major: 떠다니는 조각, 반짝임, 리본 같은 장식 효과(모든 컷에 옮겨 그려져요), 장면 지시와 다른 시대 소품.
+- item: 보이는 것(한국어, 짧게), fix: 이미지 모델에 줄 영어 한 문장. 맞는 모습을 긍정형으로 쓴다.
+- 문제가 없으면 빈 목록. 그림 솜씨나 구도는 보지 않는다.
+
+## 작품의 시대와 고증
+{era}
+
+## 이 장면의 지시
+{scene}
+"""
+
+
+def _era_text(ctx: dict[str, Any]) -> str:
+    out = []
+    for src in ctx.get("sources") or []:
+        line = f"- {src.get('name', '')} ({src.get('era', '')})"
+        if src.get("caution"):
+            line += f" 고증 주의: {src['caution']}"
+        if src.get("visual_notes"):
+            line += f" 시각 요소: {src['visual_notes']}"
+        out.append(line)
+    return "\n".join(out) or "- (뿌리 소재 없음: 작품 문서의 시대를 따른다)"
+
 
 def _criteria_text(c: dict[str, Any]) -> str:
     labels = {
@@ -137,26 +172,60 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
     base = f"series/{ctx['series']['id']}/style/{ctx['artifact_id']}"
     jobs = [(ci, si) for ci in range(len(cands)) for si in range(len(scenes))]
 
-    def draw(job: tuple[int, int]) -> tuple[tuple[int, int, str], list[dict[str, Any]]]:
+    era = _era_text(ctx)
+
+    def check(data: bytes, si: int, local: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        r = llm.json(
+            system,
+            SAMPLE_CHECK_TASK.format(era=era, scene=scenes[si]["prompt"]),
+            SAMPLE_CHECK_SCHEMA,
+            images=[thumbnail(data, 1024)],
+            effort="medium",
+            max_tokens=8000,
+        )
+        local.append(r.result.cost_entry())
+        return [i for i in r.data.get("issues") or [] if i.get("item")]
+
+    def weight(issues: list[dict[str, Any]]) -> int:
+        return sum(3 if i.get("severity") == "critical" else 1 for i in issues)
+
+    def draw(job: tuple[int, int]) -> tuple[tuple[int, int, str, list[dict[str, Any]]], list[dict[str, Any]]]:
         ci, si = job
         prompt = (
             f"{base_for(cands[ci].get('medium'))} One single webtoon panel, one continuous image edge to edge, no borders, no split panels. "
             f"{scenes[si]['prompt']} Style: {cands[ci]['style_prompt']} "
             "Korean setting: no Japanese or Chinese architecture, katana, kimono or kanji. No text, letters, speech bubbles or watermark."
         )
-        img = images.generate(prompt, seed=1000 + si, aspect_ratio=SCENE_ASPECT[si % 3], model=model)
-        key = media.put(f"{base}/c{ci + 1}-s{si + 1}.png", trim_border(img.data))
-        return (ci, si, key), [img.cost_entry()]
+        local: list[dict[str, Any]] = []
+        tries: list[tuple[bytes, list[dict[str, Any]]]] = []
+        for k in range(2):
+            p = prompt
+            if tries:
+                fixes = " ".join(i["fix"].strip() for i in tries[-1][1] if (i.get("fix") or "").strip())
+                p += f" Draw these details correctly: {fixes}" if fixes else ""
+            img = images.generate(p, seed=1000 + si + 100 * k, aspect_ratio=SCENE_ASPECT[si % 3], model=model)
+            local.append(img.cost_entry())
+            data = trim_border(img.data)
+            tries.append((data, check(data, si, local)))
+            if not tries[-1][1]:
+                break
+        data, issues = min(tries, key=lambda t: weight(t[1]))
+        key = media.put(f"{base}/c{ci + 1}-s{si + 1}.png", data)
+        return (ci, si, key, [{"item": i["item"], "severity": i.get("severity", "major")} for i in issues]), local
 
     results = _map_progress(ctx, 4, draw, jobs, "화풍 샘플 그리는 중")
     for _, local in results:
         costs.extend(local)
     samples: dict[int, dict[int, str]] = {}
-    for (ci, si, key), _ in results:
+    issues: dict[int, dict[int, list[dict[str, Any]]]] = {}
+    for (ci, si, key, found), _ in results:
         samples.setdefault(ci, {})[si] = key
+        issues.setdefault(ci, {})[si] = found
 
     out_cands = [
-        {"name": c["name"], "medium": c.get("medium") if c.get("medium") in BASES else "cel", "card": c["card"], "style_prompt": c["style_prompt"], "samples": [samples.get(i, {}).get(s) for s in range(len(scenes))]}
+        {"name": c["name"], "medium": c.get("medium") if c.get("medium") in BASES else "cel", "card": c["card"], "style_prompt": c["style_prompt"],
+         "samples": [samples.get(i, {}).get(s) for s in range(len(scenes))],
+         "sample_issues": [issues.get(i, {}).get(s) or [] for s in range(len(scenes))]}
         for i, c in enumerate(cands)
     ]
     md = ["# ④ 화풍 후보 3안", ""]

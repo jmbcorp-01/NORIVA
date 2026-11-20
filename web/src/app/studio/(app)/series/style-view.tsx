@@ -9,7 +9,14 @@ type StyleBody = {
   kind: "style";
   markdown: string;
   criteria: Record<string, string | number> | null;
-  candidates: { name: string; medium?: string; card: string; style_prompt: string; samples: (string | null)[] }[];
+  candidates: {
+    name: string;
+    medium?: string;
+    card: string;
+    style_prompt: string;
+    samples: (string | null)[];
+    sample_issues?: { item: string; severity: "critical" | "major" }[][];
+  }[];
   scenes: { title: string; prompt: string }[];
   model?: string | null;
   style_masters?: string[];
@@ -71,6 +78,11 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
           후보 3개를 같은 장면 3개로 그렸어요 ({imageModelLabel(body.model)}). 가장 웹툰다운 그림을 1~5장 고르면 화풍 마스터가 되어, 작화의 모든 컷이 이 그림의 선과 채색을 따라요. 같은 후보 안에서 고르는 걸 권해요.
         </p>
         <p className="mb-3 text-[12px] text-ink-faint">장면: {body.scenes.map((s, i) => `${i + 1}. ${s.title}`).join(" · ")}</p>
+        {body.candidates.some((c) => c.sample_issues?.some((x) => x.length)) ? (
+          <p className="mb-3 rounded-[5px] border border-plum/40 px-3 py-2 text-[12px] text-ink-soft">
+            마스터로 고른 그림의 옷·머리 모양·소품·장식은 이후 모든 인물과 컷에 따라 그려져요. 아래에 빨간 표시가 있는 그림은 시대에 맞지 않는 것이 보여서 고르지 않는 걸 권해요.
+          </p>
+        ) : null}
         <div className="space-y-5">
           {body.candidates.map((c, ci) => (
             <section key={ci} className={body.chosen === ci ? "rounded-[6px] ring-2 ring-pine/50 p-2" : ""}>
@@ -94,6 +106,14 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
                         <input type="checkbox" name="masters" value={k} defaultChecked={masters.has(k)} disabled={!canApprove} className="size-4 accent-[var(--color-pine)]" />
                         마스터로
                       </label>
+                      {c.sample_issues?.[si]?.length ? (
+                        <p className={c.sample_issues[si].some((x) => x.severity === "critical") ? "text-[12px] text-plum" : "text-[12px] text-ink-soft"}>
+                          {c.sample_issues[si].some((x) => x.severity === "critical") ? "고르지 마세요: " : "주의: "}
+                          {c.sample_issues[si].map((x) => x.item).join(", ")}
+                        </p>
+                      ) : c.sample_issues ? (
+                        <p className="text-[12px] text-pine">시대 검사 통과</p>
+                      ) : null}
                     </div>
                   ) : (
                     <div key={si} className="grid aspect-[3/4] place-items-center rounded-[5px] border border-dashed border-line text-[12px] text-ink-faint">

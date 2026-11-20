@@ -30,7 +30,8 @@ type SheetsBody = {
   clean_masters?: string[];
   found_photos?: { prop: string; image: string; title: string; page: string; license: string; artist: string }[];
   photo_notes?: { index: number; real_photo: boolean; props: string[]; note: string }[];
-  props?: { id: string; name: string; owners: string[]; description: string; image?: string; score?: number; passed?: boolean; defects?: Defect[] }[];
+  props?: { id: string; name: string; owners: string[]; description: string; kind?: string; image?: string; score?: number; passed?: boolean; defects?: Defect[] }[];
+  search_log?: { prop: string; queries: string[]; candidates: number; accepted: number; notes: string[] }[];
   summary: { characters: number; passed: number };
 };
 
@@ -117,8 +118,24 @@ export function SheetsView({
       </p>
       {body.props?.length ? (
         <div className="mt-4">
-          <p className="text-[13px] font-medium">소품 시트</p>
-          <p className="text-[12px] text-ink-faint">고증 사진을 보고 소품만 먼저 그렸어요. 인물 시트와 ⑦ 작화가 이 모양을 그대로 따라요.</p>
+          <p className="text-[13px] font-medium">소품·의상 시트</p>
+          <p className="text-[12px] text-ink-faint">고증 사진을 보고 소품과 시대 옷차림만 먼저 그렸어요. 인물 시트와 ⑦ 작화가 이 모양을 그대로 따라요.</p>
+          {body.search_log?.some((l) => !l.accepted) ? (
+            <details className="mt-1 text-[12px] text-ink-soft">
+              <summary className="cursor-pointer text-indigo">실물 사진을 못 찾은 항목 {body.search_log.filter((l) => !l.accepted).length}개</summary>
+              <ul className="mt-1 space-y-0.5">
+                {body.search_log
+                  .filter((l) => !l.accepted)
+                  .map((l) => (
+                    <li key={l.prop}>
+                      {body.props?.find((p) => p.id === l.prop)?.name ?? l.prop}: 검색어 {l.queries.join(" / ")} · 후보 {l.candidates}장
+                      {l.notes.length ? ` · ${l.notes.join(" ")}` : ""}
+                    </li>
+                  ))}
+              </ul>
+              <p className="mt-1 text-ink-faint">박물관 실물 사진을 직접 올리면 그 사진을 먼저 써요 (예: e뮤지엄 emuseum.go.kr).</p>
+            </details>
+          ) : null}
           {body.found_photos?.length ? (
             <div className="mt-2 text-[12px] text-ink-soft">
               <p>직접 찾아 쓴 실물 사진 (위키미디어 공용, 자유 이용 라이선스)</p>
@@ -148,6 +165,7 @@ export function SheetsView({
                 )}
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <span className="font-medium">{p.name}</span>
+                  {p.kind === "attire" ? <span className="text-ink-faint">의상</span> : null}
                   <span className="text-ink-faint">{p.owners.join(", ")}</span>
                   {typeof p.score === "number" ? <Badge tone={p.passed ? "pine" : "plum"}>{p.score}점</Badge> : null}
                 </div>

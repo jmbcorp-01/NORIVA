@@ -87,12 +87,17 @@ class FakeModel:
         elif "shading_steps" in props:
             data = {"line": "굵은 외곽선", "coloring": "셀", "shading_steps": 2, "palette": "고채도", "proportions": "8등신",
                     "faces": "눈 중간", "backgrounds": "색면", "effects": "집중선", "panel_rhythm": "클로즈업 많음", "avoid": "수채"}
-        elif list(props) in (["characters"], ["characters", "props"]):
+        elif "issues" in props:
+            # 화풍 샘플 시대 검사: 첫 샘플만 걸려서 한 번 더 그림
+            self.sample_checks = getattr(self, "sample_checks", 0) + 1
+            data = {"issues": [{"item": "망건", "severity": "critical", "fix": "Hair in a low knot with a cloth tie."}] if self.sample_checks == 1 else []}
+        elif list(props) in (["characters"], ["characters", "props"], ["characters", "props", "attire"]):
             data = {"characters": [
                 {"id": "Sun Jeong", "name": "순정", "kind": "person", "role": "main", "appearance": "man, 30, topknot, dark navy durumagi",
                  "period_notes": "straight ring-pommel sword, no guard", "never": ["curved katana", "tsuba"]},
                 {"id": "cow", "name": "누렁소", "kind": "animal", "role": "minor", "appearance": "yellow ox", "period_notes": "", "never": []},
-            ], "props": [{"id": "sword", "name": "환두대도", "owners": ["Sun Jeong", "nobody"], "description": "straight sword with a gold ring pommel", "search": ["ring pommel sword"]}]}
+            ], "props": [{"id": "sword", "name": "환두대도", "owners": ["Sun Jeong", "nobody"], "description": "straight sword with a gold ring pommel", "search": ["ring pommel sword"]}],
+               "attire": [{"id": "silla_man", "name": "신라 남자 옷차림", "owners": ["Sun Jeong", "cow"], "description": "short jacket closed with a belt, wide trousers", "search": ["Silla clay figurine"]}]}
         elif "photos" in props:
             data = {"photos": [{"index": 0, "prop_ids": ["sword"], "real_photo": True, "note": "실물"}]}
         elif "violations" in props:
@@ -315,7 +320,10 @@ def test_style_samples_criteria_and_masters_feed_art(store, tmp_path):
     style_id, style = _run(store, tools, sid, None, "style", [concept, chars])
     assert style["kind"] == "style" and style["criteria"]["shading_steps"] == 2
     assert len(style["candidates"]) == 3 and all(len(cd["samples"]) == 3 and all(cd["samples"]) for cd in style["candidates"])
-    assert len(images.prompts) == 9 and "기준 값" in style["markdown"]
+    assert len(images.prompts) == 10 and "기준 값" in style["markdown"]
+    # 시대 검사에 걸린 샘플은 고칠 점을 넣어 한 번 더 그리고, 통과하면 표시가 남지 않음
+    assert sum("Draw these details correctly: Hair in a low knot" in p for p, _ in images.prompts) == 1
+    assert all(all(x == [] for x in cd["sample_issues"]) for cd in style["candidates"])
     crit_call = next(call for call in model.calls if "shading_steps" in call[0])
     assert crit_call[2] == 1  # 참고 캡처는 기준 값 분석에만 쓰여요
     assert all(n == 0 for _, n in images.prompts)  # 그림 모델에는 참고 캡처를 보내지 않아요
@@ -459,22 +467,30 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path, monkeypatch):
     assert prop["owners"] == ["sunjeong"] and prop["passed"] and prop["image"].endswith("prop-sword-2.png")
     prop_prompts = [(p, n) for p, n in images.prompts if p.count("Prop design sheet")]
     assert len(prop_prompts) == 2 and "drawn with the blade fully visible" in prop_prompts[0][0]
+    # 시대 의상 시트도 먼저 그려 검사하고, 사람인 주인만 남김
+    attire = sheets["props"][1]
+    assert attire["kind"] == "attire" and attire["owners"] == ["sunjeong"] and attire["passed"]
+    assert sum("Period costume reference sheet" in p for p, _ in images.prompts) == 2
     # 업로드한 실물 사진이 없으면 공용에서 찾아, 검사를 통과한 사진을 소품 시트의 참고 그림으로
-    assert searched == [["ring pommel sword"]] and all(n == 1 for _, n in prop_prompts)
+    assert searched == [["ring pommel sword"], ["Silla clay figurine"]] and all(n == 1 for _, n in prop_prompts)
+    # 맞지 않는 사진은 쓰지 않고 검색 기록에 남김
+    assert [(x["prop"], x["accepted"]) for x in sheets["search_log"]] == [("sword", 1), ("silla_man", 0)]
     assert sheets["found_photos"][0]["license"] == "CC BY-SA 4.0" and sheets["found_photos"][0]["image"].endswith("ref-sword-1.jpg")
     # 금지 단어는 그림 지시에 넣지 않고 검사에서만 써요. 글자·장식 금지는 늘 넣어요.
     sheet_prompts = [(p, n) for p, n in images.prompts if "turnaround sheet" in p]
     assert not any("katana" in p or "Must not include" in p for p, _ in sheet_prompts)
     assert all("no view labels" in p for p, _ in sheet_prompts)
-    assert sheets["summary"] == {"characters": 2, "passed": 2, "props": 1, "props_passed": 1}
-    assert len(images.prompts) == 7
+    assert sheets["summary"] == {"characters": 2, "passed": 2, "props": 2, "props_passed": 2}
+    assert len(images.prompts) == 10  # 마스터 지우기 2번 + 소품·의상 4 + 인물 4
     # 마스터에 금지 소품이 있으면 그것을 지운 깨끗한 마스터를 먼저 만들어 씀
     assert images.prompts[0][0].startswith("Edit reference image 1. Remove these things completely: 긴 뿔") and images.prompts[0][1] == 1
     assert sheets["clean_masters"] and sheets["clean_masters"][0].endswith("master-clean-1.png")
     # 순정은 화풍 마스터 + 소품 시트를 참조로, 고증 사진은 넣지 않음. 마스터에 금지 소품이 있는 소는 마스터 없이.
     assert sheets["master_warnings"][0]["characters"] == ["cow"]
     assert all(n == 0 for p, n in sheet_prompts if "누렁소" in p)
-    assert all(n == 2 and "approved prop design for 환두대도" in p for p, n in sheet_prompts if "순정" in p)
+    assert all(n == 3 and "approved prop design for 환두대도" in p and "approved period costume design" in p for p, n in sheet_prompts if "순정" in p)
+    # 한 번에 안 지워지면 고칠 문장을 넣어 한 번 더 지움
+    assert images.prompts[1][0].startswith("Edit reference image 1. Remove these things completely: 긴 뿔")
     # 앞 시도에서 걸린 치명 문제를 다음 그림 지시에 넣음
     assert any("Fix these problems found in the previous attempt: GA-3 일본도" in p for p, _ in images.prompts if "순정" in p)
 
@@ -500,3 +516,10 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path, monkeypatch):
     assert art["characters"][0]["sheet"] == sj["sheet"]
     check_tasks = [t for props, t, _ in model.calls if "people_count" in props]
     assert check_tasks and "먹선의 굵기 변화" in check_tasks[0]  # 먹선 화풍이면 잉크 질감을 결함으로 보지 않음
+
+
+def test_commons_queries_are_shortened():
+    from noriva_worker.commons import _queries
+
+    assert _queries(['"Gyeongju National Museum iron sword"', "환두대도", "", "ring pommel sword"]) == [
+        "Gyeongju National Museum iron sword", "Gyeongju National Museum", "환두대도", "ring pommel sword"]
