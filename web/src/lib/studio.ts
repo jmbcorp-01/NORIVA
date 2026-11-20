@@ -78,6 +78,18 @@ export async function resolveGuidelineVersions(
 
 export class StudioError extends Error {}
 
+export const DEFAULT_EPISODE_BUDGET = 40;
+const usd = (n: number) => "$" + n.toFixed(2);
+
+/** 회차에 지금까지 든 제작비 (달러) */
+export async function episodeCost(episodeId: string): Promise<number> {
+  const [r] = await db
+    .select({ total: sql<string>`coalesce(sum(${schema.costLedger.costUsd}), 0)` })
+    .from(schema.costLedger)
+    .where(eq(schema.costLedger.episodeId, episodeId));
+  return Number(r?.total ?? 0);
+}
+
 /** 단계를 시작(또는 다시 생성)해요. 결과물 자리를 만들고 작업을 큐에 넣어요. */
 export async function startStage(opts: {
   seriesId: string;
@@ -106,6 +118,16 @@ export async function startStage(opts: {
         ? "이미 생성 중이에요"
         : `먼저 승인해야 할 단계: ${missing.map((m) => STAGE_INFO[m].label).join(", ")}`,
     );
+  }
+
+  if (episodeId) {
+    const budget = s.brief.episodeBudgetUsd ?? DEFAULT_EPISODE_BUDGET;
+    const spent = await episodeCost(episodeId);
+    if (budget > 0 && spent >= budget) {
+      throw new StudioError(
+        `이 회차 제작비가 상한에 닿았어요 (${usd(spent)} / ${usd(budget)}). 회차 화면 위쪽에서 상한을 올리면 계속할 수 있어요.`,
+      );
+    }
   }
 
   const inputIds = UPSTREAM[stage].map((u) => latest[u]!.id);

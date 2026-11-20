@@ -119,6 +119,8 @@ export type SeriesBrief = {
   styleRefs?: string[];
   /** ④+ 인물 시트를 그릴 때 참조로 넣는 고증 참고 그림 (비공개 보관, S3 키). 유물·복식 사진 등 */
   historyRefs?: string[];
+  /** 회차 하나에 쓸 수 있는 제작비 상한 (달러). 넘으면 그 회차의 새 작업을 시작하지 않아요. 없으면 40 */
+  episodeBudgetUsd?: number;
   /** AI가 ①~③에 맞춰 찾은 시장 웹툰과 화풍 특징. 특징만 화풍 후보에 쓰고 이름·그림은 그림 모델에 보내지 않아요 */
   styleSuggestions?: { at: string; works: StyleWork[] };
   /** styleSuggestions.works 중 대표가 고른 번호 (최대 3개) */

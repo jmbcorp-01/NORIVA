@@ -3,8 +3,8 @@ import { notFound } from "next/navigation";
 import { and, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { Badge, Button, Card, Input, Notice, PageHeader } from "@/components/ui";
-import { fillEpisodeMeta, publishEpisodeAction, saveEpisodeInfo } from "../../../../../actions";
-import { latestArtifacts } from "@/lib/studio";
+import { fillEpisodeMeta, publishEpisodeAction, saveEpisodeInfo, setEpisodeBudget } from "../../../../../actions";
+import { DEFAULT_EPISODE_BUDGET, episodeCost, latestArtifacts } from "@/lib/studio";
 import { EPISODE_STAGES, isApproved, SERIES_STAGES, stageStates, STAGE_INFO, type LatestArtifact, type Stage } from "@/lib/pipeline";
 import { StageBadge } from "@/components/stage-badge";
 import { StageBoard } from "../../../stage-board";
@@ -26,6 +26,8 @@ export default async function EpisodePage({
     .where(and(eq(schema.episodes.seriesId, id), eq(schema.episodes.number, Number(number))));
   if (!s || !ep) notFound();
   const latest = await latestArtifacts(id, ep.id);
+  const spent = await episodeCost(ep.id);
+  const budget = s.brief.episodeBudgetUsd ?? DEFAULT_EPISODE_BUDGET;
   const l: Partial<Record<Stage, LatestArtifact>> = {};
   for (const [k, v] of Object.entries(latest)) if (v) l[k as Stage] = { id: v.id, stage: k as Stage, status: v.status };
   const seriesStates = stageStates(SERIES_STAGES, l);
@@ -59,6 +61,7 @@ export default async function EpisodePage({
           </span>
         ))}
       </div>
+      <BudgetBar spent={spent} budget={budget} seriesId={id} back={back} />
       <PublishCard
         title={ep.title}
         titleEn={ep.titleEn}
@@ -161,6 +164,34 @@ function PublishCard({
         </span>
         {metaStatus === "failed" ? <span className="w-full text-[12px] text-plum">가져오기 실패: {metaError}</span> : null}
       </form>
+    </Card>
+  );
+}
+
+/** 회차 제작비와 상한. 상한에 닿으면 이 회차의 새 작업이 시작되지 않아요 */
+function BudgetBar({ spent, budget, seriesId, back }: { spent: number; budget: number; seriesId: string; back: string }) {
+  const pct = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
+  const near = budget > 0 && spent >= budget * 0.8;
+  return (
+    <Card className="mb-4 px-4 py-3 text-[13px]">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <span className="font-medium">이 회차 제작비</span>
+        <span className={near ? "text-plum" : "text-ink-soft"}>
+          ${spent.toFixed(2)} {budget > 0 ? `/ 상한 $${budget}` : "(상한 없음)"}
+        </span>
+        <form action={setEpisodeBudget} className="ml-auto flex items-center gap-2">
+          <input type="hidden" name="back" value={back} />
+          <input type="hidden" name="seriesId" value={seriesId} />
+          <Input name="budget" type="number" min={0} max={1000} step={1} defaultValue={budget} className="h-8 w-24" aria-label="회차 비용 상한 (달러)" />
+          <Button type="submit">저장</Button>
+        </form>
+      </div>
+      {budget > 0 ? (
+        <div className="mt-2 h-1.5 w-full rounded-full bg-paper-sunk">
+          <div className={`h-1.5 rounded-full ${near ? "bg-plum" : "bg-pine"}`} style={{ width: `${pct}%` }} />
+        </div>
+      ) : null}
+      <p className="mt-1.5 text-[11px] text-ink-faint">상한은 작품의 모든 회차에 같이 적용돼요. 0이면 상한이 없어요. 작화 전체는 보통 $25~35예요.</p>
     </Card>
   );
 }
