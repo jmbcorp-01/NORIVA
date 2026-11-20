@@ -59,6 +59,12 @@ const SENSITIVITY_RULES = [
   { code: "X-3", text: "일제강점기, 전쟁 등 역사적 피해는 피해자 시점의 존중을 지키고, 가해를 미화하지 않는다." },
   { code: "X-4", text: "지역 비하, 장애·외모 비하 개그 금지." },
   { code: "X-5", text: "성적 묘사와 폭력 수위는 작품 연령 등급을 따른다. 18세 미만 인물의 성적 묘사는 어떤 경우에도 금지." },
+  {
+    code: "X-6",
+    text:
+      "연령 등급별 표현 기준. 전체: 피와 상처를 그리지 않고 공포는 분위기로만. 12세: 작은 상처와 소량의 피, 공포는 실루엣·암시 위주. " +
+      "15세: 피와 부상은 그리되 절단·내장·고문 과정은 화면 밖으로, 성적 묘사는 키스까지. 19세: 잔혹 묘사도 이야기에 필요한 만큼만, 18세 미만 인물은 어떤 등급에서도 성적 묘사 금지.",
+  },
 ];
 
 // 한국 고증: 흔히 섞이는 일본·중국 요소와 그 대신 쓸 것 (docs/04 4.1)
@@ -172,6 +178,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "C-5", text: "악역에게도 한(恨)이나 이유를 준다. 순수한 악은 시즌에 하나까지만." },
         { code: "S-17", text: "가족, 한(恨)과 정(情)처럼 한국 독자가 크게 반응하는 감정선을 시즌 안에 하나 이상 깊게 판다." },
         ...SENSITIVITY_RULES,
+        { code: "S-18", text: "2화부터는 첫 컷 1~2개로 지난 화의 마지막 장면을 짧게 다시 보여주고 들어간다." },
         CONTINUITY_RULES[6],
         { code: "K-8", text: "스토리 단계에서 설정 장부(인물 나이와 관계, 호칭, 시간표, 세계 규칙, 주요 장소)를 만들고, 회차 대본은 이 장부와 어긋나지 않게 쓴다." },
       ],
@@ -232,6 +239,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "AI-04", text: "컷마다 표정을 눈썹, 입, 시선 방향으로 구체적으로 적는다. '살짝 미소' 같은 뭉뚱그린 표정 금지." },
         { code: "AI-13", text: "중요도가 낮은 컷은 실루엣, 색면, 효과선 컷으로 지정해 밀도에 강약을 준다." },
         SENSITIVITY_RULES[4],
+        SENSITIVITY_RULES[5],
         { code: "K-10", text: "컷마다 등장인물의 의상 상태와 손에 든 것, 화면 안 좌우 위치를 적어 다음 컷과 이어지게 한다." },
       ],
       banned: [],
@@ -245,7 +253,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     title: "작화 기본 지침",
     body: {
       role: "콘티의 컷을 화풍 카드와 캐릭터 시트에 맞춰 그린다. 후보 2~4장을 만들고 결함 검사로 고른다.",
-      rules: [...ART_RULES, ...HISTORY_RULES, ...CONTINUITY_RULES.slice(0, 6), SENSITIVITY_RULES[4]],
+      rules: [...ART_RULES, ...HISTORY_RULES, ...CONTINUITY_RULES.slice(0, 6), SENSITIVITY_RULES[4], SENSITIVITY_RULES[5]],
       banned: VISUAL_BANNED,
       outputFormat: "컷마다 후보 이미지와 검사 결과(손, 글자, 얼굴 일관성, 인물 수, 고증, 고정 소품, 화풍).",
       examples: "",
@@ -302,7 +310,9 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "Q-7", text: "레터링 가독성 10점 (L-1~L-5)" },
         { code: "Q-8", text: "화풍 통일 5점" },
         { code: "Q-9", text: "합격: 80점 이상, AI 티 없음 16점 이상, 치명 결함 0개." },
-        { code: "Q-11", text: "민감 사항(X-1~X-5)과 한국 고증(H-1~H-5) 위반은 치명 결함이다." },
+        { code: "Q-11", text: "민감 사항(X-1~X-6)과 한국 고증(H-1~H-5) 위반은 치명 결함이다." },
+        ...SENSITIVITY_RULES,
+        ...HISTORY_RULES,
         { code: "Q-10", text: "연속성(K-1~K-7) 어긋남은 앞뒤 컷 번호와 함께 적는다. 얼굴이나 고정 소품이 다른 인물처럼 보이면 치명 결함이다." },
       ],
       banned: [...KO_BANNED, ...EN_BANNED],
