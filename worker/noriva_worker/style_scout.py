@@ -7,11 +7,41 @@
 
 from __future__ import annotations
 
-from typing import Any
+import html
+import re
+from typing import Any, Callable
+from urllib.parse import urljoin
 
+from .images import thumbnail
 from .scout import ROOT_RULES
-from .style import CRITERIA_SCHEMA
+from .style import CRITERIA_SCHEMA, CRITERIA_TASK
 from .visual import _STR, _arr, _obj
+
+MAX_IMAGE_BYTES = 6 * 1024 * 1024
+_OG = re.compile(r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\'][^>]*>', re.I)
+_CONTENT = re.compile(r'content=["\']([^"\']+)["\']', re.I)
+
+
+def fetch_cover(url: str) -> bytes | None:
+    """작품 공식 페이지의 대표 이미지(og:image)를 받아요. 화풍 측정에만 쓰고 저장하지 않아요."""
+    import httpx
+
+    try:
+        with httpx.Client(timeout=15, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (compatible; NorivaStudio/1.0)"}) as http:
+            page = http.get(url)
+            if page.status_code != 200:
+                return None
+            tag = _OG.search(page.text[:400_000])
+            m = _CONTENT.search(tag.group(0)) if tag else None
+            if not m:
+                return None
+            img = http.get(urljoin(str(page.url), html.unescape(m.group(1))))
+            if img.status_code != 200 or not img.headers.get("content-type", "").startswith("image/") or len(img.content) > MAX_IMAGE_BYTES:
+                return None
+            return img.content
+    except Exception:  # noqa: BLE001 - 못 받으면 글로 추정한 값을 그대로 둬요
+        return None
+
 
 SYSTEM = ROOT_RULES + """
 당신은 NORIVA의 아트 디렉터예요. 우리 작품에 맞는 화풍을 정하기 전에, 시장에서 검증된 웹툰 중 분위기·장르·독자층이 닮은 작품을 찾아요.
@@ -76,7 +106,15 @@ def _organize_task(research_text: str, links: list[dict[str, str]]) -> str:
 """
 
 
-def run_style_scout(ctx: dict[str, Any], model: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+MEASURE_TASK = CRITERIA_TASK.replace(
+    "첨부한 그림은 대표가 고른 시장 웹툰 화면 캡처예요.", "첨부한 그림은 시장 웹툰의 공식 대표 이미지예요."
+) + "\n그림에서 확인되는 것만 적고, 이 이미지로 알 수 없는 항목(예: 컷 리듬)은 '대표 이미지로는 확인 불가'라고 적어라."
+
+
+def run_style_scout(
+    ctx: dict[str, Any], model: Any, fetch: Callable[[str], bytes | None] | None = None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    fetch = fetch or fetch_cover
     research = model.research(SYSTEM, scout_task(ctx), max_searches=12)
     organized = model.json(SYSTEM, _organize_task(research.text, research.links), SCHEMA, effort="medium", max_tokens=16000)
     allowed = {l["url"] for l in research.links}
@@ -94,6 +132,21 @@ def run_style_scout(ctx: dict[str, Any], model: Any) -> tuple[list[dict[str, Any
                 "url": url if url in allowed else "",
                 "why": (w.get("why") or "").strip()[:500],
                 "traits": w.get("traits") or {},
+                "measured": False,
             }
         )
-    return works, [*research.cost_entries(), organized.result.cost_entry()]
+    costs = [*research.cost_entries(), organized.result.cost_entry()]
+    # 글로 추정한 특징을, 공식 대표 이미지를 직접 보고 잰 값으로 바꿔요 (그림은 저장하지 않아요)
+    for w in works:
+        raw = fetch(w["url"]) if w["url"] else None
+        if not raw:
+            continue
+        try:
+            img = thumbnail(raw, 1280)
+        except Exception:  # noqa: BLE001 - 깨진 그림은 건너뛰어요
+            continue
+        r = model.json(SYSTEM, MEASURE_TASK, CRITERIA_SCHEMA, images=[img], effort="medium", max_tokens=6000)
+        costs.append(r.result.cost_entry())
+        w["traits"] = r.data
+        w["measured"] = True
+    return works, costs

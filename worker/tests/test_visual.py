@@ -64,7 +64,7 @@ class FakeModel:
             }
         elif "candidates" in props and "scenes" in props:
             data = {
-                "candidates": [{"name": f"후보{i}", "card": f"카드 {i}", "style_prompt": f"style {i}"} for i in range(1, 4)],
+                "candidates": [{"name": f"후보{i}", "medium": ["cel", "ink", "bogus"][i - 1], "card": f"카드 {i}", "style_prompt": f"style {i}"} for i in range(1, 4)],
                 "scenes": [{"title": f"장면{i}", "prompt": f"scene {i}"} for i in range(1, 4)],
             }
         elif "works" in props:
@@ -294,11 +294,17 @@ def test_style_samples_criteria_and_masters_feed_art(store, tmp_path):
     inputs = [_approved(c, sid, eid, "storyboard", {"markdown": "| 1 |"}), style_id, chars]
     _, art = _run(store, tools, sid, eid, "art", inputs)
     assert art["style_prompt"] == "style 2"
+    assert [cd["medium"] for cd in style["candidates"]] == ["cel", "ink", "cel"]
+    assert "ink-wash" in images.prompts[0][0] and "flat cel shading" not in images.prompts[-1][0]  # 고른 후보의 바탕으로 그림
     assert images.prompts[0][1] == 2  # 인물 시트도 마스터 2장을 보고 그림
     assert images.prompts[-1][1] == 3 and "style masters" in images.prompts[-1][0]  # 마스터 2 + 인물 시트 1
 
 
-def test_style_scout_suggestions_feed_style_without_names(store, tmp_path):
+def test_style_scout_suggestions_feed_style_without_names(store, tmp_path, monkeypatch):
+    import noriva_worker.style_scout as ss
+
+    fetched = []
+    monkeypatch.setattr(ss, "fetch_cover", lambda url: fetched.append(url) or png())
     c = store.conn
     sid, _ = _series(c)
     model, images = FakeModel(), FakeImages()
@@ -312,12 +318,15 @@ def test_style_scout_suggestions_feed_style_without_names(store, tmp_path):
     works = brief["styleSuggestions"]["works"]
     assert [w["title"] for w in works] == ["참고작", "링크없음"] and works[1]["url"] == ""  # 인용 안 된 주소는 버려요
     assert "styleChoice" not in brief  # 새로 찾으면 전에 고른 건 풀어요
+    # 링크가 있는 작품은 공식 대표 이미지를 보고 다시 재요 (글로 추정한 값 대신)
+    assert fetched == ["https://comic.example/1"] and works[0]["measured"] and not works[1]["measured"]
+    assert works[0]["traits"]["shading_steps"] == 2 and works[1]["traits"]["shading_steps"] == 3
 
     c.execute("update series set brief = brief || %s where id = %s", (Jsonb({"styleChoice": [0]}), sid))
     model.calls.clear()
     _, style = _run(store, tools, sid, None, "style", [concept])
     plan = next(call for call in model.calls if "candidates" in call[0])
-    assert "참고 화풍 A" in plan[1] and "역광" in plan[1] and "참고작" not in plan[1]  # 특징만, 이름은 빼고
+    assert "참고 화풍 A" in plan[1] and "집중선" in plan[1] and "참고작" not in plan[1]  # 특징만, 이름은 빼고
     assert style["picked"] == ["참고작 (네이버웹툰)"] and "참고작" not in style["markdown"]
     assert all("참고작" not in p for p, _ in images.prompts)
 

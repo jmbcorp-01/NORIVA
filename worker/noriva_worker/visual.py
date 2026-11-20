@@ -158,6 +158,27 @@ WEBTOON_BASE = (
     "Not watercolor, not paper or canvas texture, not ink hatching, not a western comic or picture-book style, not a photo or 3D render."
 )
 
+_FINISH = "Polished finish of a top-ranked serialized webtoon. Not a children's picture book or storybook, not a rough sketch, not a western comic, not a photo or 3D render."
+
+# 화풍 후보의 그리는 방식(medium)별 바탕. 대표가 수채·수묵 결의 참고작을 고르면 셀 채색 바탕과 충돌하지 않게 바꿔요.
+BASES = {
+    "cel": WEBTOON_BASE,
+    "painterly": (
+        "Korean webtoon (manhwa) digital painting for vertical-scroll smartphone reading: confident clean lineart with thick-thin variation, "
+        "soft digitally painted shading with controlled gradients, clear readable silhouettes and faces, atmospheric painted backgrounds. " + _FINISH
+    ),
+    "ink": (
+        "Korean webtoon (manhwa) digital illustration with modern ink-wash (sumuk) rendering for vertical-scroll smartphone reading: "
+        "bold expressive brush lineart with strong thick-thin variation, restrained muted palette with one or two accent colors, "
+        "ink bleed and wash only in backgrounds and effects, faces clean and readable. " + _FINISH
+    ),
+}
+
+
+def base_for(medium: Any) -> str:
+    return BASES.get(medium if isinstance(medium, str) else "cel", WEBTOON_BASE)
+
+
 # 콘티의 컷 높이 → 그림 비율. 웹툰은 가로로 넓은 컷과 세로로 긴 컷이 섞여야 리듬이 생겨요.
 ASPECT = {"short": "4:3", "normal": "3:4", "long": "9:16"}
 
@@ -181,10 +202,10 @@ def choose_test_panels(panels: list[dict[str, Any]], n: int) -> list[int]:
     return sorted(picked)
 
 
-def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]], with_refs: bool, extra: str, n_masters: int = 0) -> str:
+def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]], with_refs: bool, extra: str, n_masters: int = 0, base: str = WEBTOON_BASE) -> str:
     sheet_offset = n_masters
     parts = [
-        WEBTOON_BASE,
+        base,
         f"One single webtoon panel, {panel['shot']} shot, one continuous image filling the whole frame edge to edge."
         " Not a comic page: no panel borders, no frames, no gutters, no split panels, no paper margins.",
         panel["description"],
@@ -290,8 +311,10 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     # ④에서 대표가 고른 화풍: 영어 화풍 문구와 화풍 마스터 그림
     style_body = (ctx.get("input_bodies") or {}).get("style") or {}
     chosen = style_body.get("chosen")
+    base = WEBTOON_BASE
     if isinstance(chosen, int) and 0 <= chosen < len(style_body.get("candidates") or []):
         plan["style_prompt"] = style_body["candidates"][chosen]["style_prompt"]
+        base = base_for(style_body["candidates"][chosen].get("medium"))
     masters = [m for m in (media.get(k) for k in (style_body.get("style_masters") or [])[:2]) if m]
 
     style = plan["style_prompt"]
@@ -303,7 +326,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         key = _sheet_key(ctx["series"]["id"], c, style + "|" + ",".join(style_body.get("style_masters") or []))
         if media.get(key) is None:
             img = images.generate(
-                f"{WEBTOON_BASE} Character turnaround sheet for a Korean webtoon. {c['name']}: {c['appearance']}. "
+                f"{base} Character turnaround sheet for a Korean webtoon. {c['name']}: {c['appearance']}. "
                 "Front view, side view and back view side by side, full body, plus three head close-ups (neutral, angry, smiling). "
                 f"Pure flat white background with no texture. Style: {style}. No text, labels or watermark.",
                 seed=1,
@@ -347,7 +370,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         # 참조는 많아야 4장: 화풍 마스터(인물이 많으면 1장) + 인물 시트
         use_masters = masters[: max(0, min(2, 4 - len(sheets)))]
         refs = use_masters + sheets
-        prompt = _panel_prompt(style, panel, cast, bool(sheets), instruction if redraw and not test_run else "", len(use_masters))
+        prompt = _panel_prompt(style, panel, cast, bool(sheets), instruction if redraw and not test_run else "", len(use_masters), base)
         aspect = ASPECT.get(panel.get("height") or "normal", "3:4")
         seed0 = panel["index"] * 100 + 10 * (ctx.get("attempt") or 1)
 

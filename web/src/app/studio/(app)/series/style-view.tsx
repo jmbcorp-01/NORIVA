@@ -8,13 +8,15 @@ type StyleBody = {
   kind: "style";
   markdown: string;
   criteria: Record<string, string | number> | null;
-  candidates: { name: string; card: string; style_prompt: string; samples: (string | null)[] }[];
+  candidates: { name: string; medium?: string; card: string; style_prompt: string; samples: (string | null)[] }[];
   scenes: { title: string; prompt: string }[];
   model?: string | null;
   style_masters?: string[];
   chosen?: number | null;
   picked?: string[];
 };
+
+const MEDIUM_LABEL: Record<string, string> = { cel: "셀 채색", painterly: "브러시 채색", ink: "현대 수묵" };
 
 const CRITERIA_LABEL: Record<string, string> = {
   line: "선",
@@ -69,7 +71,9 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
           {body.candidates.map((c, ci) => (
             <section key={ci} className={body.chosen === ci ? "rounded-[6px] ring-2 ring-pine/50 p-2" : ""}>
               <h4 className="mb-2 font-serif text-[15px] font-semibold">
-                후보 {ci + 1}. {c.name} {body.chosen === ci ? <span className="text-[12px] font-normal text-pine">· 선택됨</span> : null}
+                후보 {ci + 1}. {c.name}{" "}
+                {c.medium ? <span className="text-[12px] font-normal text-ink-faint">({MEDIUM_LABEL[c.medium] ?? c.medium})</span> : null}{" "}
+                {body.chosen === ci ? <span className="text-[12px] font-normal text-pine">· 선택됨</span> : null}
               </h4>
               <div className="grid grid-cols-3 gap-2">
                 {c.samples.map((k, si) =>
@@ -180,6 +184,9 @@ export function StyleScout({
                 ) : null}
               </span>
               {w.why ? <span className="mt-1 block text-[12px] text-ink-soft">{w.why}</span> : null}
+              <span className={`mt-1 inline-block text-[11px] ${w.measured ? "text-ink-soft" : "text-plum"}`}>
+                {w.measured ? "공식 대표 이미지를 보고 잰 화풍 특징" : "그림을 확인하지 못해 글로 추정한 특징이에요. 이 작품을 고르려면 화면을 캡처해 아래에 올려 주세요."}
+              </span>
               <Traits traits={w.traits} />
             </label>
           ))}
