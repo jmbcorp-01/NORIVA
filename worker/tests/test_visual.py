@@ -376,3 +376,26 @@ def test_request_for_maps_models():
     assert ep.endswith("/text-to-image") and body["image_size"] == {"width": 1152, "height": 2048} and "aspect_ratio" not in body
     ep, body = request_for("fal-ai/nano-banana-pro", "p", "4:3", [b"x"])
     assert ep == "fal-ai/nano-banana-pro/edit" and body["resolution"] == "2K" and body["aspect_ratio"] == "4:3" and len(body["image_urls"]) == 1
+
+
+def test_panel_prompt_refs_all_cast_and_counts_people_only():
+    from noriva_worker.visual import _panel_prompt
+
+    cast = [
+        {"id": "a", "name": "A", "kind": "person", "appearance": "x"},
+        {"id": "b", "name": "B", "kind": "person", "appearance": "y"},
+        {"id": "c", "name": "C", "appearance": "z"},
+        {"id": "cow", "name": "Cow", "kind": "animal", "appearance": "yellow cow"},
+    ]
+    p = _panel_prompt("st", {"shot": "wide", "description": "d"}, cast, cast, "", 1)
+    assert "Reference image 5 is the design sheet for Cow" in p
+    assert "Exactly 3 visible person(s)." in p
+    assert "Also visible: Cow." in p
+
+
+def test_kind_of_guesses_for_old_plans():
+    from noriva_worker.visual import kind_of
+
+    assert kind_of({"id": "cow", "name": "누렁소 (The Cow)", "appearance": "a yellow ox"}) == "animal"
+    assert kind_of({"id": "oldman", "name": "노인", "appearance": "old man in his 70s, leading a cow"}) == "person"
+    assert kind_of({"id": "x", "name": "y", "kind": "creature", "appearance": "z"}) == "creature"
