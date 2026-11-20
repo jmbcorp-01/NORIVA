@@ -91,7 +91,9 @@ class Costs(list):
 PLAN_SCHEMA = _obj(
     {
         "style_prompt": _STR,
-        "characters": _arr(_obj({"id": _STR, "name": _STR, "appearance": _STR})),
+        "characters": _arr(
+            _obj({"id": _STR, "name": _STR, "kind": {"type": "string", "enum": ["person", "animal", "creature"]}, "appearance": _STR})
+        ),
         "panels": _arr(
             _obj(
                 {
@@ -118,7 +120,7 @@ PLAN_TASK = """# 과제: ⑦ 작화 준비 — 승인된 콘티를 컷 목록으
 - character_ids: 그 컷에 실제로 보이는 인물만.
 - dialogue: 콘티의 한국어 대사를 고치지 말고 그대로. speaker는 인물 id, 내레이션은 "narration".
 - sfx: 한국어 효과음, 없으면 빈 문자열. avoid: 이 컷에 보이면 안 되는 것(영어), 없으면 빈 문자열.
-- characters: 등장하는 인물마다 짧은 id(영문 소문자)와 이름, 모든 컷에 똑같이 쓸 영어 외모 명세(나이, 얼굴, 머리, 옷, 고정 소품).
+- characters: 등장하는 인물마다 짧은 id(영문 소문자)와 이름, kind(사람 person, 동물 animal, 용·요괴 같은 존재 creature), 모든 컷에 똑같이 쓸 영어 외모 명세(나이, 얼굴, 머리, 옷, 고정 소품). 동물도 그 컷에 보이면 character_ids에 넣는다.
 - style_prompt: 화풍 카드를 영어 한 단락으로(선, 채색, 명암, 팔레트, 질감). 특정 작가 이름은 쓰지 않는다.
 """
 
@@ -134,7 +136,9 @@ CHECK_SCHEMA = _obj(
 
 CHECK_TASK = """# 과제: 컷 그림 자동 결함 검사
 
-첨부한 그림 한 장을 이 컷의 지시와 지침의 AI-01~AI-14, 한국 고증 규칙으로 검사하라.
+첨부한 첫 번째 그림이 검사할 컷이다. 이 컷의 지시와 지침의 AI-01~AI-14, 한국 고증 규칙으로 검사하라.
+그 뒤에 붙은 그림은 등장인물의 인물 시트(설정화)다. 순서는 아래 '인물 시트 순서'와 같다. 컷 속 인물의 얼굴형, 머리 모양과 색, 옷의 형태와 색, 고정 소품, 신발이 시트와 같은지 하나씩 비교하라. 다르면 code K-1, 주요(major)로 무엇이 어떻게 다른지 적어라.
+people_count에는 사람만 센다(동물과 요괴는 빼고).
 - 치명(critical): 글자·가짜 글자·한자·워터마크(간판과 부적의 글자 포함), 그림 안에 그린 컷 테두리·여백·한 장에 여러 컷(만화책 페이지처럼 보임), 인물 수가 틀림, 손·얼굴 해부학 붕괴, 일본·중국식 요소(도리이, 일본도, 기모노 등), 기존 작품과 닮음.
 - 주요(major): 한국 웹툰 디지털 셀 채색이 아닌 화풍(수채화, 종이 질감, 잉크 해칭, 서양 그래픽노블, 그림책, 실사), 인물 외모가 명세와 다름, 다른 컷과 등신·화풍이 다름, AI 특유의 매끈한 광택·과한 보케·무의미한 배경 디테일.
 - 경미(minor): 그 밖에 고치면 좋은 것.
@@ -145,6 +149,9 @@ score는 0~100, 그대로 연재할 수 있을 때만 80 이상. 결함마다 co
 
 ## 등장인물 외모 명세
 {cast}
+
+## 인물 시트 순서
+{sheet_order}
 
 ## 화풍
 {style}
@@ -202,8 +209,20 @@ def choose_test_panels(panels: list[dict[str, Any]], n: int) -> list[int]:
     return sorted(picked)
 
 
-def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]], with_refs: bool, extra: str, n_masters: int = 0, base: str = WEBTOON_BASE) -> str:
+def _panel_prompt(
+    style: str,
+    panel: dict[str, Any],
+    cast: list[dict[str, Any]],
+    sheet_cast: list[dict[str, Any]] | bool,
+    extra: str,
+    n_masters: int = 0,
+    base: str = WEBTOON_BASE,
+) -> str:
     sheet_offset = n_masters
+    if isinstance(sheet_cast, bool):  # 예전 호출: 모든 인물에 시트가 있으면 True
+        sheet_cast = list(cast) if sheet_cast else []
+    humans = [c for c in cast if kind_of(c) == "person"]
+    others = [c for c in cast if kind_of(c) != "person"]
     parts = [
         base,
         f"One single webtoon panel, {panel['shot']} shot, one continuous image filling the whole frame edge to edge."
@@ -212,12 +231,13 @@ def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]],
         ("Characters: " + " | ".join(f"{c['name']}: {c['appearance']}" for c in cast)) if cast else "",
         (
             " ".join(
-                f"Reference image {i + 1 + sheet_offset} is the design sheet for {c['name']}: match face, hair and outfit exactly."
-                for i, c in enumerate(cast)
+                f"Reference image {i + 1 + sheet_offset} is the design sheet for {c['name']}: match face shape, hairstyle, "
+                "hair color, outfit cut and colors, props and footwear exactly."
+                for i, c in enumerate(sheet_cast)
             )
             + " Use the references only for character design; do not copy their layout, pose or background."
         )
-        if with_refs and cast
+        if sheet_cast
         else "",
         (
             f"Reference image(s) 1-{n_masters} are this series' approved style masters: match their line weight, cel shading, "
@@ -225,7 +245,8 @@ def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]],
         )
         if n_masters
         else "",
-        f"Exactly {len(cast)} visible person(s)." if cast else "No people in this panel.",
+        (f"Exactly {len(humans)} visible person(s)." if humans else "No people in this panel.")
+        + (" Also visible: " + ", ".join(c["name"] for c in others) + "." if others else ""),
         f"Style: {style}",
         "Korean setting: no Japanese or Chinese architecture, torii gates, kimono or kanji signage.",
         "Signs, papers and talismans are blank or carry only simple abstract red marks."
@@ -234,6 +255,31 @@ def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]],
         f"Director's note: {extra}" if extra else "",
     ]
     return " ".join(p for p in parts if p)
+
+
+_ANIMAL = re.compile(
+    r"\b(cow|ox|bull|calf|cattle|horse|pony|dog|puppy|cat|tiger|fox|wolf|deer|rabbit|bird|crow|magpie|crane|fish|snake|pig|goat|bear)\b",
+    re.I,
+)
+_CREATURE = re.compile(r"\b(dragon|serpent|spirit|ghost|goblin|dokkaebi|monster|beast|demon|imugi)\b", re.I)
+
+
+def kind_of(c: dict[str, Any]) -> str:
+    """사람·동물·요괴 구분. 예전 결과처럼 kind가 없으면 이름과 외모 명세로 짐작해요."""
+    if c.get("kind") in ("person", "animal", "creature"):
+        return c["kind"]
+    # 외모 명세는 앞 세 단어만 봐요 ("old man leading a cow"를 소로 착각하지 않게)
+    head = " ".join((c.get("appearance") or "").split()[:3])
+    text = f"{c.get('id', '')} {c.get('name', '')} {head}"
+    if _CREATURE.search(text):
+        return "creature"
+    if _ANIMAL.search(text) or re.search(r"소\)|\(.*소|누렁소|황소|호랑이", c.get("name", "")):
+        return "animal"
+    return "person"
+
+
+MAX_SHEETS = 4  # 한 컷에 넣는 인물 시트 수
+MAX_REFS = 5  # 화풍 마스터 + 인물 시트 합계
 
 
 def _sheet_key(series_id: str, char: dict[str, Any], style: str) -> str:
@@ -342,35 +388,46 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     ep = ctx["episode"]["number"] if ctx.get("episode") else 0
     base = f"series/{ctx['series']['id']}/ep{ep:03d}/art/{artifact_id}"
 
-    def check(panel: dict[str, Any], cast: list[dict[str, Any]], data: bytes, local: list[dict[str, Any]]) -> dict[str, Any]:
+    def check(
+        panel: dict[str, Any], cast: list[dict[str, Any]], data: bytes, local: list[dict[str, Any]],
+        sheet_cast: list[dict[str, Any]] | None = None, sheets: list[bytes] | None = None,
+    ) -> dict[str, Any]:
+        sheet_cast = sheet_cast or []
         r = llm.json(
             system,
             CHECK_TASK.format(
                 panel=json.dumps({k2: panel[k2] for k2 in ("shot", "description", "character_ids", "avoid")}, ensure_ascii=False),
-                cast=json.dumps([{"id": c["id"], "appearance": c["appearance"]} for c in cast], ensure_ascii=False) or "(없음)",
+                cast=json.dumps([{"id": c["id"], "kind": kind_of(c), "appearance": c["appearance"]} for c in cast], ensure_ascii=False) or "(없음)",
+                sheet_order=", ".join(f"{i + 2}번째 그림 = {c['name']}" for i, c in enumerate(sheet_cast)) or "(시트 없음)",
                 style=style,
             ),
             CHECK_SCHEMA,
-            images=[thumbnail(data)],
+            images=[thumbnail(data)] + [thumbnail(b, 640) for b in (sheets or [])],
             effort=s.check_effort,
             max_tokens=8000,
         )
         local.append(r.result.cost_entry())
         d = r.data
-        if cast and d.get("people_count", len(cast)) < len(cast):
-            d["defects"].append({"code": "AI-07", "severity": "major", "note": f"인물 수 {d['people_count']}명 (지시: {len(cast)}명)"})
+        humans = [c for c in cast if kind_of(c) == "person"]
+        if humans and d.get("people_count", len(humans)) < len(humans):
+            d["defects"].append({"code": "AI-07", "severity": "major", "note": f"사람 수 {d['people_count']}명 (지시: {len(humans)}명)"})
         return {"score": max(0, min(100, int(d["score"]))), "defects": d["defects"]}
 
     def draw(panel: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
         cast = [chars[cid] for cid in panel["character_ids"] if cid in chars]
-        sheets = [media.get(c["sheet"]) for c in cast] if 0 < len(cast) <= 3 else []
-        if any(r is None for r in sheets):
-            sheets = []
-        # 참조는 많아야 4장: 화풍 마스터(인물이 많으면 1장) + 인물 시트
-        use_masters = masters[: max(0, min(2, 4 - len(sheets)))]
+        # 인물 시트는 컷에 나오는 인물(동물 포함) 모두, 많아야 MAX_SHEETS장. 시트가 없는 인물만 빠져요.
+        sheet_cast: list[dict[str, Any]] = []
+        sheets: list[bytes] = []
+        for c in cast:
+            b = media.get(c["sheet"]) if c.get("sheet") else None
+            if b is not None and len(sheets) < MAX_SHEETS:
+                sheet_cast.append(c)
+                sheets.append(b)
+        # 화풍 마스터는 남는 자리에 (최소 1장, 많아야 2장)
+        use_masters = masters[: max(1, min(2, MAX_REFS - len(sheets)))]
         refs = use_masters + sheets
-        prompt = _panel_prompt(style, panel, cast, bool(sheets), instruction if redraw and not test_run else "", len(use_masters), base)
+        prompt = _panel_prompt(style, panel, cast, sheet_cast, instruction if redraw and not test_run else "", len(use_masters), base)
         aspect = ASPECT.get(panel.get("height") or "normal", "3:4")
         seed0 = panel["index"] * 100 + 10 * (ctx.get("attempt") or 1)
 
@@ -385,7 +442,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                     continue
                 local.append(img.cost_entry())
                 key = media.put(f"{base}/{panel['index']:03d}-{_model_slug(m)}.png", trim_border(img.data))
-                c = check(panel, cast, trim_border(img.data), local)
+                c = check(panel, cast, trim_border(img.data), local, sheet_cast, sheets)
                 variants.append({"model": m, "image": key, **c, "passed": bool(_rank(c, s.pass_score)[0])})
             ok = [v for v in variants if "image" in v]
             best = ok[0] if ok else {"image": None, "score": 0, "defects": [], "passed": False}
@@ -399,7 +456,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             local.append(img.cost_entry())
             data = trim_border(img.data)
             key = media.put(f"{base}/{panel['index']:03d}-{k + 1}.png", data)
-            cands.append({"image": key, **check(panel, cast, data, local)})
+            cands.append({"image": key, **check(panel, cast, data, local, sheet_cast, sheets)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break  # 합격 후보가 나오면 더 그리지 않아요
         best = max(cands, key=lambda c: _rank(c, s.pass_score))

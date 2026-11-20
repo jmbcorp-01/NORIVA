@@ -113,8 +113,8 @@ export function ArtView({
                 {p.image ? (
                   <ZoomImage src={mediaUrl(p.image)} alt={`${p.index}컷`} gallery={panelPics} className="w-full rounded-[5px] border border-line" loading="lazy" />
                 ) : (
-                  <div className="grid aspect-[3/4] place-items-center rounded-[5px] border border-dashed border-line text-[12px] text-ink-faint">
-                    그림 없음
+                  <div className="grid aspect-[3/4] place-items-center rounded-[5px] border border-dashed border-line px-3 text-center text-[12px] text-ink-faint">
+                    {pending.includes(p.index) ? "아직 안 그림 · 시험 컷을 보고 '나머지 그리기'를 누르면 그려요" : "그림 없음"}
                   </div>
                 )}
                 {p.candidates && p.candidates.length > 1 ? (
