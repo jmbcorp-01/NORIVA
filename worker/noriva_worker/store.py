@@ -126,7 +126,7 @@ class Store:
                     (job["series_id"], job["episode_id"], job["id"], provider, model, Jsonb({**m["units"], "calls": m["calls"]}), round(m["cost_usd"], 4)),
                 )
 
-    def fail(self, job: dict[str, Any], error: str, max_attempts: int, retryable: bool) -> bool:
+    def fail(self, job: dict[str, Any], error: str, max_attempts: int, retryable: bool, partial: dict[str, Any] | None = None) -> bool:
         """다시 시도할 수 있으면 대기열로 돌려보내고 True. 아니면 실패로 끝내고 False."""
         if retryable and job["attempts"] < max_attempts:
             delay = timedelta(seconds=30 * (2 ** (job["attempts"] - 1)))
@@ -143,7 +143,7 @@ class Store:
             if job["artifact_id"]:
                 self.conn.execute(
                     "update artifacts set status = 'failed', body = %s, updated_at = now() where id = %s",
-                    (Jsonb({"error": error[:2000]}), job["artifact_id"]),
+                    (Jsonb({**(partial or {}), "error": error[:2000], "job_id": str(job["id"])}), job["artifact_id"]),
                 )
             if job["type"] == "scout":
                 self.conn.execute(

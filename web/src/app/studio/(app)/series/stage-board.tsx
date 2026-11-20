@@ -5,7 +5,8 @@ import { JobProgressBar } from "@/components/job-progress";
 import { activeJobs, type JobView, typicalSeconds } from "@/lib/progress";
 import { canStart, type JobType, STAGE_HELP, STAGE_INFO, stageStates, type LatestArtifact, type Stage } from "@/lib/pipeline";
 import type { Artifact } from "@/lib/studio";
-import { decideArtifact, runStage } from "../../actions";
+import { decideArtifact, resumeJob, runStage } from "../../actions";
+import { mediaUrl } from "./panel-views";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views";
@@ -116,7 +117,10 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                   {a?.status === "generating" ? <Generating job={jobs.find((j) => j.artifactId === a.id)} typical={typical} /> : null}
 
                   {a?.status === "failed" ? (
-                    <p className="mb-3 text-[13px] text-plum">{String(a.body?.error ?? "생성에 실패했어요. 다시 생성해 주세요.")}</p>
+                    <div className="mb-3">
+                      <p className="text-[13px] text-plum">{String(a.body?.error ?? "생성에 실패했어요. 다시 생성해 주세요.")}</p>
+                      <PartialResult body={a.body} back={back} />
+                    </div>
                   ) : null}
 
                   {a?.status === "stale" ? (
@@ -360,5 +364,40 @@ function TextChecks({ checks }: { checks?: TextCheck }) {
         ))}
       </ul>
     </details>
+  );
+}
+
+type PartialBody = { kind?: string; job_id?: string; drawn?: number; total?: number; panels?: { index: number; image: string; score?: number; passed?: boolean }[] };
+
+/** 멈춘 작업: 그때까지 끝난 컷을 보여 주고, 같은 작업을 이어서 시작해요 (끝난 컷은 다시 그리지 않아요) */
+function PartialResult({ body, back }: { body: Record<string, unknown> | null | undefined; back: string }) {
+  const b = (body ?? {}) as PartialBody;
+  if (!b.job_id) return null;
+  const panels = b.kind === "art_partial" ? (b.panels ?? []) : [];
+  return (
+    <div className="mt-2 space-y-2">
+      {panels.length ? (
+        <>
+          <p className="text-[13px] text-ink-soft">
+            멈추기 전까지 {b.drawn}/{b.total}컷을 그렸어요. 이 컷들은 저장돼 있어서 이어서 그리면 다시 그리지 않아요.
+          </p>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+            {panels.map((p) => (
+              <a key={p.index} href={mediaUrl(p.image)} target="_blank" className="block text-[11px] text-ink-faint">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={mediaUrl(p.image)} alt={`${p.index}컷`} loading="lazy" className="w-full rounded-[4px] border border-line" />
+                {p.index}컷{typeof p.score === "number" ? ` · ${p.score}점` : ""}
+              </a>
+            ))}
+          </div>
+        </>
+      ) : null}
+      <form action={resumeJob}>
+        <input type="hidden" name="jobId" value={b.job_id} />
+        <input type="hidden" name="back" value={back} />
+        <Button type="submit">이어서 그리기</Button>
+        <span className="ml-2 text-[12px] text-ink-faint">멈춘 곳 다음부터 이어 가요. 크레딧 부족이었다면 충전한 뒤 눌러 주세요.</span>
+      </form>
+    </div>
   );
 }
