@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import psycopg
@@ -63,11 +63,25 @@ class Store:
         return self.conn.execute(
             """
             update jobs set status = 'running', attempts = attempts + 1, locked_by = %s,
-              started_at = now(), updated_at = now()
+              started_at = now(), updated_at = now(), progress = null
             where id = %s returning *
             """,
             (worker_id, job_id),
         ).fetchone()
+
+    # ── 진행 상황 ──
+
+    def set_progress(self, job_id: str, step: str, done: int | None = None, total: int | None = None) -> None:
+        """화면에 보여 줄 진행 상황을 남겨요. 실패해도 작업은 계속해요."""
+        p: dict[str, Any] = {"step": step, "at": datetime.now(timezone.utc).isoformat()}
+        if done is not None:
+            p["done"] = done
+        if total is not None:
+            p["total"] = total
+        try:
+            self.conn.execute("update jobs set progress = %s, updated_at = now() where id = %s and status = 'running'", (Jsonb(p), job_id))
+        except Exception:  # noqa: BLE001 - 진행 표시는 부가 기능
+            pass
 
     # ── 결과 기록 ──
 

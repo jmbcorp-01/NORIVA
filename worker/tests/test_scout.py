@@ -214,3 +214,14 @@ def test_episode_meta_fills_empty_fields_only(store):
     process(store, job, Tools(writer=FakeEpisodeMeta()), cfg())
     e = c.execute("select * from episodes where id=%s", (eid,)).fetchone()
     assert e["title"] == "묵향" and e["title_en"] == "Ink Scent" and e["logline"] == "대표 요약"
+
+
+def test_progress_is_recorded_while_running_and_cleared_on_claim(store):
+    c = store.conn
+    job = c.execute("insert into jobs (type, status, progress) values ('scout', 'running', null) returning *").fetchone()
+    store.set_progress(job["id"], "컷 그리는 중", 3, 71)
+    p = c.execute("select progress from jobs where id=%s", (job["id"],)).fetchone()["progress"]
+    assert p["step"] == "컷 그리는 중" and p["done"] == 3 and p["total"] == 71
+    c.execute("update jobs set status='queued' where id=%s", (job["id"],))
+    claimed = store.claim_by_id(str(job["id"]), "w")
+    assert claimed["progress"] is None

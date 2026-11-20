@@ -43,6 +43,13 @@
       "when": 1795094985152,
       "tag": "0005_episode_meta",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795135025821,
+      "tag": "0006_job_progress",
+      "breakpoints": true
     }
   ]
 }

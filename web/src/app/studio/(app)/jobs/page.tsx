@@ -4,17 +4,12 @@ import { db, schema } from "@/db";
 import { Badge, Button, Card, Empty, formatDate, PageHeader } from "@/components/ui";
 import { JOB_STATUS } from "@/lib/labels";
 import { JOB_LABEL } from "@/lib/pipeline";
-import { artifactHref } from "@/lib/links";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { JobProgressBar } from "@/components/job-progress";
+import { jobHref, typicalSeconds, type JobView } from "@/lib/progress";
 import { retryJob } from "../../actions";
 
 const TONE = { queued: "neutral", running: "indigo", done: "pine", failed: "plum", canceled: "neutral" } as const;
-
-function jobHref(j: typeof schema.jobs.$inferSelect, episodeNumber: number | null) {
-  if (j.seriesId) return artifactHref({ seriesId: j.seriesId, episodeNumber });
-  if (j.type === "scout") return "/studio/scout";
-  const sid = (j.payload as { source_id?: string }).source_id;
-  return sid ? `/studio/sources/${sid}` : "/studio/sources";
-}
 
 export default async function JobsPage() {
   const rows = await db
@@ -24,6 +19,8 @@ export default async function JobsPage() {
     .leftJoin(schema.episodes, eq(schema.episodes.id, schema.jobs.episodeId))
     .orderBy(desc(schema.jobs.createdAt))
     .limit(100);
+  const active = rows.filter(({ j }) => j.status === "queued" || j.status === "running");
+  const typical = await typicalSeconds(active.map(({ j }) => j.type));
 
   return (
     <>
@@ -31,6 +28,7 @@ export default async function JobsPage() {
         title="작업 큐"
         sub="에이전트에게 맡긴 작업이에요. 제작 서버가 순서대로 꺼내 실행하고, 실패하면 다시 시도할 수 있어요."
       />
+      <AutoRefresh active={active.length > 0} />
       {rows.length === 0 ? (
         <Empty>아직 작업이 없어요.</Empty>
       ) : (
@@ -45,6 +43,11 @@ export default async function JobsPage() {
                 <Badge tone={TONE[j.status]}>{JOB_STATUS[j.status]}</Badge>
                 {j.attempts > 1 ? <span className="text-[11px] text-ink-faint">{j.attempts}회 시도</span> : null}
                 <span className="ml-auto text-[12px] text-ink-faint">{formatDate(j.createdAt)}</span>
+                {j.status === "queued" || j.status === "running" ? (
+                  <div className="w-full max-w-[560px]">
+                    <JobProgressBar job={j as JobView} typical={typical[j.type]} />
+                  </div>
+                ) : null}
                 {j.status === "failed" ? (
                   <div className="flex w-full flex-wrap items-center gap-2">
                     <p className="flex-1 truncate text-[12px] text-plum">{j.error}</p>
