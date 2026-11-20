@@ -87,6 +87,16 @@ const CONTINUITY_RULES = [
   { code: "K-7", text: "나이, 호칭과 존댓말, 날짜와 계절, 세계 규칙, 부상과 소지품은 앞 회차와 설정 장부에 맞춘다. 어긋나면 대표 확인 항목으로 올린다." },
 ];
 
+// 화풍 원칙: 시장 웹툰의 완성도를 기준으로 삼되, 작품만의 화풍을 만든다 (그림책 수준 방지)
+const STYLE_RULES = [
+  { code: "V-1", text: "시장 기준: 대표가 고른 참고 화풍 특징이나 참고 캡처 기준 값이 있으면 선, 채색 단계, 비율, 배경 밀도, 연출 기호 사용량을 그 수준 이상으로 맞춘다. 없으면 같은 장르 상위 연재 웹툰 수준을 목표로 하고 그 기준을 화풍 카드에 적는다." },
+  { code: "V-2", text: "고유 화풍: 참고 화풍을 베끼거나 섞지 않는다. 작품의 뿌리 소재, 시대, 주제에서 시각 모티프 2~3개(문양, 상징색, 반복 소품, 빛의 성질)를 뽑아 화풍 카드에 '작품 고유 요소'로 정하고, 영어 화풍 문구에도 넣어 모든 컷에 반복되게 한다." },
+  { code: "V-3", text: "기준 대비표: 화풍 카드에 항목(선, 채색, 비율, 얼굴, 배경, 연출)별로 '시장 기준 / 우리 값 / 다르게 한 이유'를 적는다." },
+  { code: "V-4", text: "그림책 금지: 정면·눈높이·중앙 배치만 반복, 강약 없는 가는 선, 수채·색연필·종이 질감, 배경 없는 빈 화면, 연출 기호 없는 감정, 아동 동화 비율은 그림책 그림이다. 웹툰 컷은 카메라 각도(로우, 하이, 기울임), 원근, 동작선, 연출 기호, 컷마다 다른 거리로 만든다." },
+  { code: "V-5", text: "장르 작화: 장르 지침의 작화 항목을 화풍 카드와 시험 장면에 반영한다." },
+  { code: "V-6", text: "시험 장면: 감정 클로즈업, 장르의 핵심 순간(액션 정점, 공포 리빌, 설렘)을 극적인 각도로, 시대가 드러나는 와이드 장소 3개로 시험한다. 하나라도 그림책처럼 보이면 그 후보는 다시 짠다." },
+];
+
 const ART_RULES = [
   { code: "A-1", text: "깔끔하고 자신 있는 외곽선, 인물이 배경보다 굵게, 선에 강약." },
   { code: "A-2", text: "셀 채색(밑색 + 그림자 1~2단 + 하이라이트). 피부를 과하게 매끈하게 하지 않는다." },
@@ -216,6 +226,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     body: {
       role: "당신은 한국 웹툰의 작화 디렉터다. 작품의 톤에 맞는 고유 화풍을 정하고(특정 작가 모방 금지), 컷마다 이미지 모델이 따를 지시문을 조립한다.",
       rules: [
+        ...STYLE_RULES,
         ...ART_RULES,
         ...HISTORY_RULES,
         CONTINUITY_RULES[2],
@@ -223,7 +234,8 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "K-9", text: "화풍 카드에는 컷마다 그대로 붙일 영어 화풍 고정 문구(선, 채색, 질감, 팔레트)를 넣어 회차가 바뀌어도 같은 그림체가 나오게 한다." },
       ],
       banned: VISUAL_BANNED,
-      outputFormat: "화풍 후보 3개. 각각 화풍 카드(선, 채색, 명암, 장면별 팔레트, 배경 처리, 질감, 금지 요소)와 같은 장면 시험 컷 지시문 3개.",
+      outputFormat:
+        "화풍 후보 3개. 각각 화풍 카드(작품 고유 요소, 시장 기준 대비표, 선, 채색, 명암, 장면별 팔레트, 배경 처리, 질감, 금지 요소)와 같은 장면 시험 컷 지시문 3개.",
       examples: "",
     },
   },
@@ -253,7 +265,15 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     title: "작화 기본 지침",
     body: {
       role: "콘티의 컷을 화풍 카드와 캐릭터 시트에 맞춰 그린다. 후보 2~4장을 만들고 결함 검사로 고른다.",
-      rules: [...ART_RULES, ...HISTORY_RULES, ...CONTINUITY_RULES.slice(0, 6), SENSITIVITY_RULES[4], SENSITIVITY_RULES[5]],
+      rules: [
+        ...ART_RULES,
+        STYLE_RULES[3],
+        { code: "V-7", text: "화풍 마스터 그림이 기준이다. 마스터보다 선이 흐리거나 채색 단계, 배경 밀도, 연출이 단순해진 컷은 불합격으로 다시 그린다." },
+        ...HISTORY_RULES,
+        ...CONTINUITY_RULES.slice(0, 6),
+        SENSITIVITY_RULES[4],
+        SENSITIVITY_RULES[5],
+      ],
       banned: VISUAL_BANNED,
       outputFormat: "컷마다 후보 이미지와 검사 결과(손, 글자, 얼굴 일관성, 인물 수, 고증, 고정 소품, 화풍).",
       examples: "",
@@ -323,7 +343,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
 ];
 
 // 장르 지침: 뿌리 위에 얹는 "읽는 재미의 방식" (docs/02 2장). 기획·스토리 에이전트가 장르 범위로 읽어요.
-const GENRE_RULES: Record<string, { fun: string; rules: string[] }> = {
+const GENRE_RULES: Record<string, { fun: string; rules: string[]; art: string[] }> = {
   "오컬트·호러": {
     fun: "긴장과 공포, 규칙 깨기",
     rules: [
@@ -332,6 +352,11 @@ const GENRE_RULES: Record<string, { fun: string; rules: string[] }> = {
       "놀래키는 장면은 한 화에 한 번까지. 공포 장면은 무대사 컷과 긴 여백을 늘린다.",
       "무속과 의례는 고증대로 그리고 조롱하지 않는다(X-2).",
     ],
+    art: [
+      "명암 대비를 강하게, 그림자 2~3단. 저채도 청록·남색을 바탕으로 공포 순간에만 붉은색 하나.",
+      "공포의 대상은 처음엔 실루엣, 부분(손, 눈, 그림자)만 보여주고 리빌 컷에서 세로로 긴 컷 하나에 크게.",
+      "기울인 앵글, 극단적 클로즈업, 아래에서 올려다보는 구도로 불안을 만든다. 피와 상처는 15세 기준으로 절제한다.",
+    ],
   },
   "사극 로맨스": {
     fun: "신분 차이, 엇갈림",
@@ -339,6 +364,11 @@ const GENRE_RULES: Record<string, { fun: string; rules: string[] }> = {
       "계약, 위장, 비밀로 얽힌 관계로 시작하고 3화 안에 첫 접촉을 만든다.",
       "한 화에 설레는 순간을 하나 이상 두고, 호칭과 존댓말의 변화로 거리를 보여준다.",
       "궁중 직제, 호칭, 예법은 시대 고증을 따르고, 바꾼 점은 뿌리 노트에 적는다.",
+    ],
+    art: [
+      "부드럽고 고른 선, 피부 하이라이트와 홍조, 설레는 컷에 꽃·빛 입자 같은 연출 기호.",
+      "두 인물의 거리와 시선 방향을 구도로 보여준다 (멀어짐은 와이드, 가까워짐은 투 숏 클로즈업).",
+      "한복, 관복, 머리 장식, 장신구는 시대 고증대로 정확하게, 색으로 신분 차이를 보여준다.",
     ],
   },
   "회귀·빙의 사극": {
@@ -349,6 +379,11 @@ const GENRE_RULES: Record<string, { fun: string; rules: string[] }> = {
       "빙의라면 원래 몸 주인의 사연을 떡밥으로 심는다.",
       "실제 역사의 비극은 피해자를 존중하고 오락거리로 만들지 않는다(R-4, X-3).",
     ],
+    art: [
+      "회귀 전 장면은 저채도·세피아, 회귀 후는 선명한 색으로 팔레트를 나눈다.",
+      "사이다 장면은 로우 앵글, 집중선, 배경 생략으로 인물을 크게 보여준다.",
+      "궁중 공간과 의복은 고증대로, 같은 장소는 장소 메모(K-5)대로 반복한다.",
+    ],
   },
   "무협·액션": {
     fun: "성장과 결투",
@@ -356,6 +391,12 @@ const GENRE_RULES: Record<string, { fun: string; rules: string[] }> = {
       "수련 → 시험 → 패배 → 각성을 반복하고, 성장은 눈에 보이는 등급이나 인정으로 보여준다.",
       "기술과 문파 이름은 한국식으로 짓는다(화랑, 택견, 국궁, 한국 지명). 중국 무협 용어를 그대로 쓰지 않는다.",
       "결투마다 걸린 것이 분명하고, 승패가 관계나 처지를 바꾼다.",
+    ],
+    art: [
+      "동작 정점 컷은 로우·하이 앵글과 광각 원근, 속도선으로 그리고, 타격 순간은 배경을 지우고 효과선만 남기는 임팩트 컷으로 한다.",
+      "옷자락, 머리카락, 흙먼지의 흐름으로 동작 방향을 보여주고, 체중 이동과 근육이 보이는 자세로 그린다.",
+      "무기와 갑옷은 한국식으로 고증한다 (환두대도, 각궁, 찰갑). 중국 무협식 장검·도포 과장 금지.",
+      "기(氣)나 술법 효과는 작품 고유색 하나로 절제하고, 연속 동작은 세로로 긴 컷과 짧은 컷을 번갈아 리듬을 만든다.",
     ],
   },
   "현대 판타지": {
@@ -365,6 +406,10 @@ const GENRE_RULES: Record<string, { fun: string; rules: string[] }> = {
       "능력에는 규칙과 대가가 있다.",
       "도깨비, 삼신, 산신 같은 존재가 지금의 한국 도시와 맞물리는 지점을 구체적인 장소로 보여준다.",
     ],
+    art: [
+      "도시 배경은 사진처럼 그리지 않고 색면과 원근으로 단순화한다.",
+      "초자연 존재와 능력만 고채도 발광색으로 그려 일상 팔레트와 대비시킨다.",
+    ],
   },
   "미스터리·스릴러": {
     fun: "추리와 반전",
@@ -372,6 +417,10 @@ const GENRE_RULES: Record<string, { fun: string; rules: string[] }> = {
       "반전 전에 공정한 단서를 2개 이상, 그림으로 컷 안에 보여준다.",
       "매 화 새 정보를 하나 이상 주고, 독자가 스스로 추리할 수 있게 한다.",
       "경성이나 실록의 미제 사건을 쓰면 실존 인물과 피해자를 존중한다(X-1, X-3).",
+    ],
+    art: [
+      "단서는 클로즈업 인서트 컷으로 분명히 보이게 그린다 (공정한 단서).",
+      "차가운 팔레트와 그림자가 많은 조명, 인물 얼굴 절반을 그림자에 두는 구도로 의심을 만든다.",
     ],
   },
   코믹: {
@@ -381,12 +430,16 @@ const GENRE_RULES: Record<string, { fun: string; rules: string[] }> = {
       "개그 컷은 SD(2~3등신)와 연출 기호를 써도 된다(A-6).",
       "지역, 장애, 외모를 비하하는 개그는 쓰지 않는다(X-4).",
     ],
+    art: [
+      "개그 컷은 SD(2~3등신), 과장 표정, 땀방울·빗금 같은 연출 기호를 적극적으로 쓴다.",
+      "밝고 채도 높은 팔레트, 리액션 컷은 배경을 색면으로 비운다.",
+    ],
   },
 };
 
 export const DEFAULT_GENRE_GUIDELINES: { genre: string; agent: Agent; title: string; body: GuidelineBody }[] = Object.entries(GENRE_RULES).flatMap(
-  ([genre, g]) =>
-    (["planner", "story"] as const).map((agent) => ({
+  ([genre, g]) => [
+    ...(["planner", "story"] as const).map((agent) => ({
       genre,
       agent,
       title: `${genre} 기본 지침`,
@@ -398,6 +451,20 @@ export const DEFAULT_GENRE_GUIDELINES: { genre: string; agent: Agent; title: str
         examples: "",
       },
     })),
+    // 장르 작화 지침: 화풍(④), 콘티(⑥), 작화(⑦)가 함께 읽어요
+    ...(["art_director", "storyboard", "artist"] as const).map((agent) => ({
+      genre,
+      agent,
+      title: `${genre} 작화 지침`,
+      body: {
+        role: `${genre} 장르의 웹툰 작화 기준이다. 그림책이 아니라 이 장르 상위 연재작 수준의 연출로 그린다.`,
+        rules: g.art.map((text, i) => ({ code: `GA-${i + 1}`, text })),
+        banned: [],
+        outputFormat: "",
+        examples: "",
+      },
+    })),
+  ],
 );
 
 export const DEFAULT_BANNED_TERMS = [
