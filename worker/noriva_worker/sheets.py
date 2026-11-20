@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 import re
 from typing import Any
 
@@ -78,6 +79,7 @@ score는 0~100. 이 시트를 30화 동안 그대로 써도 될 때만 80 이상
 {note}"""
 
 SHEET_PASS = 80
+FIX_BATCH = 3  # 명세 고치기를 한 번에 넣는 인물 수
 
 MASTER_SCHEMA = _obj(
     {"violations": _arr(_obj({"item": _STR, "character_ids": _arr(_STR), "note": _STR}))}
@@ -227,33 +229,43 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     if only and prev.get("kind") == "sheets":
         chars = [dict(c) for c in prev["characters"]]
         targets = [c for c in chars if c["id"] in only]
-        issues = _issues(targets)
-        if (instruction or issues) and targets:
+        if (instruction or _issues(targets)) and targets:
             _report(ctx, "지시와 지난 검사 결과를 인물 명세에 반영하는 중")
-            r = llm.json(
-                system,
-                FIX_TASK.format(
-                    instruction=instruction or "(없음)",
-                    issues=issues or "(없음)",
-                    specs="\n".join(_spec_json(c) for c in targets),
-                ),
-                FIX_SCHEMA,
-                effort="medium",
-                max_tokens=32000,
-            )
-            costs.add(r.result.cost_entry())
-            rule_suggestions = [x.strip() for x in r.data.get("rules") or [] if x and x.strip()][:6]
-            for u in r.data.get("updates") or []:
-                c = next((x for x in targets if x["id"] == _slug(u.get("id", ""))), None)
-                if not c:
-                    continue
-                for k in ("appearance", "period_notes"):
-                    if (u.get(k) or "").strip():
-                        c[k] = u[k].strip()
-                if u.get("never"):
-                    c["never"] = list(dict.fromkeys([*(c.get("never") or []), *u["never"]]))
-                if (u.get("edit") or "").strip():
-                    edits[c["id"]] = u["edit"].strip()
+            # 인물이 많으면 한 번에 넣을 때 답이 길어져 잘려요. 3명씩 나눠 동시에 처리해요.
+            groups = [targets[i : i + FIX_BATCH] for i in range(0, len(targets), FIX_BATCH)]
+
+            def fix(group: list[dict[str, Any]]) -> dict[str, Any]:
+                r = llm.json(
+                    system,
+                    FIX_TASK.format(
+                        instruction=instruction or "(없음)",
+                        issues=_issues(group) or "(없음)",
+                        specs="\n".join(_spec_json(c) for c in group),
+                    ),
+                    FIX_SCHEMA,
+                    effort="medium",
+                    max_tokens=32000,
+                )
+                costs.add(r.result.cost_entry())
+                return r.data
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                answers = list(pool.map(fix, groups))
+            rules: list[str] = []
+            for data in answers:
+                rules += [x.strip() for x in data.get("rules") or [] if x and x.strip()]
+                for u in data.get("updates") or []:
+                    c = next((x for x in targets if x["id"] == _slug(u.get("id", ""))), None)
+                    if not c:
+                        continue
+                    for k in ("appearance", "period_notes"):
+                        if (u.get(k) or "").strip():
+                            c[k] = u[k].strip()
+                    if u.get("never"):
+                        c["never"] = list(dict.fromkeys([*(c.get("never") or []), *u["never"]]))
+                    if (u.get("edit") or "").strip():
+                        edits[c["id"]] = u["edit"].strip()
+            rule_suggestions = list(dict.fromkeys(rules))[:8]
     else:
         only = []
         _report(ctx, "인물 외모 명세 고정하는 중")
