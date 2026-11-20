@@ -10,6 +10,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views";
 import { ImageModelPicker, isStyleBody, StyleRefs, StyleScout, StyleView } from "./style-view";
+import { HistoryRefs, isSheetsBody, SheetsView } from "./sheets-view";
 
 type Props = {
   stages: Stage[];
@@ -32,7 +33,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
   const generating = Object.values(latest).filter((a): a is Artifact => a?.status === "generating");
   const jobs = await activeJobs({ artifactIds: generating.map((a) => a.id) });
   const typical = await typicalSeconds(jobs.map((j) => j.type));
-  const brief = stages.includes("style")
+  const brief = stages.includes("style") || stages.includes("sheets")
     ? (await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId)))[0]?.brief
     : undefined;
   const styleRefs = brief?.styleRefs ?? [];
@@ -106,6 +107,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                       <ImageModelPicker seriesId={seriesId} back={back} current={brief?.imageModel} />
                     </>
                   ) : null}
+                  {stage === "sheets" && state !== "locked" ? <HistoryRefs seriesId={seriesId} refs={brief?.historyRefs ?? []} back={back} /> : null}
                   {state === "locked" ? (
                     <p className="text-[13px] text-ink-faint">앞 단계가 승인되면 시작할 수 있어요.</p>
                   ) : null}
@@ -123,7 +125,15 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                   ) : null}
 
                   {a && a.status !== "generating" && a.status !== "failed" ? (
-                    isStyleBody(a.body) ? (
+                    isSheetsBody(a.body) ? (
+                      <SheetsView
+                        body={a.body}
+                        artifactId={a.id}
+                        seriesId={seriesId}
+                        back={back}
+                        canRedraw={a.status !== "stale" && canStart(stage, l)}
+                      />
+                    ) : isStyleBody(a.body) ? (
                       <StyleView body={a.body} artifactId={a.id} back={back} canApprove={!!reviewable} />
                     ) : isArtBody(a.body) ? (
                       <ArtView

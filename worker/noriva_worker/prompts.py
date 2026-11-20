@@ -9,6 +9,7 @@ STAGE_LABEL = {
     "story": "② 스토리",
     "characters": "③ 인물",
     "style": "④ 화풍",
+    "sheets": "④+ 인물 시트",
     "plot": "⑤ 회차 플롯(대본)",
     "storyboard": "⑥ 콘티",
     "art": "⑦ 작화",

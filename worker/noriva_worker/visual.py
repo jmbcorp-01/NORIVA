@@ -140,9 +140,10 @@ CHECK_TASK = """# 과제: 컷 그림 자동 결함 검사
 그 뒤에 붙은 그림은 등장인물의 인물 시트(설정화)다. 순서는 아래 '인물 시트 순서'와 같다. 컷 속 인물의 얼굴형, 머리 모양과 색, 옷의 형태와 색, 고정 소품, 신발이 시트와 같은지 하나씩 비교하라. 다르면 code K-1, 주요(major)로 무엇이 어떻게 다른지 적어라.
 people_count에는 사람만 센다(동물과 요괴는 빼고).
 - 치명(critical): 글자·가짜 글자·한자·워터마크(간판과 부적의 글자 포함), 그림 안에 그린 컷 테두리·여백·한 장에 여러 컷(만화책 페이지처럼 보임), 인물 수가 틀림, 손·얼굴 해부학 붕괴, 일본·중국식 요소(도리이, 일본도, 기모노 등), 기존 작품과 닮음.
-- 주요(major): 한국 웹툰 디지털 셀 채색이 아닌 화풍(수채화, 종이 질감, 잉크 해칭, 서양 그래픽노블, 그림책, 실사), 인물 외모가 명세와 다름, 다른 컷과 등신·화풍이 다름, AI 특유의 매끈한 광택·과한 보케·무의미한 배경 디테일.
+- 주요(major): {medium_rule}, 인물 외모가 명세와 다름, 다른 컷과 등신·화풍이 다름, AI 특유의 매끈한 광택·과한 보케·무의미한 배경 디테일.
 - 경미(minor): 그 밖에 고치면 좋은 것.
 score는 0~100, 그대로 연재할 수 있을 때만 80 이상. 결함마다 code에 지침 규칙 코드(예: AI-03, R-5)를 적어라.
+인물마다 '절대 그리면 안 되는 것(never)'이 보이면 치명(critical)이다.
 
 ## 이 컷
 {panel}
@@ -180,6 +181,17 @@ BASES = {
         "ink bleed and wash only in backgrounds and effects, faces clean and readable. " + _FINISH
     ),
 }
+
+
+MEDIUM_RULE = {
+    "cel": "한국 웹툰 디지털 셀 채색이 아닌 화풍(수채화, 종이 질감, 잉크 해칭, 서양 그래픽노블, 그림책, 실사)",
+    "painterly": "작품이 고른 브러시 디지털 채색과 다른 화풍(그림책, 동화풍 수채, 종이 질감, 실사, 서양 그래픽노블). 브러시 결과 붓 터치는 고른 화풍이라 결함이 아니다",
+    "ink": "작품이 고른 현대 수묵·먹선 웹툰 화풍과 다른 화풍(그림책, 동화풍, 실사, 서양 그래픽노블, 매끈한 3D). 먹선의 굵기 변화, 붓 질감, 먹 번짐, 드라이 브러시는 고른 화풍이라 결함이 아니다",
+}
+
+
+def medium_rule(medium: Any) -> str:
+    return MEDIUM_RULE.get(medium if isinstance(medium, str) else "cel", MEDIUM_RULE["cel"])
 
 
 def base_for(medium: Any) -> str:
@@ -228,7 +240,9 @@ def _panel_prompt(
         f"One single webtoon panel, {panel['shot']} shot, one continuous image filling the whole frame edge to edge."
         " Not a comic page: no panel borders, no frames, no gutters, no split panels, no paper margins.",
         panel["description"],
-        ("Characters: " + " | ".join(f"{c['name']}: {c['appearance']}" for c in cast)) if cast else "",
+        ("Characters: " + " | ".join(
+            f"{c['name']}: {c['appearance']}" + (f" (never: {', '.join(c['never'])})" if c.get("never") else "") for c in cast
+        )) if cast else "",
         (
             " ".join(
                 f"Reference image {i + 1 + sheet_offset} is the design sheet for {c['name']}: match face shape, hairstyle, "
@@ -312,6 +326,13 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     instruction = ctx.get("instruction") or ""
     prev = ctx.get("previous_body") or {}
     redraw = [int(i) for i in payload.get("panels") or []]
+    # ④+ 인물 시트가 승인돼 있으면 외모 명세와 시트를 그대로 써요 (작화가 외모를 새로 쓰지 않아요)
+    sheets_body = (ctx.get("input_bodies") or {}).get("sheets") or {}
+    fixed = [
+        {k: c.get(k) for k in ("id", "name", "kind", "appearance", "never", "sheet")}
+        for c in (sheets_body.get("characters") or [])
+        if sheets_body.get("kind") == "sheets" and c.get("sheet")
+    ]
 
     if redraw and prev.get("kind") == "art":
         # 고른 컷만 다시 그려요. 컷 목록과 인물 명세는 이전 결과를 그대로 써요.
@@ -320,12 +341,20 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         redraw = []
         _report(ctx, "콘티를 컷 목록으로 정리 중")
         task = PLAN_TASK.format(max_panels=s.max_panels) + "\n" + _inputs_text(ctx)
+        if fixed:
+            task += (
+                "\n\n## 고정 등장인물 (④+ 인물 시트에서 승인됨)\n"
+                "characters에는 아래 목록을 id, name, appearance까지 그대로 옮기고, character_ids에는 이 id만 쓴다. 외모를 새로 쓰거나 바꾸지 마라.\n"
+                + "\n".join(f"- {c['id']}: {c['name']} ({c.get('kind', 'person')})" for c in fixed)
+            )
         if instruction:
             task += f"\n\n## 대표의 추가 지시 (가장 우선)\n{instruction}"
         # 컷이 70~80개면 컷 목록 JSON만 3만 토큰을 넘어요. 생각 토큰도 같은 한도를 쓰니 넉넉히 줘요.
         r = llm.json(system, task, PLAN_SCHEMA, effort="medium", max_tokens=96000)
         costs.add(r.result.cost_entry())
         plan = r.data
+        if fixed:
+            plan["characters"] = [dict(c) for c in fixed]
         plan["panels"] = plan["panels"][: s.max_panels]
         for i, p in enumerate(plan["panels"]):
             p["index"] = i + 1
@@ -358,9 +387,11 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     style_body = (ctx.get("input_bodies") or {}).get("style") or {}
     chosen = style_body.get("chosen")
     base = WEBTOON_BASE
+    chosen_medium = "cel"
     if isinstance(chosen, int) and 0 <= chosen < len(style_body.get("candidates") or []):
         plan["style_prompt"] = style_body["candidates"][chosen]["style_prompt"]
-        base = base_for(style_body["candidates"][chosen].get("medium"))
+        chosen_medium = style_body["candidates"][chosen].get("medium") or "cel"
+        base = base_for(chosen_medium)
     masters = [m for m in (media.get(k) for k in (style_body.get("style_masters") or [])[:2]) if m]
 
     style = plan["style_prompt"]
@@ -369,6 +400,8 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     _report(ctx, "인물 시트 준비 중")
     # 인물 시트: 외모 명세와 화풍이 같으면 한 번만 그려서 모든 회차가 같이 써요 (04번 일관성 1층).
     for c in chars.values():
+        if c.get("sheet") and str(c["sheet"]).startswith(f"series/{ctx['series']['id']}/sheets/") and media.get(c["sheet"]) is not None:
+            continue  # ④+에서 승인한 시트
         key = _sheet_key(ctx["series"]["id"], c, style + "|" + ",".join(style_body.get("style_masters") or []))
         if media.get(key) is None:
             img = images.generate(
@@ -397,9 +430,10 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             system,
             CHECK_TASK.format(
                 panel=json.dumps({k2: panel[k2] for k2 in ("shot", "description", "character_ids", "avoid")}, ensure_ascii=False),
-                cast=json.dumps([{"id": c["id"], "kind": kind_of(c), "appearance": c["appearance"]} for c in cast], ensure_ascii=False) or "(없음)",
+                cast=json.dumps([{"id": c["id"], "kind": kind_of(c), "appearance": c["appearance"], "never": c.get("never") or []} for c in cast], ensure_ascii=False) or "(없음)",
                 sheet_order=", ".join(f"{i + 2}번째 그림 = {c['name']}" for i, c in enumerate(sheet_cast)) or "(시트 없음)",
                 style=style,
+                medium_rule=medium_rule(chosen_medium),
             ),
             CHECK_SCHEMA,
             images=[thumbnail(data)] + [thumbnail(b, 640) for b in (sheets or [])],

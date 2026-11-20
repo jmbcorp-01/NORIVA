@@ -53,7 +53,7 @@ describe("approval gates", () => {
     ).toBe(false);
   });
 
-  it("needs style and characters before art", () => {
+  it("needs style, characters and approved sheets before art", () => {
     const latest = {
       story: a("story", "approved"),
       characters: a("characters", "approved"),
@@ -61,7 +61,8 @@ describe("approval gates", () => {
       storyboard: a("storyboard", "approved"),
     };
     expect(canStart("art", latest)).toBe(false);
-    expect(canStart("art", { ...latest, style: a("style", "approved") })).toBe(true);
+    expect(canStart("art", { ...latest, style: a("style", "approved") })).toBe(false);
+    expect(canStart("art", { ...latest, style: a("style", "approved"), sheets: a("sheets", "approved") })).toBe(true);
   });
 });
 
@@ -70,6 +71,7 @@ describe("downstream regeneration", () => {
     expect(allDownstream("story")).toEqual([
       "characters",
       "style",
+      "sheets",
       "plot",
       "storyboard",
       "art",
@@ -86,7 +88,10 @@ describe("downstream regeneration", () => {
     expect(nextToEnqueue("concept", {})).toEqual(["story"]);
     // 작품 단계 승인은 회차 단계를 자동으로 시작하지 않아요
     expect(nextToEnqueue("characters", { story: a("story", "approved") })).toEqual(["style"]);
-    expect(nextToEnqueue("storyboard", { style: a("style", "approved"), characters: a("characters", "approved") })).toEqual([
+    expect(nextToEnqueue("style", { characters: a("characters", "approved") })).toEqual(["sheets"]);
+    expect(
+      nextToEnqueue("storyboard", { style: a("style", "approved"), characters: a("characters", "approved"), sheets: a("sheets", "approved") }),
+    ).toEqual([
       "art",
     ]);
   });
