@@ -65,6 +65,7 @@ export function ArtView({
   const tests = body.test_panels ?? [];
   const compared = body.panels.filter((p) => p.variants?.length);
   const hidden = { back, artifactId, seriesId, episodeId };
+  const panelPics = body.panels.filter((p) => p.image).map((p) => ({ src: mediaUrl(p.image!), alt: `${p.index}컷` }));
   return (
     <div>
       {canRedraw && pending.length ? (
@@ -82,10 +83,14 @@ export function ArtView({
         <div className="mt-4">
           <p className="mb-2 text-[12px] font-medium text-ink-soft">인물 시트 (모든 컷이 이 얼굴과 옷을 따라요 · 누르면 크게 보여요)</p>
           <div className="flex gap-3 overflow-x-auto pb-1">
-            {body.characters.map((c) =>
+            {body.characters.map((c, _i, all) =>
               c.sheet ? (
                 <figure key={c.id} className="w-[180px] flex-none">
-                  <ZoomImage src={mediaUrl(c.sheet)} alt={`${c.name} 인물 시트`} className="aspect-[4/3] w-full rounded-[5px] border border-line object-cover" />
+                  <ZoomImage
+                    src={mediaUrl(c.sheet)}
+                    alt={`${c.name} 인물 시트`}
+                    gallery={all.filter((x) => x.sheet).map((x) => ({ src: mediaUrl(x.sheet!), alt: `${x.name} 인물 시트` }))}
+                    className="aspect-[4/3] w-full rounded-[5px] border border-line object-cover" />
                   <figcaption className="mt-1 text-[12px] font-medium">{c.name}</figcaption>
                 </figure>
               ) : null,
@@ -104,7 +109,7 @@ export function ArtView({
             <li key={p.index} className="grid gap-3 sm:grid-cols-[minmax(0,300px)_1fr]">
               <div>
                 {p.image ? (
-                  <ZoomImage src={mediaUrl(p.image)} alt={`${p.index}컷`} className="w-full rounded-[5px] border border-line" loading="lazy" />
+                  <ZoomImage src={mediaUrl(p.image)} alt={`${p.index}컷`} gallery={panelPics} className="w-full rounded-[5px] border border-line" loading="lazy" />
                 ) : (
                   <div className="grid aspect-[3/4] place-items-center rounded-[5px] border border-dashed border-line text-[12px] text-ink-faint">
                     그림 없음
