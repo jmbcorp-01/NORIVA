@@ -5,6 +5,7 @@ from typing import Any, Callable, Protocol
 
 from .llm import LLMResult
 from .prompts import TEXT_STAGES, render_guidelines, render_task
+from .style import run_style
 from .visual import ArtSettings, run_art, run_lettering, run_review
 
 
@@ -32,6 +33,8 @@ class Tools:
 
 def run_stage(stage: str, ctx: dict[str, Any], tools: Tools) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """단계 하나를 실행하고 (결과물 본문, 비용 기록 목록)을 돌려줘요."""
+    if stage == "style":
+        return run_style(ctx, tools.writer, tools.images(), tools.media)
     if stage in TEXT_STAGES:
         r = tools.writer.write(render_guidelines(ctx["guidelines"]), render_task(stage, ctx))
         return {"markdown": r.text, "stage": stage}, [r.cost_entry()]

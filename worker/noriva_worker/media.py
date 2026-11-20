@@ -15,6 +15,7 @@ from typing import Protocol
 class Media(Protocol):
     def put(self, key: str, data: bytes, content_type: str = "image/png") -> str: ...
     def get(self, key: str) -> bytes | None: ...
+    def get_private(self, key: str) -> bytes | None: ...
 
 
 class LocalMedia:
@@ -37,6 +38,10 @@ class LocalMedia:
         p = self._path(key)
         return p.read_bytes() if p.exists() else None
 
+    def get_private(self, key: str) -> bytes | None:
+        """대표가 올린 참고 캡처처럼 공개 주소로 보여주지 않는 파일 (로컬은 _private/ 아래)."""
+        return self.get(f"_private/{key}")
+
 
 class S3Media:
     def __init__(self, bucket: str, region: str):
@@ -58,6 +63,13 @@ class S3Media:
     def get(self, key: str) -> bytes | None:
         try:
             return self.s3.get_object(Bucket=self.bucket, Key=f"media/{key}")["Body"].read()
+        except self.s3.exceptions.NoSuchKey:
+            return None
+
+    def get_private(self, key: str) -> bytes | None:
+        """대표가 올린 참고 캡처처럼 공개하지 않는 파일. CloudFront가 보여주지 않는 private/ 아래에 있어요."""
+        try:
+            return self.s3.get_object(Bucket=self.bucket, Key=f"private/{key}")["Body"].read()
         except self.s3.exceptions.NoSuchKey:
             return None
 

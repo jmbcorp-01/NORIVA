@@ -181,7 +181,8 @@ def choose_test_panels(panels: list[dict[str, Any]], n: int) -> list[int]:
     return sorted(picked)
 
 
-def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]], with_refs: bool, extra: str) -> str:
+def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]], with_refs: bool, extra: str, n_masters: int = 0) -> str:
+    sheet_offset = n_masters
     parts = [
         WEBTOON_BASE,
         f"One single webtoon panel, {panel['shot']} shot, one continuous image filling the whole frame edge to edge."
@@ -189,10 +190,19 @@ def _panel_prompt(style: str, panel: dict[str, Any], cast: list[dict[str, Any]],
         panel["description"],
         ("Characters: " + " | ".join(f"{c['name']}: {c['appearance']}" for c in cast)) if cast else "",
         (
-            " ".join(f"Reference image {i + 1} is the design sheet for {c['name']}: match face, hair and outfit exactly." for i, c in enumerate(cast))
+            " ".join(
+                f"Reference image {i + 1 + sheet_offset} is the design sheet for {c['name']}: match face, hair and outfit exactly."
+                for i, c in enumerate(cast)
+            )
             + " Use the references only for character design; do not copy their layout, pose or background."
         )
         if with_refs and cast
+        else "",
+        (
+            f"Reference image(s) 1-{n_masters} are this series' approved style masters: match their line weight, cel shading, "
+            "palette and finish exactly, but not their characters, layout or content."
+        )
+        if n_masters
         else "",
         f"Exactly {len(cast)} visible person(s)." if cast else "No people in this panel.",
         f"Style: {style}",
@@ -277,13 +287,20 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     else:
         test_run = False
 
+    # ④에서 대표가 고른 화풍: 영어 화풍 문구와 화풍 마스터 그림
+    style_body = (ctx.get("input_bodies") or {}).get("style") or {}
+    chosen = style_body.get("chosen")
+    if isinstance(chosen, int) and 0 <= chosen < len(style_body.get("candidates") or []):
+        plan["style_prompt"] = style_body["candidates"][chosen]["style_prompt"]
+    masters = [m for m in (media.get(k) for k in (style_body.get("style_masters") or [])[:2]) if m]
+
     style = plan["style_prompt"]
     chars = {c["id"]: dict(c) for c in plan["characters"]}
 
     _report(ctx, "인물 시트 준비 중")
     # 인물 시트: 외모 명세와 화풍이 같으면 한 번만 그려서 모든 회차가 같이 써요 (04번 일관성 1층).
     for c in chars.values():
-        key = _sheet_key(ctx["series"]["id"], c, style)
+        key = _sheet_key(ctx["series"]["id"], c, style + "|" + ",".join(style_body.get("style_masters") or []))
         if media.get(key) is None:
             img = images.generate(
                 f"{WEBTOON_BASE} Character turnaround sheet for a Korean webtoon. {c['name']}: {c['appearance']}. "
@@ -291,6 +308,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                 f"Pure flat white background with no texture. Style: {style}. No text, labels or watermark.",
                 seed=1,
                 aspect_ratio="4:3",
+                references=masters or None,
                 model=model,
             )
             costs.add(img.cost_entry())
@@ -323,10 +341,13 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     def draw(panel: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
         cast = [chars[cid] for cid in panel["character_ids"] if cid in chars]
-        refs = [media.get(c["sheet"]) for c in cast] if 0 < len(cast) <= 3 else []
-        if any(r is None for r in refs):
-            refs = []
-        prompt = _panel_prompt(style, panel, cast, bool(refs), instruction if redraw and not test_run else "")
+        sheets = [media.get(c["sheet"]) for c in cast] if 0 < len(cast) <= 3 else []
+        if any(r is None for r in sheets):
+            sheets = []
+        # 참조는 많아야 4장: 화풍 마스터(인물이 많으면 1장) + 인물 시트
+        use_masters = masters[: max(0, min(2, 4 - len(sheets)))]
+        refs = use_masters + sheets
+        prompt = _panel_prompt(style, panel, cast, bool(sheets), instruction if redraw and not test_run else "", len(use_masters))
         aspect = ASPECT.get(panel.get("height") or "normal", "3:4")
         seed0 = panel["index"] * 100 + 10 * (ctx.get("attempt") or 1)
 
