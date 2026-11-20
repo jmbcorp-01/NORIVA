@@ -214,13 +214,6 @@ PHOTO_TASK = """# 과제: 고증 참고 사진 확인
 {props}
 """
 
-NORMALIZE_PROMPT = (
-    "Edit reference image 1. Redraw the hair, headwear and clothing of every person in the image to match this approved period design exactly: {look} "
-    "Nothing is worn across the forehead unless the design above describes it. "
-    "Keep everything else exactly the same: faces, expressions, bodies, poses, hands, line weight, coloring, shading, lighting and background. "
-    "Do not add any text."
-)
-
 CLEAN_PROMPT = (
     "Edit reference image 1. Remove these things completely: {items}. {fixes} "
     "Also remove every floating particle, glowing shard, sparkle, ribbon effect and decorative effect. "
@@ -592,11 +585,6 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             for v in r.data.get("violations") or []
         ]
 
-    look = "; ".join(
-        f"{it.get('name', '')} ({', '.join(it.get('who') or []) or 'everyone'}): {it['description']}"
-        for it in research_items.values()
-        if it.get("category") in ("attire", "hair", "headwear") and (it.get("description") or "").strip()
-    )
     if clean_keys and all(media.get(k) for k in clean_keys):
         masters = [m for m in (media.get(k) for k in clean_keys) if m]
         # 다시 그리기: 지난번 마스터 검사 결과를 그대로 이어 써요
@@ -604,20 +592,12 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         for v in master_warnings:
             no_master.update(x for x in v.get("characters") or [] if x in ids)
     elif masters:
-        cleaned_any = False
-        if look:
-            # 그림 모델은 마스터의 머리·옷까지 따라 그려요. 검사 전에 ③+ 고증 자료대로 머리·옷을 먼저 고쳐 그려요.
-            _report(ctx, "화풍 마스터의 머리·옷을 고증 자료대로 고치는 중")
-            fixed = []
-            for i, m in enumerate(masters):
-                img = images.generate(NORMALIZE_PROMPT.format(look=look), seed=2 + i, aspect_ratio="3:4", references=[m], model=model)
-                costs.add(img.cost_entry())
-                fixed.append(trim_border(img.data))
-            masters = fixed
-            cleaned_any = True
+        # 원본 마스터를 먼저 검사해요. 문제가 없으면 손대지 않아요(고쳐 그리다 오히려 새 문제를 만들 수 있어요).
         _report(ctx, "화풍 마스터의 소품 검사 중")
-        found = screen(masters)
-        # 한 번에 안 지워지면 남은 것만 한 번 더 지워요(머리 모양처럼 바꿔 그려야 하는 것은 fix 문장으로)
+        raw, raw_found = masters, screen(masters)
+        found = raw_found
+        cleaned_any = False
+        # 걸린 것만 지우거나 고쳐 그려요. 고친 뒤에 더 나빠지면 원본으로 돌아가요.
         for rnd in range(2):
             if not found:
                 break
@@ -629,11 +609,15 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                 img = images.generate(CLEAN_PROMPT.format(items=items, fixes=fixes), seed=3 + i + 10 * rnd, aspect_ratio="3:4", references=[m], model=model)
                 costs.add(img.cost_entry())
                 cleaned.append(trim_border(img.data))
-            masters = cleaned
-            cleaned_any = True
-            found = screen(masters)
+            new_found = screen(cleaned)
+            if len(new_found) >= len(found):
+                break  # 고쳐도 줄지 않으면 더 고치지 않아요
+            masters, found, cleaned_any = cleaned, new_found, True
         if cleaned_any:
             clean_keys = [media.put(f"{out_base}/master-clean-{i + 1}.png", m) for i, m in enumerate(masters)]
+        else:
+            masters, found = raw, raw_found
+        # 그래도 남은 문제와 엮인 인물은 마스터 없이 그려요. 문제가 남은 그림은 참고 그림으로 넣지 않아요.
         for v in found:
             master_warnings.append(v)
             no_master.update(v["characters"])
@@ -767,10 +751,9 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         for _, local in done:
             costs.extend(local)
         props = [new_props.get(p["id"], p) for p in props]
-    # 치명 결함(다른 시대·나라 모양)이 없는 소품·의상 시트는 인물 시트의 참고 그림으로 써요.
-    # 참고 그림이 없으면 그림 모델이 익숙한 일본도·하카마로 돌아가서, 주요 결함 몇 개 있는 시트가 없는 것보다 훨씬 나아요.
+    # 참고 그림은 검사를 통과한 소품·의상 시트만 써요. 불합격 시트를 넣으면 인물이 그 실수를 그대로 따라 그려요.
     for p in props:
-        p["as_ref"] = bool(p.get("image")) and (bool(p.get("passed")) or not any(d.get("severity") == "critical" for d in p.get("defects") or []))
+        p["as_ref"] = bool(p.get("image")) and bool(p.get("passed"))
     prop_imgs = {p["id"]: thumbnail(img, 1024) for p in props if p["as_ref"] and (img := media.get(p["image"]))}
 
     def props_of(c: dict[str, Any]) -> list[dict[str, Any]]:
