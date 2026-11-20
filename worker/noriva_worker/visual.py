@@ -582,7 +582,21 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
 
         cands: list[dict[str, Any]] = []
         blocked = ""
+        # 같은 결과물을 다시 돌리는 경우(작업기 종료, 이어서 그리기): 지난 시도에서 그려 둔 그림이 있으면
+        # 새로 그리지 않고 검사만 다시 해요. 이 컷의 지시와 맞으면 그대로 써요 (그리기보다 훨씬 싸요).
+        n_old = 0
+        for k in range(1, 4):
+            old_key = f"{key_base}/{panel['index']:03d}-{k}.png"
+            old = media.get(old_key)
+            if old is None:
+                break
+            n_old = k
+            cands.append({"image": old_key, "reused": True, **check(panel, cast, old, local, sheet_cast, sheets)})
+            if _rank(cands[-1], s.pass_score)[0]:
+                break
         for k in range(s.candidates):
+            if cands and _rank(max(cands, key=lambda c: _rank(c, s.pass_score)), s.pass_score)[0]:
+                break  # 다시 쓴 그림이 합격이면 새로 그리지 않아요
             try:
                 img = images.generate(prompt, seed=seed0 + k, references=refs or None, aspect_ratio=aspect, model=model)
             except NoImageError as e:
@@ -591,7 +605,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                 break
             local.append(img.cost_entry())
             data = trim_border(img.data)
-            key = media.put(f"{key_base}/{panel['index']:03d}-{k + 1}.png", data)
+            key = media.put(f"{key_base}/{panel['index']:03d}-{k + 1 + n_old}.png", data)
             cands.append({"image": key, **check(panel, cast, data, local, sheet_cast, sheets)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break  # 합격 후보가 나오면 더 그리지 않아요

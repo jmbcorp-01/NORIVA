@@ -35,6 +35,14 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
   const generating = Object.values(latest).filter((a): a is Artifact => a?.status === "generating");
   const jobs = await activeJobs({ artifactIds: generating.map((a) => a.id) });
   const typical = await typicalSeconds(jobs.map((j) => j.type));
+  // 실패한 결과물의 작업: '이어서 그리기'로 같은 작업을 다시 시작해요
+  const failedIds = Object.values(latest).filter((a): a is Artifact => a?.status === "failed").map((a) => a.id);
+  const failedJobs = failedIds.length
+    ? await db
+        .select({ id: schema.jobs.id, artifactId: schema.jobs.artifactId })
+        .from(schema.jobs)
+        .where(and(inArray(schema.jobs.artifactId, failedIds), eq(schema.jobs.status, "failed")))
+    : [];
   const brief = stages.includes("style") || stages.includes("sheets")
     ? (await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId)))[0]?.brief
     : undefined;
@@ -119,7 +127,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                   {a?.status === "failed" ? (
                     <div className="mb-3">
                       <p className="text-[13px] text-plum">{String(a.body?.error ?? "생성에 실패했어요. 다시 생성해 주세요.")}</p>
-                      <PartialResult body={a.body} back={back} />
+                      <PartialResult body={a.body} back={back} jobId={failedJobs.find((j) => j.artifactId === a.id)?.id} />
                     </div>
                   ) : null}
 
@@ -370,9 +378,10 @@ function TextChecks({ checks }: { checks?: TextCheck }) {
 type PartialBody = { kind?: string; job_id?: string; drawn?: number; total?: number; panels?: { index: number; image: string; score?: number; passed?: boolean }[] };
 
 /** 멈춘 작업: 그때까지 끝난 컷을 보여 주고, 같은 작업을 이어서 시작해요 (끝난 컷은 다시 그리지 않아요) */
-function PartialResult({ body, back }: { body: Record<string, unknown> | null | undefined; back: string }) {
+function PartialResult({ body, back, jobId }: { body: Record<string, unknown> | null | undefined; back: string; jobId?: string }) {
   const b = (body ?? {}) as PartialBody;
-  if (!b.job_id) return null;
+  const job = b.job_id ?? jobId;
+  if (!job) return null;
   const panels = b.kind === "art_partial" ? (b.panels ?? []) : [];
   return (
     <div className="mt-2 space-y-2">
@@ -393,10 +402,10 @@ function PartialResult({ body, back }: { body: Record<string, unknown> | null | 
         </>
       ) : null}
       <form action={resumeJob}>
-        <input type="hidden" name="jobId" value={b.job_id} />
+        <input type="hidden" name="jobId" value={job} />
         <input type="hidden" name="back" value={back} />
         <Button type="submit">이어서 그리기</Button>
-        <span className="ml-2 text-[12px] text-ink-faint">멈춘 곳 다음부터 이어 가요. 크레딧 부족이었다면 충전한 뒤 눌러 주세요.</span>
+        <span className="ml-2 text-[12px] text-ink-faint">멈춘 곳 다음부터 이어 가요. 이미 그려 둔 그림은 검사만 다시 해서 맞으면 그대로 써요. 크레딧 부족이었다면 충전한 뒤 눌러 주세요.</span>
       </form>
     </div>
   );

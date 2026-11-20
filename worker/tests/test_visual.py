@@ -843,3 +843,44 @@ def test_fal_content_policy_is_no_image(monkeypatch):
     monkeypatch.setattr(fal, "_post", post)
     with pytest.raises(NoImageError, match="안전 필터"):
         fal.generate("p", seed=1)
+
+
+def test_art_rechecks_old_images_instead_of_redrawing(store, tmp_path):
+    """저장된 진행 기록이 없어도(예전 코드로 멈춘 작업), 같은 결과물에 그려 둔 그림이 있으면 검사만 다시 해서 써요."""
+    import shutil
+
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model = FakeModel()
+    first, second = FakeImages(), FakeImages()
+    inputs = [
+        _approved(c, sid, eid, "storyboard", {"markdown": "| 1 | 원경 | 마을 |"}),
+        _approved(c, sid, None, "style", {"markdown": "먹선, 한지색"}),
+        _approved(c, sid, None, "characters", {"markdown": "하나: 17세"}),
+    ]
+    aid = c.execute(
+        "insert into artifacts (series_id, episode_id, stage, status, attempt, input_artifact_ids) values (%s, %s, 'art', 'generating', 1, %s) returning id",
+        (sid, eid, Jsonb([str(i) for i in inputs])),
+    ).fetchone()["id"]
+    jid = c.execute("insert into jobs (type, series_id, episode_id, artifact_id, payload) values ('art', %s, %s, %s, %s) returning id",
+                    (sid, eid, aid, Jsonb({}))).fetchone()["id"]
+    settings = ArtSettings(candidates=1, parallel=1, test_panels=0)
+    process(store, store.claim_by_id(jid, "test"), Tools(writer=model, media=media, image_factory=lambda: first, art=settings), Config.from_env())
+    panels_drawn = sum(1 for p, _ in first.prompts if "One single webtoon panel" in p)
+    assert panels_drawn == 2
+    # 예전 코드처럼 진행 기록이 없는 상태로 되돌리고 같은 작업을 다시 돌려요
+    shutil.rmtree(tmp_path / f"series/{sid}/ep001/art/{aid}/_progress")
+    c.execute("update jobs set status='queued', attempts=0 where id=%s", (jid,))
+    c.execute("update artifacts set status='generating' where id=%s", (aid,))
+    class Passing(FakeModel):  # 다시 검사하면 합격하는 경우
+        checks = property(lambda self: 2, lambda self, v: None)
+
+    model = Passing()
+    checks_before = 0
+    process(store, store.claim_by_id(jid, "test"), Tools(writer=model, media=media, image_factory=lambda: second, art=settings), Config.from_env())
+    a = c.execute("select status, body from artifacts where id=%s", (aid,)).fetchone()
+    assert a["status"] == "pending_review", a["body"]
+    assert not any("One single webtoon panel" in p for p, _ in second.prompts)  # 새로 그린 컷 없음
+    assert sum(1 for props, _, _ in model.calls if "people_count" in props) - checks_before == 2  # 검사만 2번
+    assert all(p["image"] for p in a["body"]["panels"])
