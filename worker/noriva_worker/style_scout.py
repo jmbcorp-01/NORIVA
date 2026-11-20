@@ -26,7 +26,7 @@ OFFICIAL_HOSTS = (
     "comic.naver.com", "series.naver.com", "webtoon.kakao.com", "page.kakao.com", "webtoons.com",
     "lezhin.com", "ridibooks.com", "toptoon.com", "bomtoon.com", "mrblue.com",
 )
-_GENERIC_OG = re.compile(r"/shared/ogImage|/og[_-]?default|/common/og|logo", re.I)
+_GENERIC_OG = re.compile(r"/shared/ogImage|/og[_-]?default|/common/og|/static/comic/images/og_tag|logo", re.I)
 _URL = re.compile(r"https?://[^\s)\]>\"']+")
 
 
@@ -56,6 +56,8 @@ def fetch_cover(url: str) -> bytes | None:
             page = http.get(url)
             if page.status_code != 200:
                 return None
+            if "titleId=" in url and "titleId=" not in str(page.url):
+                return None  # 없는 작품이라 첫 화면으로 돌려보내졌어요 (그 화면 대표 이미지는 사이트 로고)
             tag = _OG.search(page.text[:400_000])
             m = _CONTENT.search(tag.group(0)) if tag else None
             if not m:
@@ -112,7 +114,7 @@ def lookup_platform(title: str, author: str, platform: str) -> tuple[str, list[s
         it = _pick(items, title, author, lambda x: x.get("title", ""), lambda x: " ".join(a.get("name", "") for a in x.get("authors") or []))
         if not it or not it.get("id"):
             return "", []
-        imgs = [it.get(k) for k in ("featuredCharacterImageA", "titleImageA", "featuredCharacterImageB")]
+        imgs = [it.get(k) for k in ("featuredCharacterImageA", "featuredCharacterImageB")]  # titleImage는 제목 로고라 빼요
         return f"https://webtoon.kakao.com/content/{it.get('seoId') or '-'}/{it['id']}", [u for u in imgs if u][:2]
 
     order = [kakao, naver] if "카카오" in (platform or "") else [naver, kakao]
