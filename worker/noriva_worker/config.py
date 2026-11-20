@@ -35,8 +35,8 @@ class Config:
             max_attempts=int(os.environ.get("NORIVA_MAX_ATTEMPTS", "3")),
             poll_seconds=float(os.environ.get("NORIVA_POLL_SECONDS", "3")),
             # 그림 모델: 인물 시트를 참조로 줄 수 있는 모델이어야 해요 (fal의 "<모델>/edit" 경로)
-            image_model=os.environ.get("NORIVA_IMAGE_MODEL", "fal-ai/nano-banana"),
-            image_price=float(os.environ.get("NORIVA_IMAGE_PRICE", "0.04")),
+            image_model=os.environ.get("NORIVA_IMAGE_MODEL", "fal-ai/nano-banana-pro"),
+            image_price=float(os.environ.get("NORIVA_IMAGE_PRICE", "0.15")),
             art_candidates=int(os.environ.get("NORIVA_ART_CANDIDATES", "2")),
             art_pass_score=int(os.environ.get("NORIVA_ART_PASS_SCORE", "80")),
             art_max_panels=int(os.environ.get("NORIVA_ART_MAX_PANELS", "80")),
