@@ -93,6 +93,10 @@ class FakeModel:
                  "period_notes": "straight ring-pommel sword, no guard", "never": ["curved katana", "tsuba"]},
                 {"id": "cow", "name": "누렁소", "kind": "animal", "role": "minor", "appearance": "yellow ox", "period_notes": "", "never": []},
             ]}
+        elif list(props) == ["updates"]:
+            self.fix_tasks = getattr(self, "fix_tasks", []) + [task]
+            data = {"updates": [{"id": "cow", "appearance": "yellow ox with short horns", "period_notes": "", "never": ["long horns"],
+                                 "edit": "Make both horns short."}]}
         elif list(props) == ["score", "defects"]:
             # 인물마다 첫 시트는 불합격, 둘째는 합격 (병렬로 돌아도 인물별로 셈)
             key = task.split('"id": "')[1].split('"')[0]
@@ -442,8 +446,13 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path):
     images.prompts.clear()
     c.execute("update artifacts set status='approved' where id=%s", (sid_art,))
     _, again = _run(store, tools, sid, None, "sheets", [chars, style], payload={"chars": ["cow"], "base_artifact_id": str(sid_art), "instruction": "뿔을 짧게"}, attempt=2)
-    assert all("뿔을 짧게" in p for p, _ in images.prompts) and all("yellow ox" in p for p, _ in images.prompts)
+    assert "뿔을 짧게" in model.fix_tasks[-1]
+    # 첫 번째는 이전 시트(+고증 없음) 한 장을 참조로 고칠 곳만 편집, 두 번째는 새 명세로 새로 그림
+    assert images.prompts[0][0].startswith("Edit reference image 1") and "Make both horns short." in images.prompts[0][0] and images.prompts[0][1] == 1
+    assert "yellow ox with short horns" in images.prompts[1][0] and "뿔을 짧게" in images.prompts[1][0]
     assert again["characters"][0]["sheet"] == sj["sheet"] and again["redrawn"] == ["cow"]
+    cow = again["characters"][1]
+    assert cow["appearance"] == "yellow ox with short horns" and cow["never"] == ["long horns"]
 
     # ⑦ 작화는 승인된 시트와 명세를 그대로 써요 (시트를 새로 그리지 않음)
     images.prompts.clear()
