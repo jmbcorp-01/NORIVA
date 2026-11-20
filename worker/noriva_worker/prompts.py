@@ -77,6 +77,14 @@ def render_guidelines(versions: list[dict[str, Any]]) -> str:
     return header + "\n\n" + "\n\n".join(parts)
 
 
+# 시대 검사에서 같은 기준으로 쓰는 판정 메모. 모양 하나만 보고 다른 나라 옷이라 단정하면 맞는 그림도 떨어져요.
+PERIOD_JUDGE_NOTE = (
+    "판정 주의: 앞으로 여며 V자로 교차하는 깃은 삼국·통일신라·고려의 저고리에도 있다. 깃이 교차한다는 것만으로 기모노·사무에라고 적지 말고, "
+    "작품 시대의 기준(명세, 의상 시트, 실물 사진)과 다를 때만 적는다. 기모노는 발목까지 내려오는 긴 옷, 넓은 오비 허리띠, 넓고 늘어진 소매를 함께 보고 판단한다. "
+    "고름은 조선 후기 저고리의 특징이라 그 이전 시대 작품이면 결함이다. 확신이 없으면 치명이 아니라 주요로 적는다."
+)
+
+
 def render_task(stage: str, ctx: dict[str, Any]) -> str:
     s = ctx["series"]
     brief = s["brief"]
