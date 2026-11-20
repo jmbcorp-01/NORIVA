@@ -760,8 +760,9 @@ def test_art_resumes_after_interruption(store, tmp_path):
 
     class Dies(FakeImages):
         def generate(self, prompt, seed=None, references=None, aspect_ratio="3:4", model=None):
-            if len(self.prompts) >= 2:  # 인물 시트 1장, 첫 컷 1장을 그린 뒤 꺼져요
-                raise RuntimeError("작업기 종료")
+            if len(self.prompts) >= 2:  # 인물 시트 1장, 첫 컷 1장을 그린 뒤 멈춰요 (다시 해도 안 되는 오류)
+                from noriva_worker.images import NoImageError
+                raise NoImageError("그림 없음")
             return super().generate(prompt, seed, references, aspect_ratio, model)
 
     first, second = Dies(), FakeImages()
@@ -778,8 +779,15 @@ def test_art_resumes_after_interruption(store, tmp_path):
                     (sid, eid, aid, Jsonb({}))).fetchone()["id"]
     settings = ArtSettings(candidates=1, parallel=1, test_panels=0)
     process(store, store.claim_by_id(jid, "test"), Tools(writer=model, media=media, image_factory=lambda: first, art=settings), Config.from_env())
-    assert c.execute("select status from jobs where id=%s", (jid,)).fetchone()["status"] == "queued"
+    assert c.execute("select status from jobs where id=%s", (jid,)).fetchone()["status"] == "failed"
+    # 멈춰도 끝난 컷은 보여 줘요
+    failed = c.execute("select status, body from artifacts where id=%s", (aid,)).fetchone()
+    assert failed["status"] == "failed" and failed["body"]["kind"] == "art_partial" and failed["body"]["drawn"] == 1
+    assert failed["body"]["panels"][0]["image"] and failed["body"]["job_id"] == str(jid)
     plans = sum(1 for props, _, _ in model.calls if "style_prompt" in props)
+    # '이어서 그리기' (웹 resumeJob과 같은 일)
+    c.execute("update jobs set status='queued', error=null, attempts=0, run_after=now() where id=%s", (jid,))
+    c.execute("update artifacts set status='generating' where id=%s", (aid,))
 
     process(store, store.claim_by_id(jid, "test"), Tools(writer=model, media=media, image_factory=lambda: second, art=settings), Config.from_env())
     a = c.execute("select status, body from artifacts where id=%s", (aid,)).fetchone()

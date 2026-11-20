@@ -621,7 +621,18 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
 
     resumed = sum(1 for p in todo if _load_json(media, f"{ck_base}/panel-{p['index']:03d}.json"))
     step = "시험 컷 그리는 중" if test_run else "컷 그리는 중"
-    results = _map_progress(ctx, s.parallel, draw_saved, todo, step + (f" (끝난 {resumed}컷 이어서)" if resumed else ""))
+    try:
+        results = _map_progress(ctx, s.parallel, draw_saved, todo, step + (f" (끝난 {resumed}컷 이어서)" if resumed else ""))
+    except BaseException as e:
+        # 멈춰도 그때까지 끝난 컷은 화면에 보여 줘요. '이어서 그리기'를 누르면 다음 컷부터 그려요.
+        done = [d["out"] for p in todo if (d := _load_json(media, f"{ck_base}/panel-{p['index']:03d}.json")) and d.get("out", {}).get("image")]
+        e.partial_body = {  # type: ignore[attr-defined]
+            "kind": "art_partial",
+            "panels": [{k: d.get(k) for k in ("index", "image", "score", "passed", "description")} for d in sorted(done, key=lambda d: d["index"])],
+            "drawn": len(done),
+            "total": len(todo),
+        }
+        raise
     drawn = {p["index"]: p for p, _ in results}
     for _, local in results:
         costs.extend(local)

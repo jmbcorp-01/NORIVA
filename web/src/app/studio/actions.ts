@@ -782,6 +782,24 @@ export async function retryJob(formData: FormData) {
   redirect("/studio/jobs");
 }
 
+/** 멈춘 작업을 같은 결과물로 다시 시작해요. 끝난 컷·후보는 저장돼 있어서 다음 것부터 이어 가요. */
+export async function resumeJob(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back") || "/studio/jobs");
+  const id = String(formData.get("jobId"));
+  const [job] = await db
+    .update(schema.jobs)
+    .set({ status: "queued", error: null, attempts: 0, runAfter: new Date(), updatedAt: new Date() })
+    .where(and(eq(schema.jobs.id, id), eq(schema.jobs.status, "failed")))
+    .returning();
+  if (job?.artifactId) {
+    await db.update(schema.artifacts).set({ status: "generating" }).where(eq(schema.artifacts.id, job.artifactId));
+  }
+  if (job) await notifyWorker(id);
+  revalidatePath(path);
+  redirect(path);
+}
+
 /* ─── 연재 ─── */
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];

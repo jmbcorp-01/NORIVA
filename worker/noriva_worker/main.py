@@ -105,23 +105,23 @@ def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
             store.finish(job, body, costs)
         log.info("작업 완료 %s 비용 $%.4f", job["id"], sum(c["cost_usd"] for c in costs))
     except (RefusedError, TruncatedError, StageInputError, ImageNotConfiguredError, NoImageError) as e:
-        store.fail(job, str(e), cfg.max_attempts, retryable=False)
+        store.fail(job, str(e), cfg.max_attempts, retryable=False, partial=getattr(e, "partial_body", None))
     except (anthropic.RateLimitError, anthropic.InternalServerError, anthropic.APIConnectionError) as e:
-        again = store.fail(job, f"일시적 오류: {e}", cfg.max_attempts, retryable=True)
+        again = store.fail(job, f"일시적 오류: {e}", cfg.max_attempts, retryable=True, partial=getattr(e, "partial_body", None))
         log.warning("일시적 오류 %s, 다시 시도: %s", job["id"], again)
     except anthropic.APIStatusError as e:
         msg = f"API 오류 {e.status_code}: {e.message}"
         if "credit balance" in str(e.message).lower():
-            msg = "Anthropic API 크레딧이 부족해요. Anthropic 콘솔의 Plans & Billing에서 충전한 뒤 다시 실행해 주세요."
-        store.fail(job, msg, cfg.max_attempts, retryable=False)
+            msg = "Anthropic API 크레딧이 부족해요. Anthropic 콘솔의 Plans & Billing에서 충전한 뒤 '이어서 그리기'를 누르면 멈춘 곳 다음부터 이어 가요."
+        store.fail(job, msg, cfg.max_attempts, retryable=False, partial=getattr(e, "partial_body", None))
     except httpx.HTTPStatusError as e:
         retry = e.response.status_code >= 500 or e.response.status_code == 429
-        store.fail(job, f"그림 API 오류 {e.response.status_code}: {e.response.text[:300]}", cfg.max_attempts, retryable=retry)
+        store.fail(job, f"그림 API 오류 {e.response.status_code}: {e.response.text[:1000]}", cfg.max_attempts, retryable=retry, partial=getattr(e, "partial_body", None))
     except httpx.TransportError as e:
-        store.fail(job, f"그림 API 연결 오류: {e}", cfg.max_attempts, retryable=True)
+        store.fail(job, f"그림 API 연결 오류: {e}", cfg.max_attempts, retryable=True, partial=getattr(e, "partial_body", None))
     except Exception as e:  # 마지막 안전망: 작업이 '실행 중'에 묶이지 않게
         log.exception("처리 실패 %s", job["id"])
-        store.fail(job, f"{type(e).__name__}: {e}", cfg.max_attempts, retryable=True)
+        store.fail(job, f"{type(e).__name__}: {e}", cfg.max_attempts, retryable=True, partial=getattr(e, "partial_body", None))
 
 
 def claim_from_message(store: Store, raw: str, worker_id: str) -> dict | None:
