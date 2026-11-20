@@ -27,6 +27,7 @@ type SheetsBody = {
   redrawn?: string[];
   rule_suggestions?: string[];
   master_warnings?: { item: string; note: string; characters: string[] }[];
+  props?: { id: string; name: string; owners: string[]; description: string; image?: string; score?: number; passed?: boolean; defects?: Defect[] }[];
   summary: { characters: number; passed: number };
 };
 
@@ -87,6 +88,33 @@ export function SheetsView({
       <p className="mt-1 text-[12px] text-ink-faint">
         승인하면 ⑦ 작화가 모든 회차에서 이 시트와 외모 명세를 그대로 써요. 칼·옷·머리 모양이 시대에 맞는지, 세 방향이 같은 사람인지 크게 보며 확인하세요.
       </p>
+      {body.props?.length ? (
+        <div className="mt-4">
+          <p className="text-[13px] font-medium">소품 시트</p>
+          <p className="text-[12px] text-ink-faint">고증 사진을 보고 소품만 먼저 그렸어요. 인물 시트와 ⑦ 작화가 이 모양을 그대로 따라요.</p>
+          <ul className="mt-2 grid gap-3 sm:grid-cols-2">
+            {body.props.map((p) => (
+              <li key={p.id} className="text-[12px]">
+                {p.image ? (
+                  <ZoomImage src={mediaUrl(p.image)} alt={`${p.name} 소품 시트`} className="w-full rounded-[5px] border border-line" loading="lazy" />
+                ) : (
+                  <div className="grid aspect-[4/3] place-items-center rounded-[5px] border border-dashed border-line text-ink-faint">그림 없음</div>
+                )}
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{p.name}</span>
+                  <span className="text-ink-faint">{p.owners.join(", ")}</span>
+                  {typeof p.score === "number" ? <Badge tone={p.passed ? "pine" : "plum"}>{p.score}점</Badge> : null}
+                </div>
+                {p.defects?.filter((d) => d.severity !== "minor").map((d, i) => (
+                  <p key={i} className={d.severity === "critical" ? "text-plum" : "text-ink-soft"}>
+                    [{SEVERITY[d.severity]}] {d.note}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <ul className="mt-4 space-y-5">
         {body.characters.map((c) => (
           <li key={c.id} className="grid gap-3 sm:grid-cols-[minmax(0,360px)_1fr]">

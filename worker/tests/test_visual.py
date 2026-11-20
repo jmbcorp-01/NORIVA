@@ -87,25 +87,25 @@ class FakeModel:
         elif "shading_steps" in props:
             data = {"line": "굵은 외곽선", "coloring": "셀", "shading_steps": 2, "palette": "고채도", "proportions": "8등신",
                     "faces": "눈 중간", "backgrounds": "색면", "effects": "집중선", "panel_rhythm": "클로즈업 많음", "avoid": "수채"}
-        elif list(props) == ["characters"]:
+        elif list(props) in (["characters"], ["characters", "props"]):
             data = {"characters": [
                 {"id": "Sun Jeong", "name": "순정", "kind": "person", "role": "main", "appearance": "man, 30, topknot, dark navy durumagi",
                  "period_notes": "straight ring-pommel sword, no guard", "never": ["curved katana", "tsuba"]},
                 {"id": "cow", "name": "누렁소", "kind": "animal", "role": "minor", "appearance": "yellow ox", "period_notes": "", "never": []},
-            ]}
+            ], "props": [{"id": "sword", "name": "환두대도", "owners": ["Sun Jeong", "nobody"], "description": "straight sword with a gold ring pommel"}]}
         elif "violations" in props:
             data = {"violations": [{"item": "긴 뿔", "character_ids": ["cow"], "note": "마스터의 소가 긴 뿔"}]}
         elif "updates" in props:
             self.fix_tasks = getattr(self, "fix_tasks", []) + [task]
             data = {"updates": [{"id": "cow", "appearance": "yellow ox with short horns", "period_notes": "", "never": ["long horns"],
                                  "edit": "Make both horns short."}], "rules": ["누렁소의 뿔은 짧다.", " "]}
-        elif list(props) == ["score", "defects"]:
+        elif list(props) == ["defects"]:
             # 인물마다 첫 시트는 불합격, 둘째는 합격 (병렬로 돌아도 인물별로 셈)
             key = task.split('"id": "')[1].split('"')[0]
             self.sheet_seen = getattr(self, "sheet_seen", {})
             self.sheet_seen[key] = self.sheet_seen.get(key, 0) + 1
             ok = self.sheet_seen[key] % 2 == 0
-            data = {"score": 85 if ok else 50, "defects": [] if ok else [{"code": "GA-3", "severity": "critical", "note": "일본도"}]}
+            data = {"defects": [{"code": "K-1", "severity": "minor", "note": "작은 차이"}] if ok else [{"code": "GA-3", "severity": "critical", "note": "일본도"}]}
         elif "people_count" in props:
             self.checks += 1
             ok = self.checks % 2 == 0
@@ -437,15 +437,23 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path):
     assert sheets["kind"] == "sheets" and [x["id"] for x in sheets["characters"]] == ["sunjeong", "cow"]
     sj = sheets["characters"][0]
     # 첫 시트는 치명 결함(일본도)으로 불합격 → 한 번 더 그려 합격본을 남김
-    assert len(sj["candidates"]) == 2 and sj["passed"] and sj["score"] == 85
+    assert len(sj["candidates"]) == 2 and sj["passed"] and sj["score"] == 97  # 점수는 결함 개수로 계산 (경미 1개)
     assert sj["sheet"].startswith(f"series/{sid}/sheets/")
-    assert "Must not include: curved katana, tsuba" in images.prompts[0][0]
-    assert images.prompts[0][1] == 1  # 화풍 마스터를 참조로
-    assert sheets["summary"] == {"characters": 2, "passed": 2}
-    assert len(images.prompts) == 4
-    # 마스터에 이 인물의 금지 소품이 있으면 그 인물은 마스터 없이 그림
+    # 소품 시트를 먼저 그리고 검사(첫 장 불합격 → 둘째 합격), 주인은 명세에 있는 인물만
+    prop = sheets["props"][0]
+    assert prop["owners"] == ["sunjeong"] and prop["passed"] and prop["image"].endswith("prop-sword-2.png")
+    prop_prompts = [p for p, _ in images.prompts if p.count("Prop design sheet")]
+    assert len(prop_prompts) == 2 and "drawn with the blade fully visible" in prop_prompts[0]
+    # 금지 단어는 그림 지시에 넣지 않고 검사에서만 써요. 글자·장식 금지는 늘 넣어요.
+    sheet_prompts = [(p, n) for p, n in images.prompts if "turnaround sheet" in p]
+    assert not any("katana" in p or "Must not include" in p for p, _ in sheet_prompts)
+    assert all("no view labels" in p for p, _ in sheet_prompts)
+    assert sheets["summary"] == {"characters": 2, "passed": 2, "props": 1, "props_passed": 1}
+    assert len(images.prompts) == 6
+    # 순정은 화풍 마스터 + 소품 시트를 참조로, 고증 사진은 넣지 않음. 마스터에 금지 소품이 있는 소는 마스터 없이.
     assert sheets["master_warnings"][0]["characters"] == ["cow"]
-    assert all(n == 0 for p, n in images.prompts if "누렁소" in p) and all(n == 1 for p, n in images.prompts if "순정" in p)
+    assert all(n == 0 for p, n in sheet_prompts if "누렁소" in p)
+    assert all(n == 2 and "approved prop design for 환두대도" in p for p, n in sheet_prompts if "순정" in p)
     # 앞 시도에서 걸린 치명 문제를 다음 그림 지시에 넣음
     assert any("Fix these problems found in the previous attempt: GA-3 일본도" in p for p, _ in images.prompts if "순정" in p)
 
