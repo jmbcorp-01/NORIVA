@@ -2,6 +2,7 @@ import { Badge, Button, Input } from "@/components/ui";
 import { IMAGE_MODELS, imageModelLabel } from "@/lib/pipeline";
 import { artNextStep, redrawPanels } from "../../actions";
 import { LetteredStrip, type LetteredPanel } from "./lettered-strip";
+import { ZoomImage } from "@/components/zoom-image";
 
 /** 그림 파일 키 → 주소. 로컬은 스튜디오의 /media 경로, AWS는 CloudFront가 S3에서 보여줘요. */
 export const mediaUrl = (key: string) => `/media/${key}`;
@@ -79,13 +80,12 @@ export function ArtView({
 
       {body.characters.some((c) => c.sheet) ? (
         <div className="mt-4">
-          <p className="mb-2 text-[12px] font-medium text-ink-soft">인물 시트 (모든 컷이 이 얼굴과 옷을 따라요)</p>
+          <p className="mb-2 text-[12px] font-medium text-ink-soft">인물 시트 (모든 컷이 이 얼굴과 옷을 따라요 · 누르면 크게 보여요)</p>
           <div className="flex gap-3 overflow-x-auto pb-1">
             {body.characters.map((c) =>
               c.sheet ? (
                 <figure key={c.id} className="w-[180px] flex-none">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={mediaUrl(c.sheet)} alt={`${c.name} 인물 시트`} className="aspect-[4/3] w-full rounded-[5px] border border-line object-cover" />
+                  <ZoomImage src={mediaUrl(c.sheet)} alt={`${c.name} 인물 시트`} className="aspect-[4/3] w-full rounded-[5px] border border-line object-cover" />
                   <figcaption className="mt-1 text-[12px] font-medium">{c.name}</figcaption>
                 </figure>
               ) : null,
@@ -104,8 +104,7 @@ export function ArtView({
             <li key={p.index} className="grid gap-3 sm:grid-cols-[minmax(0,300px)_1fr]">
               <div>
                 {p.image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={mediaUrl(p.image)} alt={`${p.index}컷`} className="w-full rounded-[5px] border border-line" loading="lazy" />
+                  <ZoomImage src={mediaUrl(p.image)} alt={`${p.index}컷`} className="w-full rounded-[5px] border border-line" loading="lazy" />
                 ) : (
                   <div className="grid aspect-[3/4] place-items-center rounded-[5px] border border-dashed border-line text-[12px] text-ink-faint">
                     그림 없음
