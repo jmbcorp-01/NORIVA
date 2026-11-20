@@ -464,6 +464,78 @@ export async function redrawSheets(formData: FormData) {
   redirect(path);
 }
 
+type PartsBody = {
+  kind?: string;
+  phase?: string;
+  parts?: { id: string; name: string; variants: { image: string }[]; locked?: string | null }[];
+  summary?: Record<string, number>;
+};
+
+/** ④+ 부품: 대표가 부품마다 후보를 골라 잠가요. '인물 시트 그리기'를 누르면 모두 잠겼는지 확인하고 잠근 부품으로 인물 시트를 그려요. */
+export async function lockParts(formData: FormData) {
+  const owner = await requireOwner();
+  const path = String(formData.get("back"));
+  const id = String(formData.get("artifactId"));
+  const seriesId = String(formData.get("seriesId"));
+  const compose = formData.get("intent") === "compose";
+  try {
+    const [a] = await db.select().from(schema.artifacts).where(eq(schema.artifacts.id, id));
+    const body = a?.body as PartsBody | undefined;
+    if (!a || body?.kind !== "sheets" || body.phase !== "parts" || !body.parts) throw new StudioError("부품을 고르는 결과물이 아니에요");
+    if (a.status !== "pending_review") throw new StudioError("검토 대기 중인 결과물에서만 부품을 고를 수 있어요");
+    const parts = body.parts.map((p) => {
+      const pick = String(formData.get(`pick:${p.id}`) ?? "");
+      return p.variants.some((v) => v.image === pick) ? { ...p, locked: pick } : p;
+    });
+    const locked = parts.filter((p) => p.locked).length;
+    await db
+      .update(schema.artifacts)
+      .set({ body: { ...(a.body as Record<string, unknown>), parts, summary: { ...(body.summary ?? {}), parts_locked: locked } } })
+      .where(eq(schema.artifacts.id, id));
+    if (compose) {
+      const missing = parts.filter((p) => !p.locked).map((p) => p.name);
+      if (missing.length) throw new StudioError(`아직 고르지 않은 부품이 있어요: ${missing.join(", ")}`);
+      await startStage({
+        seriesId,
+        episodeId: null,
+        stage: "sheets",
+        actor: owner.email,
+        instruction: "",
+        baseArtifactId: id,
+        extra: { mode: "compose", base_artifact_id: id },
+      });
+    }
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+/** ④+ 부품: 마음에 드는 후보가 없는 부품만 후보 4장을 다시 그려요. 다른 부품의 잠금은 그대로예요. */
+export async function redrawParts(formData: FormData) {
+  const owner = await requireOwner();
+  const path = String(formData.get("back"));
+  const id = String(formData.get("artifactId"));
+  const parts = formData.getAll("parts").map(String).filter((p) => /^[a-z0-9_-]{1,60}$/.test(p));
+  try {
+    if (!parts.length) throw new StudioError("후보를 다시 그릴 부품을 하나 이상 골라 주세요");
+    await startStage({
+      seriesId: String(formData.get("seriesId")),
+      episodeId: null,
+      stage: "sheets",
+      actor: owner.email,
+      instruction: String(formData.get("instruction") ?? "").trim(),
+      baseArtifactId: id,
+      extra: { mode: "parts", parts, base_artifact_id: id },
+    });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
 /** 인물 시트를 고치며 나온 대표 교정을 작품 지침에 규칙(W-n)으로 더해요.
  *  캐릭터·작화 디렉터·작화·검수 지침에 같이 들어가서, 이후 모든 단계와 회차가 지키고 검사해요. */
 export async function addSeriesRules(formData: FormData) {

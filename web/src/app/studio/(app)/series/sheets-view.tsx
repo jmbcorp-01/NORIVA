@@ -1,8 +1,9 @@
 import { Badge, Button, Input } from "@/components/ui";
 import { ZoomImage } from "@/components/zoom-image";
 import { imageModelLabel } from "@/lib/pipeline";
-import { addSeriesRules, redrawSheets, updateHistoryRefs } from "../../actions";
+import { addSeriesRules, redrawParts, redrawSheets, updateHistoryRefs } from "../../actions";
 import { mediaUrl } from "./panel-views";
+import { type Part, PartsView } from "./parts-view";
 
 type Defect = { code: string; severity: "critical" | "major" | "minor"; note: string };
 /** 점수는 그림 솜씨가 아니라 명세·고증 위반 개수로 매겨요(치명 −30, 주요 −10). 무엇을 어겼는지 같이 보여 줘요. */
@@ -34,9 +35,12 @@ type SheetChar = {
   defects?: Defect[];
   candidates?: { image: string; score: number; critical?: number; major?: number }[];
   stopped?: "" | "stalled" | "budget";
+  part_checks?: { id: string; name?: string; matches: boolean; note?: string }[];
 };
 type SheetsBody = {
   kind: "sheets";
+  phase?: "parts" | "sheets";
+  parts?: Part[];
   characters: SheetChar[];
   medium?: string;
   model?: string | null;
@@ -50,7 +54,7 @@ type SheetsBody = {
   spec_fixes?: { id: string; name: string; changes: string }[];
   retry_spent_usd?: number;
   search_log?: { prop: string; queries: string[]; candidates: number; accepted: number; notes: string[] }[];
-  summary: { characters: number; passed: number };
+  summary: { characters: number; passed: number; parts?: number; parts_locked?: number };
 };
 
 const SEVERITY = { critical: "치명", major: "주요", minor: "경미" } as const;
@@ -74,6 +78,19 @@ export function SheetsView({
   back: string;
   canRedraw: boolean;
 }) {
+  if (body.phase === "parts") {
+    return (
+      <PartsView
+        parts={body.parts ?? []}
+        names={Object.fromEntries(body.characters.map((c) => [c.id, c.name]))}
+        artifactId={artifactId}
+        seriesId={seriesId}
+        back={back}
+        canAct={canRedraw}
+      />
+    );
+  }
+  const partName = Object.fromEntries((body.parts ?? []).map((p) => [p.id, p.name]));
   const pics = body.characters.filter((c) => c.sheet).map((c) => ({ src: mediaUrl(c.sheet!), alt: `${c.name} 인물 시트` }));
   const failed = body.characters.filter((c) => typeof c.score === "number" && !c.passed);
   return (
@@ -244,6 +261,16 @@ export function SheetsView({
               <p className="mt-1 text-ink-soft">{c.appearance}</p>
               {c.period_notes ? <p className="mt-1 text-[12px] text-ink-soft">고증: {c.period_notes}</p> : null}
               {c.never?.length ? <p className="mt-1 text-[12px] text-plum">금지: {c.never.join(", ")}</p> : null}
+              {c.part_checks?.length ? (
+                <ul className="mt-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px]">
+                  {c.part_checks.map((pc) => (
+                    <li key={pc.id} className={pc.matches ? "text-pine" : "text-plum"} title={pc.note || undefined}>
+                      {pc.matches ? "✓" : "✗"} {partName[pc.id] ?? pc.name ?? pc.id}
+                      {!pc.matches && pc.note ? ` (${pc.note})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
               {c.defects?.length ? (
                 <ul className="mt-2 space-y-0.5 text-[12px]">
                   {c.defects.map((d, i) => (
@@ -270,6 +297,27 @@ export function SheetsView({
         </div>
       ) : null}
     </form>
+      {canRedraw && body.parts?.length ? (
+        <form action={redrawParts} className="mt-4 rounded-[5px] border border-line px-3 py-3 text-[13px]">
+          <input type="hidden" name="back" value={back} />
+          <input type="hidden" name="artifactId" value={artifactId} />
+          <input type="hidden" name="seriesId" value={seriesId} />
+          <p className="font-medium">잠근 부품 바꾸기</p>
+          <p className="mt-0.5 text-[12px] text-ink-soft">고른 부품만 후보 4장을 새로 그려요. 다른 부품은 잠근 그대로 두고, 다시 골라 잠근 뒤 인물 시트를 그려요.</p>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+            {body.parts.map((p) => (
+              <label key={p.id} className="inline-flex min-h-[36px] items-center gap-1.5">
+                <input type="checkbox" name="parts" value={p.id} className="size-4 accent-[var(--color-pine)]" />
+                {p.name}
+              </label>
+            ))}
+          </div>
+          <Input name="instruction" placeholder="바꿀 점 (예: 손잡이 끝에 둥근 고리)" className="mt-2" />
+          <Button type="submit" variant="quiet" className="mt-2">
+            고른 부품 후보 다시 그리기
+          </Button>
+        </form>
+      ) : null}
     </div>
   );
 }
