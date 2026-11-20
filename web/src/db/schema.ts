@@ -130,6 +130,8 @@ export type StyleWork = {
   url: string;
   why: string;
   traits: Record<string, string | number>;
+  /** true면 공식 대표 이미지를 AI가 직접 보고 잰 값, false면 글로 추정한 값 */
+  measured?: boolean;
 };
 
 export const series = pgTable("series", {

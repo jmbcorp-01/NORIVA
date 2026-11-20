@@ -14,7 +14,7 @@ from typing import Any
 from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
 from .media import Media
 from .prompts import render_guidelines, render_task
-from .visual import WEBTOON_BASE, Costs, JSONModel, _arr, _map_progress, _obj, _report
+from .visual import BASES, Costs, JSONModel, _arr, _map_progress, _obj, _report, base_for
 
 _STR = {"type": "string"}
 
@@ -51,7 +51,7 @@ CRITERIA_TASK = """# 과제: 참고 웹툰 캡처에서 화풍 기준 값 뽑기
 
 PLAN_SCHEMA = _obj(
     {
-        "candidates": _arr(_obj({"name": _STR, "card": _STR, "style_prompt": _STR})),
+        "candidates": _arr(_obj({"name": _STR, "medium": {"type": "string", "enum": list(BASES)}, "card": _STR, "style_prompt": _STR})),
         "scenes": _arr(_obj({"title": _STR, "prompt": _STR})),
     }
 )
@@ -63,7 +63,10 @@ PLAN_TASK = """
   '시장 기준 대비표'(선, 채색, 비율, 얼굴, 배경, 연출별 시장 기준 / 우리 값 / 다르게 한 이유)를 두고,
   이어서 선, 채색, 명암, 장면별 팔레트 hex, 배경 처리, 질감, 장르 연출, 금지 요소를 쓴다.
   style_prompt는 이미지 모델에 그대로 붙일 영어 한 단락(70~100단어): 선 굵기와 강약, 채색 단계, 명암, 팔레트, 배경 처리, 작품 고유 요소, 장르 연출(카메라 각도, 효과선). 작가·작품 이름 금지.
-  세 후보 모두 상위 연재 한국 웹툰 수준의 디지털 셀 채색 안에서 차이를 둔다 (수채화, 종이 질감, 잉크 해칭, 동화책·그림책풍, 서양 그래픽노블은 후보로 내지 않는다).
+  medium은 그리는 방식: cel(디지털 셀 채색, 기본), painterly(브러시로 칠한 디지털 채색), ink(현대 수묵 렌더링).
+  대표가 고른 참고 화풍이나 캡처 기준 값이 브러시·수채 결이면 painterly, 수묵 결이면 ink 후보를 넣고, 그렇지 않으면 cel 중심으로 낸다.
+  style_prompt는 medium과 같은 방향으로 쓰고 서로 충돌하는 지시(예: 셀 채색 + 수채 번짐)를 섞지 않는다.
+  어떤 medium이든 상위 연재 한국 웹툰 완성도여야 한다 (동화책·그림책풍, 종이 질감, 거친 스케치, 서양 그래픽노블 금지).
 - scenes: 세 후보에 똑같이 쓸 시험 장면 정확히 3개.
   1) 주인공 감정 클로즈업 (눈썹·입·시선이 구체적인 표정, 연출 기호 포함)
   2) 장르의 핵심 순간을 극적인 카메라로 (액션이면 동작 정점을 로우·하이 앵글과 속도선으로, 공포면 리빌, 로맨스면 두 인물 거리감). 정면 눈높이 구도 금지.
@@ -135,7 +138,7 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
     def draw(job: tuple[int, int]) -> tuple[tuple[int, int, str], list[dict[str, Any]]]:
         ci, si = job
         prompt = (
-            f"{WEBTOON_BASE} One single webtoon panel, one continuous image edge to edge, no borders, no split panels. "
+            f"{base_for(cands[ci].get('medium'))} One single webtoon panel, one continuous image edge to edge, no borders, no split panels. "
             f"{scenes[si]['prompt']} Style: {cands[ci]['style_prompt']} "
             "Korean setting: no Japanese or Chinese architecture, katana, kimono or kanji. No text, letters, speech bubbles or watermark."
         )
@@ -151,7 +154,7 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
         samples.setdefault(ci, {})[si] = key
 
     out_cands = [
-        {"name": c["name"], "card": c["card"], "style_prompt": c["style_prompt"], "samples": [samples.get(i, {}).get(s) for s in range(len(scenes))]}
+        {"name": c["name"], "medium": c.get("medium") if c.get("medium") in BASES else "cel", "card": c["card"], "style_prompt": c["style_prompt"], "samples": [samples.get(i, {}).get(s) for s in range(len(scenes))]}
         for i, c in enumerate(cands)
     ]
     md = ["# ④ 화풍 후보 3안", ""]
