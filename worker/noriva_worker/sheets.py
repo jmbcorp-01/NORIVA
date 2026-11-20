@@ -2,9 +2,12 @@
 
 1. 승인된 ③ 인물 문서에서 인물마다 외모 명세(영어)를 뽑아 고정해요. ③에 영어 외모 고정 문구가 있으면 그대로 써요.
    시대 고증(무기, 복식, 머리 모양)과 '그리면 안 되는 것'도 인물마다 적어요.
-2. 화풍 마스터와 대표가 올린 고증 참고 그림을 참조로 시트를 그려요.
-3. 시트를 명세·고증·화풍 기준으로 검사하고, 불합격이면 한 번 더 그려 점수가 높은 쪽을 남겨요.
-4. 대표가 승인하면 ⑦ 작화가 모든 회차에서 이 명세와 시트를 그대로 써요(작화가 외모를 새로 쓰지 않아요).
+2. 칼처럼 고증이 중요한 소품은 대표가 올린 고증 사진을 보고 소품만 먼저 그려 검사해요(소품 시트).
+   글 설명보다 그림이 그림 모델을 훨씬 확실하게 붙잡아요.
+3. 인물 시트는 화풍 마스터(선과 채색만)와 그 인물의 소품 시트를 참조로 그려요. 고증 사진은 인물 시트에 넣지 않아요(그림체가 흔들려요).
+   그림 지시에는 맞는 모양만 적고, '그리면 안 되는 것'은 검사에서만 써요(금지 단어를 적으면 오히려 그 모양을 떠올려요).
+4. 시트는 기본 모습만 담고 기본 모습만 검사해요. 점수는 치명·주요·경미 개수로 일정하게 계산하고, 불합격이면 한 번 더 그려요.
+5. 대표가 승인하면 ⑦ 작화가 모든 회차에서 이 명세와 시트를 그대로 써요(작화가 외모를 새로 쓰지 않아요).
 """
 
 from __future__ import annotations
@@ -35,7 +38,10 @@ SPEC_SCHEMA = _obj(
                     "never": _arr(_STR),
                 }
             )
-        )
+        ),
+        "props": _arr(
+            _obj({"id": _STR, "name": _STR, "owners": _arr(_STR), "description": _STR})
+        ),
     }
 )
 
@@ -44,16 +50,21 @@ SPEC_TASK = """
 승인된 인물 문서에 나오는 인물(동물·요괴 포함)마다 작화가 모든 회차에 그대로 쓸 고정 명세를 만든다. 많아야 12명, 주인공부터.
 - id: 영문 소문자 짧은 id (예: sunjeong). 이름: 한국어 이름 (영어 표기).
 - kind: 사람 person, 동물 animal, 용·요괴 같은 존재 creature. role: main, supporting, minor.
-- appearance: 이미지 모델에 넣을 영어 외모 고정 문구 60단어 이내. 인물 문서에 '영어 외모 고정 문구'가 있으면 그 문장을 고치지 말고 그대로 옮긴다.
-  없으면 나이, 얼굴형, 눈, 머리 모양과 색, 체형, 의상(형태·길이·색), 고정 소품, 신발 순서로 구체적인 단어만 쓴다.
-- period_notes: 시대 고증을 영어로 구체적으로. 작품의 시대와 신분에 맞는 의상의 형태, 머리 모양, 무기·소품의 실제 생김새
-  (예: 신라 무사라면 straight single-edged ring-pommel sword (hwandu daedo), no guard 같은 식).
+- appearance: 이미지 모델에 넣을 영어 외모 고정 문구 60단어 이내. 인물의 **기본 모습만** 쓴다.
+  의상 변형, 특정 회차에만 나오는 상태(부상, 붕대, 변신, 젖은 모습), 회차 번호, '변형' 같은 말은 넣지 않는다(시트에 글자로 그려져요).
+  인물 문서의 '영어 외모 고정 문구'가 기본 모습만 담고 있으면 그대로 옮기고, 아니면 기본 모습만 남긴다.
+  나이, 얼굴형, 눈, 머리 모양과 색, 체형, 의상(형태·길이·색), 고정 소품, 신발 순서로 구체적인 단어만 쓴다.
+- period_notes: 시대 고증을 영어로, **맞는 생김새만** 긍정형으로 쓴다(예: straight single-edged sword with a round ring pommel and a plain grip,
+  straight scabbard). 금지할 것의 이름(일본도, 코등이 등)은 여기 쓰지 않고 never에만 쓴다.
 - never: 이 인물에 절대 그리면 안 되는 것 영어 목록 (예: curved katana, round tsuba guard, Japanese hakama, Chinese Qing robe, modern clothing).
+  검사에서만 쓰고 그림 지시에는 넣지 않는다.
+- props: 그림 모델이 흔히 잘못 그리는 시대 소품(무기, 관모, 장신구 등) 중 주요 인물이 늘 지니는 것, 많아야 4개.
+  id(영문 소문자), name(한국어), owners(지니는 인물 id 목록),
+  description(영어, 실제 생김새를 긍정형으로 구체적으로: 길이와 비율, 날·자루·고리·장식의 모양과 재질과 색). 없으면 빈 목록.
 """
 
 CHECK_SCHEMA = _obj(
     {
-        "score": {"type": "integer"},
         "defects": _arr(
             _obj({"code": _STR, "severity": {"type": "string", "enum": ["critical", "major", "minor"]}, "note": _STR})
         ),
@@ -63,22 +74,45 @@ CHECK_SCHEMA = _obj(
 CHECK_TASK = """# 과제: 인물 시트 검사
 
 첫 번째 그림이 검사할 인물 시트(설정화)다. {master_note}
-이 시트는 작품의 모든 회차에서 이 인물의 기준이 된다. 엄격하게 검사하라.
-먼저 명세의 period_notes와 appearance를 항목별로 하나씩 그림과 맞춰 본다(무기 생김새, 머리 모양, 머리 장식, 의상).
+이 시트는 작품의 모든 회차에서 이 인물의 기준이 된다. 엄격하게, 그러나 시트가 담는 것만 검사하라.
+- 이 시트는 인물의 **기본 모습만** 담는다. 의상 변형, 특정 회차에만 나오는 상태(부상, 붕대, 변신, 회차별 표정 제한),
+  시트 한 장에 담을 수 없는 것(다른 의상, 다른 장면, 크기 비교 대상)은 결함으로 적지 않는다. 얼굴 클로즈업 표정은 중립·화남·웃음이면 된다.
+- 먼저 명세의 period_notes와 appearance를 항목별로 하나씩 그림과 맞춰 본다(무기 생김새, 머리 모양, 머리 장식, 의상).
+- 소품 시트가 함께 있으면 인물이 지닌 소품이 소품 시트와 같은 물건인지 본다. 다르면 치명이다.
 - 치명(critical): 명세의 'never'에 있는 것이 보임, 시대·나라가 다른 무기나 복식(일본도, 코등이, 하카마, 기모노, 중국 청나라 옷 등), 글자·워터마크, 얼굴·손 해부학 붕괴.
   칼은 특히 엄격하게 본다: 명세가 코등이 없는 칼인데 손잡이와 칼날 사이에 둥근·네모 코등이가 있음, 일본도식으로 끈을 마름모로 감은 손잡이,
   휜 칼날이나 휜 칼집, 명세에 있는 고리자루(ring pommel)가 없음 — 이 중 하나라도 보이면 치명이다.
   명세와 다른 머리 모양(예: 높이 올린 쪽머리가 명세인데 낮게 묶음)도 이 인물의 기준을 바꾸므로 치명으로 적는다.
 - 주요(major): 외모 명세와 다름(머리 모양·색, 의상 형태·길이·색, 고정 소품, 신발, 나이, 체형), 정면·측면·뒷모습이 서로 다른 사람처럼 보임, 고른 화풍과 다름.
 - 경미(minor): 그 밖에 고치면 좋은 것.
-code에는 규칙 코드를 적는다(외모 불일치 K-1, 고증 H-1·GA-3, 화풍 V-7, AI 결함 AI-xx).
-score는 0~100. 이 시트를 30화 동안 그대로 써도 될 때만 80 이상.
+- 글자, 제목, 라벨, 회차 번호가 그려져 있으면 치명이다. 화풍 마스터의 장식(떠다니는 조각, 반짝임)을 옮겨 그린 것은 주요다.
+code에는 규칙 코드를 적는다(외모 불일치 K-1, 고증 H-1~H-8, 화풍 V-7, AI 결함 AI-xx). 같은 문제는 한 번만 적는다.
 
 ## 인물
 {spec}
 {note}"""
 
 SHEET_PASS = 80
+# 점수는 결함 개수로 계산해요: 치명 하나면 불합격, 주요 둘까지는 합격선(80)
+WEIGHT = {"critical": 30, "major": 10, "minor": 3}
+
+
+def score_of(defects: list[dict[str, Any]]) -> int:
+    return max(0, 100 - sum(WEIGHT.get(d.get("severity", "minor"), 3) for d in defects))
+
+
+PROP_CHECK_TASK = """# 과제: 소품 시트 검사
+
+첫 번째 그림이 검사할 소품 시트다. {photo_note}
+이 소품은 작품의 모든 회차에서 이 모양 그대로 그려진다. 실제 유물의 생김새와 같은지 엄격하게 본다.
+- 치명(critical): 사진·설명과 다른 모양(예: 사진에 없는 코등이, 휜 칼날, 다른 손잡이 감기 방식, 고리자루 없음), 다른 시대·나라의 물건으로 보임, 글자·라벨.
+- 주요(major): 비율·길이·장식·재질·색이 사진이나 설명과 다름, 칼집과 뽑은 칼이 서로 다른 물건처럼 보임.
+- 경미(minor): 그 밖에 고치면 좋은 것.
+code는 H-6(무기), H-7(관모·장신구), AI-xx(그림 결함) 등.
+
+## 소품
+{spec}
+"""
 FIX_BATCH = 3  # 명세 고치기를 한 번에 넣는 인물 수
 
 MASTER_SCHEMA = _obj(
@@ -134,20 +168,28 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9_-]", "", (s or "").lower()) or "c"
 
 
-def _sheet_prompt(base: str, style: str, c: dict[str, Any], n_masters: int, n_history: int, note: str) -> str:
+NO_TEXT = (
+    "Do not write any text anywhere in the image: no title, no names, no view labels, no captions, no numbers, no watermark. "
+    "No floating particles, sparkles, shards, leaves or decorative effects."
+)
+
+
+def _prop_refs_text(props: list[dict[str, Any]], start: int) -> list[str]:
+    return [
+        f"Reference image {start + i} is the approved prop design for {p['name']} ({p['description']}): "
+        "wherever this object appears, draw exactly this object with the same shape, fittings and colors."
+        for i, p in enumerate(props)
+    ]
+
+
+def _sheet_prompt(base: str, style: str, c: dict[str, Any], n_masters: int, props: list[dict[str, Any]], note: str) -> str:
     refs = []
     if n_masters:
         refs.append(
-            f"Reference image(s) 1-{n_masters} are this series' approved style masters: match their line, coloring and finish only. "
-            "Do not copy their characters, weapons, props, costumes or hairstyles."
+            f"Reference image(s) 1-{n_masters} are this series' approved style masters: match their line weight, coloring and finish only. "
+            "Do not copy their characters, weapons, props, costumes, hairstyles or decorative effects."
         )
-    if n_history:
-        a = n_masters + 1
-        refs.append(
-            f"Reference image(s) {a}-{n_masters + n_history} are historical references for costume, hairstyle and weapons of this era: "
-            "follow their real shapes, not their drawing style."
-        )
-    never = ", ".join(c.get("never") or [])
+    refs += _prop_refs_text(props, n_masters + 1)
     parts = [
         base,
         f"Character design turnaround sheet for a Korean webtoon. {c['name']}: {c['appearance']}",
@@ -155,28 +197,44 @@ def _sheet_prompt(base: str, style: str, c: dict[str, Any], n_masters: int, n_hi
         "plus three head close-ups (neutral, angry, smiling)." if c.get("kind", "person") == "person"
         else "Full body front, side and back views plus one head close-up.",
         f"Era-accurate details: {c['period_notes']}" if c.get("period_notes") else "",
-        f"Must not include: {never}." if never else "",
         *refs,
         f"Style: {style}",
-        "Pure flat white background with no texture. No text, labels or watermark.",
+        "Pure flat white background with no texture.",
+        NO_TEXT,
         f"Director's note: {note}" if note else "",
     ]
     return " ".join(p for p in parts if p)
 
 
-def _edit_prompt(c: dict[str, Any], edit: str, n_history: int) -> str:
+def _prop_prompt(base: str, style: str, p: dict[str, Any], n_photos: int) -> str:
+    sword = any(w in (p.get("description", "") + p.get("id", "")).lower() for w in ("sword", "blade", "daedo", "dagger", "knife", "spear"))
+    parts = [
+        base,
+        f"Prop design sheet for a Korean webtoon: {p['name']}. {p['description']}",
+        "Show the object alone, large and centered, in a clean side view. "
+        + ("Draw it twice side by side: sheathed, and drawn with the blade fully visible next to its scabbard. Add one close-up of the grip and pommel."
+           if sword else "Add one close-up of its most distinctive detail."),
+        f"Reference image(s) 1-{n_photos} are museum photos of the real object of this era: copy its exact shape, proportions, fittings, "
+        "ornaments and materials; ignore the glass case, stand, background and lighting, and redraw it cleanly in the style below." if n_photos else "",
+        f"Style: {style}",
+        "Pure flat white background with no texture.",
+        NO_TEXT,
+    ]
+    return " ".join(x for x in parts if x)
+
+
+def _edit_prompt(c: dict[str, Any], edit: str, props: list[dict[str, Any]]) -> str:
     """이전 시트에서 고칠 곳만 바꾸는 편집 지시. 얼굴·옷·구도는 그대로 두고 지시한 것만 바꿔요."""
-    never = ", ".join(c.get("never") or [])
     parts = [
         "Edit reference image 1, a character design turnaround sheet for a Korean webtoon.",
         "Keep the same character, face, body, poses, layout, outfit colors and drawing style exactly as they are.",
         f"Change only this: {edit}",
         "Apply the change consistently in every view (front, side, back) and in the close-ups where it is visible.",
-        f"Reference image(s) 2-{1 + n_history} are historical references: follow their real shapes, not their drawing style." if n_history else "",
+        *_prop_refs_text(props, 2),
         f"Character spec: {c['appearance']}",
         f"Era-accurate details: {c['period_notes']}" if c.get("period_notes") else "",
-        f"Must not include: {never}." if never else "",
-        "Pure flat white background with no texture. No text, labels or watermark.",
+        "Pure flat white background with no texture.",
+        NO_TEXT,
     ]
     return " ".join(p for p in parts if p)
 
@@ -226,8 +284,10 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     #    (반영하지 않으면 ⑦ 작화가 예전 명세로 다시 그려요)
     edits: dict[str, str] = {}
     rule_suggestions: list[str] = []
+    props: list[dict[str, Any]] = []
     if only and prev.get("kind") == "sheets":
         chars = [dict(c) for c in prev["characters"]]
+        props = [dict(p) for p in prev.get("props") or []]
         targets = [c for c in chars if c["id"] in only]
         if (instruction or _issues(targets)) and targets:
             _report(ctx, "지시와 지난 검사 결과를 인물 명세에 반영하는 중")
@@ -282,6 +342,11 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                 cid += "x"
             seen.add(cid)
             c["id"] = cid
+        props = []
+        for p in (r.data.get("props") or [])[:4]:
+            owners = [_slug(o) for o in p.get("owners") or [] if _slug(o) in seen]
+            if owners and (p.get("description") or "").strip():
+                props.append({"id": _slug(p.get("id", "")), "name": p.get("name", ""), "owners": owners, "description": p["description"].strip()})
 
     out_base = f"series/{ctx['series']['id']}/sheets/{ctx['artifact_id']}"
     todo = [c for c in chars if not only or c["id"] in only]
@@ -305,55 +370,96 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             hit = [_slug(x) for x in v.get("character_ids") or [] if _slug(x) in ids]
             master_warnings.append({"item": v.get("item", ""), "note": v.get("note", ""), "characters": hit})
             no_master.update(hit)
-    master_note = (
-        f"두 번째부터 {len(masters)}장은 고른 화풍 마스터다. 선과 채색이 이 화풍과 같은지도 본다."
-        if masters
-        else ""
-    )
-    if history:
-        a = len(masters) + 2
-        master_note += (
-            f" {a}번째부터 {len(history)}장은 대표가 올린 고증 참고 사진이다. "
-            "시트의 무기·의상·머리 모양이 이 사진의 실제 생김새와 같은지 본다(그림체는 보지 않는다). 생김새가 다르면 치명이다."
-        )
-    check_refs = [thumbnail(m, 640) for m in masters] + [thumbnail(h, 640) for h in history]
+    def ok(x: dict[str, Any]) -> bool:
+        return x["score"] >= SHEET_PASS and not any(d["severity"] == "critical" for d in x["defects"])
+
+    # 3. 소품 시트: 고증 사진을 보고 소품만 먼저 그려요. 다시 그리기에서는 그 인물의 소품 중 불합격이었던 것만 다시 그려요.
+    todo_ids = {c["id"] for c in todo}
+    prop_todo = [p for p in props if (not only or (set(p["owners"]) & todo_ids and not p.get("passed")))]
+    photos = [thumbnail(h, 1024) for h in history]
+
+    def draw_prop(p: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        local: list[dict[str, Any]] = []
+        tries: list[dict[str, Any]] = []
+        for k in range(2):
+            prompt = _prop_prompt(base, style, p, len(history))
+            if tries:
+                fix = _issue_lines(tries[-1]["defects"])
+                prompt += f" Fix these problems found in the previous attempt: {fix}" if fix else ""
+            img = images.generate(prompt, seed=7 + k + 10 * (ctx.get("attempt") or 1), aspect_ratio="4:3", references=history or None, model=model)
+            local.append(img.cost_entry())
+            data = trim_border(img.data)
+            key = media.put(f"{out_base}/prop-{p['id']}-{k + 1}.png", data)
+            r = llm.json(
+                system,
+                PROP_CHECK_TASK.format(
+                    photo_note=f"두 번째부터 {len(photos)}장은 대표가 올린 실제 유물 사진이다. 모양은 이 사진을 기준으로 본다." if photos else "",
+                    spec=json.dumps({k2: p.get(k2) for k2 in ("id", "name", "description")}, ensure_ascii=False),
+                ),
+                CHECK_SCHEMA,
+                images=[thumbnail(data)] + photos,
+                effort="medium",
+                max_tokens=16000,
+            )
+            local.append(r.result.cost_entry())
+            tries.append({"image": key, "defects": r.data["defects"], "score": score_of(r.data["defects"])})
+            if ok(tries[-1]):
+                break
+        best = max(tries, key=lambda t: (ok(t), t["score"]))
+        return {**p, "image": best["image"], "score": best["score"], "defects": best["defects"], "passed": ok(best)}, local
+
+    if prop_todo:
+        done = _map_progress(ctx, 4, draw_prop, prop_todo, "소품 시트 그리는 중")
+        new_props = {p["id"]: p for p, _ in done}
+        for _, local in done:
+            costs.extend(local)
+        props = [new_props.get(p["id"], p) for p in props]
+    prop_imgs = {p["id"]: thumbnail(img, 1024) for p in props if p.get("image") and (img := media.get(p["image"]))}
+
+    def props_of(c: dict[str, Any]) -> list[dict[str, Any]]:
+        return [p for p in props if c["id"] in p["owners"] and p["id"] in prop_imgs][:2]
 
     def check(c: dict[str, Any], data: bytes, local: list[dict[str, Any]]) -> dict[str, Any]:
+        mine = props_of(c)
+        notes = []
+        if masters:
+            notes.append(f"두 번째부터 {len(masters)}장은 고른 화풍 마스터다. 선과 채색이 이 화풍과 같은지 본다(마스터의 인물·소품·장식은 기준이 아니다).")
+        if mine:
+            a = len(masters) + 2
+            notes.append(f"{a}번째부터 {len(mine)}장은 승인 전 검사를 통과한 소품 시트({', '.join(p['name'] for p in mine)})다.")
         r = llm.json(
             system,
             CHECK_TASK.format(
-                master_note=master_note,
+                master_note=" ".join(notes),
                 spec=_spec_json(c),
                 note=f"\n## 대표의 지시 (이것도 지켰는지 본다)\n{instruction}\n" if only and instruction else "",
             ),
             CHECK_SCHEMA,
-            images=[thumbnail(data)] + check_refs,
+            images=[thumbnail(data)] + [thumbnail(m, 640) for m in masters] + [thumbnail(prop_imgs[p["id"]], 640) for p in mine],
             effort="medium",
             max_tokens=16000,
         )
         local.append(r.result.cost_entry())
-        d = r.data
-        return {"score": max(0, min(100, int(d["score"]))), "defects": d["defects"]}
-
-    def ok(x: dict[str, Any]) -> bool:
-        return x["score"] >= SHEET_PASS and not any(d["severity"] == "critical" for d in x["defects"])
+        defects = r.data["defects"]
+        return {"score": score_of(defects), "defects": defects}
 
     def draw(c: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
         note = instruction if only else ""
-        refs = history if c["id"] in no_master else masters + history
+        mine = props_of(c)
         n_masters = 0 if c["id"] in no_master else len(masters)
+        refs = masters[:n_masters] + [prop_imgs[p["id"]] for p in mine]
         tries: list[dict[str, Any]] = []
         # 대표가 고칠 곳을 지시했으면 첫 번째는 이전 시트를 그대로 두고 그 부분만 고쳐요. 두 번째는 새 명세로 새로 그려요.
         old = media.get(c["sheet"]) if edits.get(c["id"]) and c.get("sheet") else None
         for k in range(2):
             seed = 1 + k + 10 * (ctx.get("attempt") or 1)
             if k == 0 and old:
-                img = images.generate(_edit_prompt(c, edits[c["id"]], len(history)), seed=seed, aspect_ratio="4:3", references=[old, *history], model=model)
+                img = images.generate(_edit_prompt(c, edits[c["id"]], mine), seed=seed, aspect_ratio="4:3", references=[old, *[prop_imgs[p["id"]] for p in mine]], model=model)
             else:
                 # 앞 시도에서 걸린 치명·주요 문제를 이번 그림 지시에 넣어요
                 fix = _issue_lines(tries[-1]["defects"]) if tries else ""
-                prompt = _sheet_prompt(base, style, c, n_masters, len(history), note)
+                prompt = _sheet_prompt(base, style, c, n_masters, mine, note)
                 if fix:
                     prompt += f" Fix these problems found in the previous attempt: {fix}"
                 img = images.generate(prompt, seed=seed, aspect_ratio="4:3", references=refs or None, model=model)
@@ -389,6 +495,8 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             f"- 검사: {c.get('score', '-')}점",
             "",
         ]
+    for p in props:
+        md += [f"## 소품: {p['name']} ({p['id']})", f"- 지니는 인물: {', '.join(p['owners'])}", f"- 생김새: {p['description']}", f"- 검사: {p.get('score', '-')}점", ""]
     body = {
         "kind": "sheets",
         "stage": "sheets",
@@ -400,6 +508,8 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         "redrawn": [c["id"] for c in todo] if only else [],
         "rule_suggestions": rule_suggestions,
         "master_warnings": master_warnings,
-        "summary": {"characters": len(final), "passed": sum(1 for c in final if c.get("passed"))},
+        "props": props,
+        "summary": {"characters": len(final), "passed": sum(1 for c in final if c.get("passed")),
+                    "props": len(props), "props_passed": sum(1 for p in props if p.get("passed"))},
     }
     return body, list(costs)

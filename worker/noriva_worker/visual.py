@@ -241,7 +241,8 @@ def _panel_prompt(
         " Not a comic page: no panel borders, no frames, no gutters, no split panels, no paper margins.",
         panel["description"],
         ("Characters: " + " | ".join(
-            f"{c['name']}: {c['appearance']}" + (f" (never: {', '.join(c['never'])})" if c.get("never") else "") for c in cast
+            # 금지 목록은 검사에서만 써요. 그림 지시에 금지 단어를 넣으면 오히려 그 모양을 떠올려요.
+            f"{c['name']}: {c['appearance']}" for c in cast
         )) if cast else "",
         (
             " ".join(
