@@ -11,6 +11,7 @@ import { db, schema } from "@/db";
 import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views";
 import { ImageModelPicker, isStyleBody, StyleRefs, StyleScout, StyleView } from "./style-view";
 import { HistoryRefs, isSheetsBody, SheetsView } from "./sheets-view";
+import { isResearchBody, ResearchView } from "./research-view";
 
 type Props = {
   stages: Stage[];
@@ -133,6 +134,8 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                         back={back}
                         canRedraw={a.status !== "stale" && canStart(stage, l)}
                       />
+                    ) : isResearchBody(a.body) ? (
+                      <ResearchView body={a.body} />
                     ) : isStyleBody(a.body) ? (
                       <StyleView body={a.body} artifactId={a.id} back={back} canApprove={!!reviewable} />
                     ) : isArtBody(a.body) ? (

@@ -62,7 +62,10 @@ describe("approval gates", () => {
     };
     expect(canStart("art", latest)).toBe(false);
     expect(canStart("art", { ...latest, style: a("style", "approved") })).toBe(false);
-    expect(canStart("art", { ...latest, style: a("style", "approved"), sheets: a("sheets", "approved") })).toBe(true);
+    expect(canStart("art", { ...latest, style: a("style", "approved"), sheets: a("sheets", "approved") })).toBe(false);
+    expect(
+      canStart("art", { ...latest, style: a("style", "approved"), sheets: a("sheets", "approved"), research: a("research", "approved") }),
+    ).toBe(true);
   });
 });
 
@@ -70,6 +73,7 @@ describe("downstream regeneration", () => {
   it("marks everything after the story as stale when the story changes", () => {
     expect(allDownstream("story")).toEqual([
       "characters",
+      "research",
       "style",
       "sheets",
       "plot",
@@ -87,10 +91,17 @@ describe("downstream regeneration", () => {
   it("enqueues the next stage in the same scope after approval", () => {
     expect(nextToEnqueue("concept", {})).toEqual(["story"]);
     // 작품 단계 승인은 회차 단계를 자동으로 시작하지 않아요
-    expect(nextToEnqueue("characters", { story: a("story", "approved") })).toEqual(["style"]);
-    expect(nextToEnqueue("style", { characters: a("characters", "approved") })).toEqual(["sheets"]);
+    // 인물 승인 뒤에는 고증 자료, 고증 자료 승인 뒤에 화풍
+    expect(nextToEnqueue("characters", { concept: a("concept", "approved"), story: a("story", "approved") })).toEqual(["research"]);
+    expect(nextToEnqueue("research", { characters: a("characters", "approved") })).toEqual(["style"]);
+    expect(nextToEnqueue("style", { characters: a("characters", "approved"), research: a("research", "approved") })).toEqual(["sheets"]);
     expect(
-      nextToEnqueue("storyboard", { style: a("style", "approved"), characters: a("characters", "approved"), sheets: a("sheets", "approved") }),
+      nextToEnqueue("storyboard", {
+        style: a("style", "approved"),
+        characters: a("characters", "approved"),
+        sheets: a("sheets", "approved"),
+        research: a("research", "approved"),
+      }),
     ).toEqual([
       "art",
     ]);
