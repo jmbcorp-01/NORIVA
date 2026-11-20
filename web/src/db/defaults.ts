@@ -3,7 +3,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
-import { DEFAULT_BANNED_TERMS, DEFAULT_GUIDELINES, DEFAULT_SOURCES } from "./seed-data";
+import { DEFAULT_BANNED_TERMS, DEFAULT_GENRE_GUIDELINES, DEFAULT_GUIDELINES, DEFAULT_SOURCES } from "./seed-data";
 
 const DEFAULT_NOTE = "기본 지침";
 
@@ -24,15 +24,19 @@ export async function ensureDefaults(db: NodePgDatabase<typeof schema>) {
     await tx.execute(sql`select pg_advisory_xact_lock(424242)`);
     let added = 0;
     let updated = 0;
-    for (const d of DEFAULT_GUIDELINES) {
+    const all = [
+      ...DEFAULT_GUIDELINES.map((d) => ({ ...d, scope: "global" as const, scopeRef: "" })),
+      ...DEFAULT_GENRE_GUIDELINES.map((d) => ({ ...d, scope: "genre" as const, scopeRef: d.genre })),
+    ];
+    for (const d of all) {
       const [g] = await tx
         .select()
         .from(schema.guidelines)
-        .where(and(eq(schema.guidelines.scope, "global"), eq(schema.guidelines.scopeRef, ""), eq(schema.guidelines.agent, d.agent)));
+        .where(and(eq(schema.guidelines.scope, d.scope), eq(schema.guidelines.scopeRef, d.scopeRef), eq(schema.guidelines.agent, d.agent)));
       if (!g) {
         const [row] = await tx
           .insert(schema.guidelines)
-          .values({ scope: "global", scopeRef: "", agent: d.agent, title: d.title, currentVersion: 1 })
+          .values({ scope: d.scope, scopeRef: d.scopeRef, agent: d.agent, title: d.title, currentVersion: 1 })
           .returning();
         await tx.insert(schema.guidelineVersions).values({ guidelineId: row.id, version: 1, body: d.body, note: `${DEFAULT_NOTE} (docs 02~04번)` });
         added++;

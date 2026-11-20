@@ -52,6 +52,24 @@ const BOARD_RULES = [
   { code: "S-16", text: "한 화 50~70컷. 1화와 시즌 마지막 화는 80컷까지." },
 ];
 
+// 민감 사항: 어떤 작품에서도 넘지 않는 선 (docs/02 6장)
+const SENSITIVITY_RULES = [
+  { code: "X-1", text: "실존 인물(특히 생존 인물)과 특정 종교 단체를 비하하지 않는다." },
+  { code: "X-2", text: "무속을 미신으로 조롱하거나 사기로만 그리지 않는다. 무속인 독자도 있다." },
+  { code: "X-3", text: "일제강점기, 전쟁 등 역사적 피해는 피해자 시점의 존중을 지키고, 가해를 미화하지 않는다." },
+  { code: "X-4", text: "지역 비하, 장애·외모 비하 개그 금지." },
+  { code: "X-5", text: "성적 묘사와 폭력 수위는 작품 연령 등급을 따른다. 18세 미만 인물의 성적 묘사는 어떤 경우에도 금지." },
+];
+
+// 한국 고증: 흔히 섞이는 일본·중국 요소와 그 대신 쓸 것 (docs/04 4.1)
+const HISTORY_RULES = [
+  { code: "H-1", text: "신당·제단 입구는 도리이가 아니라 홍살문, 신당의 붉은 나무문, 오색천으로 그린다." },
+  { code: "H-2", text: "옷은 시대에 맞는 한복. 저고리 길이와 깃 모양이 시대마다 다르니 작품의 시대를 따른다. 기모노·한푸 금지." },
+  { code: "H-3", text: "건물은 한옥 지붕선, 기와, 처마로. 일본 성이나 끝이 과하게 휜 중국식 지붕 금지." },
+  { code: "H-4", text: "구미호는 사람 모습으로 그리고 꼬리는 그림자나 반사로만 보여준다. 일본 여우 가면·여우 신 동상 금지." },
+  { code: "H-5", text: "부적은 붉은 경면주사 문양으로, 글자는 후처리로 넣는다. 무덤은 봉분과 비석, 서양식 묘지 금지." },
+];
+
 // 연속성: 같은 인물·장소·장면이 컷마다 같아 보이게 하는 규칙. 콘티·작화·검수가 함께 따라요.
 const CONTINUITY_RULES = [
   { code: "K-1", text: "인물은 캐릭터 시트를 고정 기준으로 그린다. 얼굴형, 눈매, 머리 길이와 가르마, 체형과 키 비율, 피부톤, 점·흉터 같은 식별 표지를 컷마다 같게 하고, 그림 지시문에는 시트의 외모 고정 문구를 매번 그대로 넣는다." },
@@ -68,14 +86,22 @@ const ART_RULES = [
   { code: "A-2", text: "셀 채색(밑색 + 그림자 1~2단 + 하이라이트). 피부를 과하게 매끈하게 하지 않는다." },
   { code: "A-3", text: "장면마다 지배색 하나 (공포 청록·남색, 회상 세피아, 고조 주황·붉은색)." },
   { code: "A-4", text: "인물 중심 컷은 배경 단순화, 장소 소개 컷만 공들인 배경. 긴 대화는 색면·효과선." },
+  { code: "A-5", text: "땀방울, 혈관 표시, 집중선, 배경 꽃·반짝이, 어두운 사선 같은 웹툰 연출 기호를 감정 표현에 쓴다." },
+  { code: "A-6", text: "성인 인물은 7~8등신, 개그 컷만 SD(2~3등신) 허용. 눈 크기와 턱선은 작품마다 정한 값으로 고정한다." },
   { code: "AI-01", text: "플라스틱 같은 매끈한 피부·머리 금지." },
   { code: "AI-02", text: "화보 같은 중앙·정면·대칭 구도 반복 금지. 콘티의 각도와 위치를 따른다." },
   { code: "AI-03", text: "과한 보케, 렌즈 플레어, 역광 남용 금지." },
+  { code: "AI-04", text: "같은 표정(살짝 미소, 멍한 눈) 반복 금지. 컷마다 눈썹, 입, 시선 방향을 구체적으로 정한다." },
   { code: "AI-05", text: "손가락 수와 관절 확인. 물건을 쥔 손이 녹지 않게." },
   { code: "AI-06", text: "그림에 글자를 생성하지 않는다. 간판·부적·편지는 비워 두고 후처리로 글자를 넣는다." },
+  { code: "AI-07", text: "배경 물건이 서로 녹아 붙거나 건물 원근이 틀어지지 않게 배경을 단순하게 하고 깊이를 정한다." },
+  { code: "AI-08", text: "옷 주름, 장신구, 머리카락 가닥을 과하게 그리지 않는다. 웹툰 수준의 절제된 디테일." },
   { code: "AI-09", text: "캐릭터 시트의 얼굴·의상·고정 소품을 컷마다 유지한다." },
+  { code: "AI-10", text: "컷마다 색이 따로 놀지 않게 장면의 팔레트 안에서 칠한다." },
   { code: "AI-11", text: "도리이, 기모노, 일본 신사, 중국식 지붕 과장 금지." },
   { code: "AI-12", text: "콘티의 등장인물 외 인물을 그리지 않는다. 화면 밖 화자는 그리지 않는다." },
+  { code: "AI-13", text: "모든 컷을 같은 밀도로 그리지 않는다. 중요도가 낮은 컷은 실루엣, 색면, 효과선으로 일부러 단순하게." },
+  { code: "AI-14", text: "외곽선이 흐린 '그린 듯한 사진' 금지. 선화가 분명하고 선과 채색이 구분되게." },
 ];
 
 const VISUAL_BANNED = [
@@ -87,6 +113,10 @@ const VISUAL_BANNED = [
   "lens flare",
   "heavy bokeh",
   "text, letters, watermark",
+  "photorealistic",
+  "chinese curved roof",
+  "japanese fox mask",
+  "western cemetery",
 ];
 
 const KO_BANNED = [
@@ -116,7 +146,14 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     title: "기획 에이전트 기본 지침",
     body: {
       role: "당신은 한국 역사·설화·민속을 뿌리로 한 세로 웹툰의 기획자다. 대표가 고른 장르와 소재로 서로 다른 기획안 3개를 만든다.",
-      rules: [...ROOT_RULES, { code: "S-5", text: STORY_RULES[4].text }],
+      rules: [
+        ...ROOT_RULES,
+        { code: "S-5", text: STORY_RULES[4].text },
+        { code: "P-1", text: "기획안마다 장르의 핵심 재미와 필수 장치(장르 지침)를 어떻게 지키는지 한 줄로 밝힌다." },
+        { code: "P-2", text: "회귀, 빙의, 계약 관계, 복수극, 출생의 비밀 같은 한국식 장치는 하나만 골라 그 장치의 주의점까지 지킨다. 출생의 비밀은 시즌에 하나." },
+        { code: "P-3", text: "작품 연령 등급(전체, 12, 15, 19)을 정하고 그 등급에 맞는 수위로 설계한다." },
+        ...SENSITIVITY_RULES,
+      ],
       banned: ["구미호 로맨스", "저승차사 재판 구조", "도깨비 신부", "조선 좀비"],
       outputFormat:
         "기획안 3개. 각각 제목(한국어·영어), 로그라인, 뿌리 연결 방식(R-3 중 무엇), 세계 규칙 3~5개, 주인공 한 줄, 시즌 1 줄거리, 첫 3화 훅, 겹침 점검.",
@@ -132,6 +169,9 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         ...ROOT_RULES.slice(1, 4),
         ...STORY_RULES,
         ...DIALOGUE_RULES,
+        { code: "C-5", text: "악역에게도 한(恨)이나 이유를 준다. 순수한 악은 시즌에 하나까지만." },
+        { code: "S-17", text: "가족, 한(恨)과 정(情)처럼 한국 독자가 크게 반응하는 감정선을 시즌 안에 하나 이상 깊게 판다." },
+        ...SENSITIVITY_RULES,
         CONTINUITY_RULES[6],
         { code: "K-8", text: "스토리 단계에서 설정 장부(인물 나이와 관계, 호칭, 시간표, 세계 규칙, 주요 장소)를 만들고, 회차 대본은 이 장부와 어긋나지 않게 쓴다." },
       ],
@@ -149,9 +189,9 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
       rules: [
         { code: "C-1", text: "주인공에게 결핍과 원하는 것이 있고 둘이 충돌한다." },
         { code: "C-2", text: "주요 인물의 말투가 서로 달라서, 이름을 지워도 누가 말했는지 알 수 있다." },
-        { code: "C-3", text: "이름은 시대에 맞게 짓고 영어판에서도 바꾸지 않는다." },
+        { code: "C-3", text: "이름은 시대와 신분에 맞게 짓는다(조선 양반과 평민, 1970년대생, 요즘 20대가 다르다). 영어판에서도 바꾸지 않는다." },
         { code: "C-4", text: "호칭과 존댓말 변화를 관계 변화의 사건으로 쓴다." },
-        { code: "C-5", text: "악역에게도 한(恨)이나 이유를 준다." },
+        { code: "C-5", text: "악역에게도 한(恨)이나 이유를 준다. 순수한 악은 시즌에 하나까지만." },
         { code: "C-6", text: "외모(얼굴형, 눈, 머리, 체형, 나이), 고정 의상과 소품, 표정 범위, 금지 사항을 명세한다." },
         { code: "C-7", text: "주요 인물마다 멀리서도 구분되는 표지 3가지(실루엣, 고유 색, 고정 소품)를 정하고, 인물끼리 겹치지 않게 한다." },
         { code: "C-8", text: "이미지 모델에 그대로 넣을 영어 외모 고정 문구를 인물마다 60단어 이내로 쓴다. 나이, 얼굴형, 눈, 머리, 체형, 의상, 고정 소품 순서로 구체적인 단어만 쓴다." },
@@ -170,6 +210,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
       role: "당신은 한국 웹툰의 작화 디렉터다. 작품의 톤에 맞는 고유 화풍을 정하고(특정 작가 모방 금지), 컷마다 이미지 모델이 따를 지시문을 조립한다.",
       rules: [
         ...ART_RULES,
+        ...HISTORY_RULES,
         CONTINUITY_RULES[2],
         CONTINUITY_RULES[4],
         { code: "K-9", text: "화풍 카드에는 컷마다 그대로 붙일 영어 화풍 고정 문구(선, 채색, 질감, 팔레트)를 넣어 회차가 바뀌어도 같은 그림체가 나오게 한다." },
@@ -188,6 +229,9 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         ...BOARD_RULES,
         ...STORY_RULES.slice(0, 3),
         ...CONTINUITY_RULES.slice(1, 6),
+        { code: "AI-04", text: "컷마다 표정을 눈썹, 입, 시선 방향으로 구체적으로 적는다. '살짝 미소' 같은 뭉뚱그린 표정 금지." },
+        { code: "AI-13", text: "중요도가 낮은 컷은 실루엣, 색면, 효과선 컷으로 지정해 밀도에 강약을 준다." },
+        SENSITIVITY_RULES[4],
         { code: "K-10", text: "컷마다 등장인물의 의상 상태와 손에 든 것, 화면 안 좌우 위치를 적어 다음 컷과 이어지게 한다." },
       ],
       banned: [],
@@ -201,7 +245,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     title: "작화 기본 지침",
     body: {
       role: "콘티의 컷을 화풍 카드와 캐릭터 시트에 맞춰 그린다. 후보 2~4장을 만들고 결함 검사로 고른다.",
-      rules: [...ART_RULES, ...CONTINUITY_RULES.slice(0, 6)],
+      rules: [...ART_RULES, ...HISTORY_RULES, ...CONTINUITY_RULES.slice(0, 6), SENSITIVITY_RULES[4]],
       banned: VISUAL_BANNED,
       outputFormat: "컷마다 후보 이미지와 검사 결과(손, 글자, 얼굴 일관성, 인물 수, 고증, 고정 소품, 화풍).",
       examples: "",
@@ -218,6 +262,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "L-3", text: "한 컷에 말풍선 3개 이하, 읽는 순서는 위→아래, 왼쪽→오른쪽." },
         { code: "L-4", text: "효과음은 동작 방향으로 기울이고 크기로 소리 세기를 표현한다." },
         { code: "L-5", text: "한국어와 영어가 같은 위치를 쓰고 길이에 맞춰 크기를 조정한다." },
+        { code: "L-6", text: "글꼴: 대사는 가독성 좋은 웹툰용 고딕, 내레이션은 명조 계열, 효과음은 손글씨 계열. 상업적 이용이 허용된 글꼴만 쓴다." },
       ],
       banned: [],
       outputFormat: "컷마다 말풍선(중심, 폭, 꼬리 방향, 모양, 언어별 글자)과 효과음(위치, 각도, 크기, 언어별 글자).",
@@ -234,6 +279,8 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "E-1", text: "인물 이름은 바꾸지 않는다. 한국 문화 용어는 처음 나올 때 맥락이나 짧은 주석으로 풀어준다." },
         { code: "E-2", text: "말풍선 하나에 25단어 이내." },
         { code: "E-3", text: "다시 쓴 뒤 원문과 비교해 의미가 빠지거나 더해진 곳을 표시한다." },
+        { code: "E-4", text: "존댓말과 반말의 거리감은 영어에서 호칭, 어휘의 격식, 문장 길이로 살린다. 관계가 바뀌는 순간이 영어에서도 느껴지게." },
+        { code: "E-5", text: "효과음은 영어 의성어로 바꾸되 한국어 효과음의 느낌(크기, 세기)을 유지한다." },
       ],
       banned: EN_BANNED,
       outputFormat: "대사마다 한국어 원문, 영어, 직역 점검 메모. 문화 용어 주석 목록.",
@@ -255,6 +302,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "Q-7", text: "레터링 가독성 10점 (L-1~L-5)" },
         { code: "Q-8", text: "화풍 통일 5점" },
         { code: "Q-9", text: "합격: 80점 이상, AI 티 없음 16점 이상, 치명 결함 0개." },
+        { code: "Q-11", text: "민감 사항(X-1~X-5)과 한국 고증(H-1~H-5) 위반은 치명 결함이다." },
         { code: "Q-10", text: "연속성(K-1~K-7) 어긋남은 앞뒤 컷 번호와 함께 적는다. 얼굴이나 고정 소품이 다른 인물처럼 보이면 치명 결함이다." },
       ],
       banned: [...KO_BANNED, ...EN_BANNED],
@@ -263,6 +311,84 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
     },
   },
 ];
+
+// 장르 지침: 뿌리 위에 얹는 "읽는 재미의 방식" (docs/02 2장). 기획·스토리 에이전트가 장르 범위로 읽어요.
+const GENRE_RULES: Record<string, { fun: string; rules: string[] }> = {
+  "오컬트·호러": {
+    fun: "긴장과 공포, 규칙 깨기",
+    rules: [
+      "세계의 규칙 3~5개를 1~3화 안에 보여주고, 위기는 반드시 그 규칙으로 만든다.",
+      "공포는 정체를 보여주기 전에 소리, 그림자, 흔적으로 쌓고, 정체는 스크롤 리빌로 드러낸다.",
+      "놀래키는 장면은 한 화에 한 번까지. 공포 장면은 무대사 컷과 긴 여백을 늘린다.",
+      "무속과 의례는 고증대로 그리고 조롱하지 않는다(X-2).",
+    ],
+  },
+  "사극 로맨스": {
+    fun: "신분 차이, 엇갈림",
+    rules: [
+      "계약, 위장, 비밀로 얽힌 관계로 시작하고 3화 안에 첫 접촉을 만든다.",
+      "한 화에 설레는 순간을 하나 이상 두고, 호칭과 존댓말의 변화로 거리를 보여준다.",
+      "궁중 직제, 호칭, 예법은 시대 고증을 따르고, 바꾼 점은 뿌리 노트에 적는다.",
+    ],
+  },
+  "회귀·빙의 사극": {
+    fun: "미래 지식으로 판 뒤집기",
+    rules: [
+      "회귀 전 죽음이나 실패를 1화에 강하게 보여주고, 첫 사이다는 3화 안에 온다.",
+      "미래 지식은 구체적인 사건으로 쓰고, 역사를 바꾸면 대가가 따른다.",
+      "빙의라면 원래 몸 주인의 사연을 떡밥으로 심는다.",
+      "실제 역사의 비극은 피해자를 존중하고 오락거리로 만들지 않는다(R-4, X-3).",
+    ],
+  },
+  "무협·액션": {
+    fun: "성장과 결투",
+    rules: [
+      "수련 → 시험 → 패배 → 각성을 반복하고, 성장은 눈에 보이는 등급이나 인정으로 보여준다.",
+      "기술과 문파 이름은 한국식으로 짓는다(화랑, 택견, 국궁, 한국 지명). 중국 무협 용어를 그대로 쓰지 않는다.",
+      "결투마다 걸린 것이 분명하고, 승패가 관계나 처지를 바꾼다.",
+    ],
+  },
+  "현대 판타지": {
+    fun: "일상 속 비일상",
+    rules: [
+      "평범한 직업과 숨은 능력을 함께 쥐여주고, 사건 하나가 한 화에서 세 화 안에 끝난다.",
+      "능력에는 규칙과 대가가 있다.",
+      "도깨비, 삼신, 산신 같은 존재가 지금의 한국 도시와 맞물리는 지점을 구체적인 장소로 보여준다.",
+    ],
+  },
+  "미스터리·스릴러": {
+    fun: "추리와 반전",
+    rules: [
+      "반전 전에 공정한 단서를 2개 이상, 그림으로 컷 안에 보여준다.",
+      "매 화 새 정보를 하나 이상 주고, 독자가 스스로 추리할 수 있게 한다.",
+      "경성이나 실록의 미제 사건을 쓰면 실존 인물과 피해자를 존중한다(X-1, X-3).",
+    ],
+  },
+  코믹: {
+    fun: "상황 개그",
+    rules: [
+      "한 화에 웃음 포인트 3개 이상, 시즌 중간에 감동 회차를 섞는다.",
+      "개그 컷은 SD(2~3등신)와 연출 기호를 써도 된다(A-6).",
+      "지역, 장애, 외모를 비하하는 개그는 쓰지 않는다(X-4).",
+    ],
+  },
+};
+
+export const DEFAULT_GENRE_GUIDELINES: { genre: string; agent: Agent; title: string; body: GuidelineBody }[] = Object.entries(GENRE_RULES).flatMap(
+  ([genre, g]) =>
+    (["planner", "story"] as const).map((agent) => ({
+      genre,
+      agent,
+      title: `${genre} 기본 지침`,
+      body: {
+        role: `${genre} 장르의 핵심 재미는 '${g.fun}'이다. 아래 장치를 지킨다.`,
+        rules: g.rules.map((text, i) => ({ code: `G-${i + 1}`, text })),
+        banned: [],
+        outputFormat: "",
+        examples: "",
+      },
+    })),
+);
 
 export const DEFAULT_BANNED_TERMS = [
   ...VISUAL_BANNED.map((term) => ({ kind: "visual", term })),
