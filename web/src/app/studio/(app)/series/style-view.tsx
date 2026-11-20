@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui";
 import { imageModelLabel } from "@/lib/pipeline";
-import { approveStyle, updateStyleRefs } from "../../actions";
+import type { StyleWork } from "@/db/schema";
+import { approveStyle, findStyleWorks, setStyleChoice, updateStyleRefs } from "../../actions";
 import { mediaUrl } from "./panel-views";
 
 type StyleBody = {
@@ -12,6 +13,7 @@ type StyleBody = {
   model?: string | null;
   style_masters?: string[];
   chosen?: number | null;
+  picked?: string[];
 };
 
 const CRITERIA_LABEL: Record<string, string> = {
@@ -50,6 +52,10 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
             )}
           </dl>
         </div>
+      ) : null}
+
+      {body.picked?.length ? (
+        <p className="text-[12px] text-ink-soft">참고한 화풍: {body.picked.join(", ")} (선·채색 같은 특징만 반영했어요)</p>
       ) : null}
 
       <form action={approveStyle}>
@@ -103,6 +109,94 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
 }
 
 /** ④ 화풍 생성 전에 올리는 참고 웹툰 캡처. 비공개로 두고 기준 값 분석에만 써요. */
+function Traits({ traits }: { traits: Record<string, string | number> }) {
+  return (
+    <dl className="mt-1.5 grid gap-x-4 gap-y-0.5 text-[12px] sm:grid-cols-2">
+      {Object.entries(CRITERIA_LABEL).map(([k, label]) =>
+        traits[k] !== undefined && traits[k] !== "" ? (
+          <div key={k}>
+            <dt className="inline font-medium">{label} </dt>
+            <dd className="inline text-ink-soft">{String(traits[k])}</dd>
+          </div>
+        ) : null,
+      )}
+    </dl>
+  );
+}
+
+/** ④ 화풍: ①~③에 맞는 시장 웹툰을 AI가 찾아 주고, 대표가 참고할 화풍을 고르는 칸 */
+export function StyleScout({
+  seriesId,
+  back,
+  suggestions,
+  choice,
+  busy,
+  error,
+}: {
+  seriesId: string;
+  back: string;
+  suggestions?: { at: string; works: StyleWork[] };
+  choice: number[];
+  busy: boolean;
+  error: string | null;
+}) {
+  const works = suggestions?.works ?? [];
+  const picked = new Set(choice);
+  return (
+    <div className="mb-4 rounded-[5px] border border-line px-4 py-3 text-[13px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="font-medium">어울리는 웹툰 화풍 {works.length ? `${works.length}편` : ""}</p>
+        <form action={findStyleWorks} className="ml-auto">
+          <input type="hidden" name="back" value={back} />
+          <input type="hidden" name="seriesId" value={seriesId} />
+          <Button type="submit" disabled={busy}>
+            {busy ? "찾는 중 (2~4분)" : works.length ? "다시 찾기" : "①~③에 맞는 웹툰 화풍 찾기"}
+          </Button>
+        </form>
+      </div>
+      <p className="mt-0.5 text-[12px] text-ink-soft">
+        승인한 기획·스토리·인물을 읽고 장르·시대·분위기가 닮은 웹툰을 웹에서 찾아요. 마음에 드는 화풍을 1~3개 고른 뒤 ④를 생성하면, 그 작품의 선·채색·비율 같은 특징만 화풍 후보에 반영돼요. 작품 이름과 그림은 그림 모델에 보내지 않아요.
+      </p>
+      {error && !busy ? <p className="mt-2 text-[12px] text-plum">{error}</p> : null}
+      {works.length ? (
+        <form action={setStyleChoice} className="mt-3 space-y-2">
+          <input type="hidden" name="back" value={back} />
+          <input type="hidden" name="seriesId" value={seriesId} />
+          {works.map((w, i) => (
+            <label
+              key={i}
+              className={`block cursor-pointer rounded-[5px] border px-3 py-2.5 ${picked.has(i) ? "border-ink bg-paper-sunk" : "border-line"}`}
+            >
+              <span className="flex flex-wrap items-baseline gap-x-2">
+                <input type="checkbox" name="pick" value={i} defaultChecked={picked.has(i)} className="translate-y-[1px]" />
+                <span className="font-medium">{w.title}</span>
+                <span className="text-[12px] text-ink-faint">
+                  {[w.platform, w.author].filter(Boolean).join(" · ")}
+                </span>
+                {w.url ? (
+                  <a href={w.url} target="_blank" rel="noreferrer" className="ml-auto text-[12px] text-ink-soft underline">
+                    작품 보기
+                  </a>
+                ) : null}
+              </span>
+              {w.why ? <span className="mt-1 block text-[12px] text-ink-soft">{w.why}</span> : null}
+              <Traits traits={w.traits} />
+            </label>
+          ))}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button type="submit" variant="primary">
+              고른 화풍으로 정하기
+            </Button>
+            <span className="text-[12px] text-ink-faint">
+              {picked.size ? `${picked.size}개 골랐어요. ④를 생성(또는 다시 생성)하면 반영돼요.` : "최대 3개까지 고를 수 있어요."}
+            </span>
+          </div>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
 export function StyleRefs({ seriesId, refs, back }: { seriesId: string; refs: string[]; back: string }) {
   return (
     <div className="mb-4 rounded-[5px] border border-line px-4 py-3 text-[13px]">

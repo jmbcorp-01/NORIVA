@@ -117,6 +117,19 @@ export type SeriesBrief = {
   imageModel?: string;
   /** 대표가 올린 참고 웹툰 캡처 (비공개 저장소 키). ④ 화풍에서 기준 값 분석에만 써요 */
   styleRefs?: string[];
+  /** AI가 ①~③에 맞춰 찾은 시장 웹툰과 화풍 특징. 특징만 화풍 후보에 쓰고 이름·그림은 그림 모델에 보내지 않아요 */
+  styleSuggestions?: { at: string; works: StyleWork[] };
+  /** styleSuggestions.works 중 대표가 고른 번호 (최대 3개) */
+  styleChoice?: number[];
+};
+
+export type StyleWork = {
+  title: string;
+  platform: string;
+  author: string;
+  url: string;
+  why: string;
+  traits: Record<string, string | number>;
 };
 
 export const series = pgTable("series", {
@@ -229,6 +242,7 @@ export const stage = pgEnum("stage", [
   "source_fill", // 소재 이름만 보고 나머지 칸 채우기
   "series_meta", // 승인한 기획·스토리·인물로 연재 설정(제목, 소개, 뿌리 노트) 채우기
   "episode_meta", // 승인한 스토리의 회차 요약으로 회차 제목(한·영)과 한 줄 요약 채우기
+  "style_scout", // 승인한 기획·스토리·인물에 맞는 시장 웹툰을 찾아 화풍 특징 정리 (④ 화풍 참고)
 ]);
 
 export const artifactStatus = pgEnum("artifact_status", [

@@ -291,6 +291,17 @@ class Store:
             self.finish(job, {}, costs)
         return filled
 
+    def finish_style_scout(self, job: dict[str, Any], works: list[dict[str, Any]], costs: list[dict[str, Any]]) -> None:
+        """찾은 참고작을 작품 설정(brief.styleSuggestions)에 넣어요. 새로 찾으면 전에 고른 것은 풀어요."""
+        data = {"at": datetime.now(timezone.utc).isoformat(), "works": works}
+        with self.conn.transaction():
+            self.conn.execute(
+                """update series set brief = (brief - 'styleChoice') || jsonb_build_object('styleSuggestions', %s::jsonb),
+                   updated_at = now() where id = %s""",
+                (json.dumps(data, ensure_ascii=False), job["series_id"]),
+            )
+            self.finish(job, {}, costs)
+
     def episode_meta_context(self, job: dict[str, Any]) -> dict[str, Any] | None:
         c = self.conn
         ep = c.execute("select * from episodes where id = %s", (job["episode_id"],)).fetchone()
