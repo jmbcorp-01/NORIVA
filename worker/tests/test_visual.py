@@ -93,6 +93,8 @@ class FakeModel:
                  "period_notes": "straight ring-pommel sword, no guard", "never": ["curved katana", "tsuba"]},
                 {"id": "cow", "name": "누렁소", "kind": "animal", "role": "minor", "appearance": "yellow ox", "period_notes": "", "never": []},
             ]}
+        elif "violations" in props:
+            data = {"violations": [{"item": "긴 뿔", "character_ids": ["cow"], "note": "마스터의 소가 긴 뿔"}]}
         elif "updates" in props:
             self.fix_tasks = getattr(self, "fix_tasks", []) + [task]
             data = {"updates": [{"id": "cow", "appearance": "yellow ox with short horns", "period_notes": "", "never": ["long horns"],
@@ -441,6 +443,11 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path):
     assert images.prompts[0][1] == 1  # 화풍 마스터를 참조로
     assert sheets["summary"] == {"characters": 2, "passed": 2}
     assert len(images.prompts) == 4
+    # 마스터에 이 인물의 금지 소품이 있으면 그 인물은 마스터 없이 그림
+    assert sheets["master_warnings"][0]["characters"] == ["cow"]
+    assert all(n == 0 for p, n in images.prompts if "누렁소" in p) and all(n == 1 for p, n in images.prompts if "순정" in p)
+    # 앞 시도에서 걸린 치명 문제를 다음 그림 지시에 넣음
+    assert any("Fix these problems found in the previous attempt: GA-3 일본도" in p for p, _ in images.prompts if "순정" in p)
 
     # 고른 인물만 다시 그리기: 명세는 그대로, 지시는 그 인물에게만
     images.prompts.clear()
