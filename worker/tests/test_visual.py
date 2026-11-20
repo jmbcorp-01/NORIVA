@@ -749,3 +749,44 @@ def test_fix_text_points_to_locked_refs_without_naming_bad_items():
     assert "identical to reference image 2" in t and "full-body front, side and back views" in t
     assert "reference image 3" not in t and "이마띠" not in t  # 경미한 부품 차이는 고치지 않고, 금지 물건 이름은 쓰지 않아요
     assert "Also fix: K-1 흉터 없음" in t and "V-7" not in t
+
+
+def test_art_resumes_after_interruption(store, tmp_path):
+    """작화가 도중에 끊기면, 다시 시작할 때 같은 컷 목록과 끝난 컷을 그대로 쓰고 남은 컷만 그려요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model = FakeModel()
+
+    class Dies(FakeImages):
+        def generate(self, prompt, seed=None, references=None, aspect_ratio="3:4", model=None):
+            if len(self.prompts) >= 2:  # 인물 시트 1장, 첫 컷 1장을 그린 뒤 꺼져요
+                raise RuntimeError("작업기 종료")
+            return super().generate(prompt, seed, references, aspect_ratio, model)
+
+    first, second = Dies(), FakeImages()
+    inputs = [
+        _approved(c, sid, eid, "storyboard", {"markdown": "| 1 | 원경 | 마을 |"}),
+        _approved(c, sid, None, "style", {"markdown": "먹선, 한지색"}),
+        _approved(c, sid, None, "characters", {"markdown": "하나: 17세"}),
+    ]
+    aid = c.execute(
+        "insert into artifacts (series_id, episode_id, stage, status, attempt, input_artifact_ids) values (%s, %s, 'art', 'generating', 1, %s) returning id",
+        (sid, eid, Jsonb([str(i) for i in inputs])),
+    ).fetchone()["id"]
+    jid = c.execute("insert into jobs (type, series_id, episode_id, artifact_id, payload) values ('art', %s, %s, %s, %s) returning id",
+                    (sid, eid, aid, Jsonb({}))).fetchone()["id"]
+    settings = ArtSettings(candidates=1, parallel=1, test_panels=0)
+    process(store, store.claim_by_id(jid, "test"), Tools(writer=model, media=media, image_factory=lambda: first, art=settings), Config.from_env())
+    assert c.execute("select status from jobs where id=%s", (jid,)).fetchone()["status"] == "queued"
+    plans = sum(1 for props, _, _ in model.calls if "style_prompt" in props)
+
+    process(store, store.claim_by_id(jid, "test"), Tools(writer=model, media=media, image_factory=lambda: second, art=settings), Config.from_env())
+    a = c.execute("select status, body from artifacts where id=%s", (aid,)).fetchone()
+    assert a["status"] == "pending_review", a["body"]
+    assert sum(1 for props, _, _ in model.calls if "style_prompt" in props) == plans  # 컷 목록을 새로 짜지 않아요
+    assert len(second.prompts) == len(a["body"]["panels"]) - 1  # 끝난 1컷은 다시 그리지 않아요
+    assert all(p.get("image") for p in a["body"]["panels"])
+    # 첫 시도에서 쓴 그림 값도 비용에 남아요
+    n = c.execute("select coalesce(sum((units->>'images')::int), 0) as n from cost_ledger where job_id=%s and provider='fal'", (jid,)).fetchone()["n"]
+    assert n == len(a["body"]["panels"])
