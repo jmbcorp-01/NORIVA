@@ -223,7 +223,7 @@ export class NorivaStack extends Stack {
     // 제작 서버 (작업 실행기)
     const workerTask = new ecs.FargateTaskDefinition(this, "WorkerTask", {
       cpu: 512,
-      memoryLimitMiB: 1024,
+      memoryLimitMiB: 2048,
       runtimePlatform: { cpuArchitecture: ecs.CpuArchitecture.ARM64, operatingSystemFamily: ecs.OperatingSystemFamily.LINUX },
     });
     workerTask.addContainer("worker", {

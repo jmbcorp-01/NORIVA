@@ -73,11 +73,17 @@ def _map_progress(ctx: dict[str, Any], parallel: int, fn: Any, items: list[Any],
     """병렬로 돌리면서 하나 끝날 때마다 진행 상황을 남겨요. 결과는 입력 순서대로 돌려줘요."""
     out: list[Any] = [None] * len(items)
     _report(ctx, step, 0, len(items))
-    with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+    pool = ThreadPoolExecutor(max_workers=max(1, parallel))
+    try:
         futures = {pool.submit(fn, it): i for i, it in enumerate(items)}
         for n, f in enumerate(as_completed(futures), 1):
             out[futures[f]] = f.result()
             _report(ctx, step, n, len(items))
+    except BaseException:
+        # 하나가 실패하면(크레딧 부족 등) 남은 일을 시작하지 않아요. 예전에는 남은 컷을 다 그리고 검사만 실패해 돈을 버렸어요.
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True)
     return out
 
 
