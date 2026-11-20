@@ -101,7 +101,16 @@ class TextModel:
             for img in images or []
         ]
         content.append({"type": "text", "text": task})
-        r = self._call(system, content, schema, effort or self.effort, max_tokens)
+        try:
+            r = self._call(system, content, schema, effort or self.effort, max_tokens)
+        except TruncatedError as e:
+            # 생각(adaptive thinking)이 길어지면 한도에 닿을 수 있어요. 한도를 넉넉히 올려 한 번 더 받아요.
+            bigger = max(max_tokens * 3, 32000)
+            if max_tokens >= JSON_MAX_TOKENS or e.result is None:
+                raise
+            r = self._call(system, content, schema, effort or self.effort, min(bigger, JSON_MAX_TOKENS))
+            r.usage = {k: r.usage.get(k, 0) + e.result.usage.get(k, 0) for k in {*r.usage, *e.result.usage}}
+            r.cost_usd += e.result.cost_usd
         try:
             data = json.loads(r.text)
         except json.JSONDecodeError as e:
@@ -186,16 +195,22 @@ class TextModel:
         if msg.stop_reason == "refusal":
             raise RefusedError("모델이 이 요청을 거절했어요. 지시나 소재 표현을 바꿔 다시 생성해 주세요.")
         text = "".join(b.text for b in msg.content if b.type == "text").strip()
+        usage = _usage(msg.usage)
+        result = LLMResult(text=text, model=msg.model, usage=usage, cost_usd=cost_of(self.model, usage))
         if msg.stop_reason == "max_tokens":
             if schema is not None:
-                raise TruncatedError("결과가 길이 한도에서 잘렸어요. 컷 수를 줄이거나 나눠서 다시 생성해 주세요.")
-            text += "\n\n> (출력이 길이 한도에서 잘렸어요. 범위를 나눠 다시 생성해 주세요.)"
-        usage = _usage(msg.usage)
-        return LLMResult(text=text, model=msg.model, usage=usage, cost_usd=cost_of(self.model, usage))
+                raise TruncatedError("결과가 길이 한도에서 잘렸어요. 범위를 나눠서 다시 생성해 주세요.", result=result)
+            result.text += "\n\n> (출력이 길이 한도에서 잘렸어요. 범위를 나눠 다시 생성해 주세요.)"
+        return result
+
+
+JSON_MAX_TOKENS = 64000
 
 
 class TruncatedError(Exception):
-    pass
+    def __init__(self, message: str, result: LLMResult | None = None):
+        super().__init__(message)
+        self.result = result
 
 
 def _usage(u: Any) -> dict[str, int]:
