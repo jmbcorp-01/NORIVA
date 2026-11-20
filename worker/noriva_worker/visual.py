@@ -256,6 +256,7 @@ def _panel_prompt(
     extra: str,
     n_masters: int = 0,
     base: str = WEBTOON_BASE,
+    part_refs: list[dict[str, Any]] | None = None,
 ) -> str:
     sheet_offset = n_masters
     if isinstance(sheet_cast, bool):  # 예전 호출: 모든 인물에 시트가 있으면 True
@@ -295,6 +296,16 @@ def _panel_prompt(
         f"Style: {style}",
         "Signs, papers and talismans are blank or carry only simple abstract red marks."
         " No text, letters, speech bubbles, signature or watermark anywhere.",
+        (
+            " ".join(
+                f"Reference image {i + 1 + n_masters + len(sheet_cast)} is the approved, period-accurate design of "
+                f"{p['name']} ({p['owner_name']}): whenever it appears in this panel draw exactly this shape, length and fittings."
+                for i, p in enumerate(part_refs)
+            )
+            + " Do not add these objects if the panel does not call for them."
+        )
+        if part_refs
+        else "",
         f"Director's note: {extra}" if extra else "",
     ]
     return " ".join(p for p in parts if p)
@@ -323,6 +334,7 @@ def kind_of(c: dict[str, Any]) -> str:
 
 MAX_SHEETS = 4  # 한 컷에 넣는 인물 시트 수
 MAX_REFS = 5  # 화풍 마스터 + 인물 시트 합계
+MAX_PART_REFS = 2  # ④+에서 잠근 소품(칼·도구) 그림. 시트에 작게 그려져 모양이 흐려지는 걸 막아요
 
 
 def _sheet_key(series_id: str, char: dict[str, Any], style: str) -> str:
@@ -430,6 +442,15 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
 
     style = plan["style_prompt"]
     chars = {c["id"]: dict(c) for c in plan["characters"]}
+    # ④+에서 대표가 잠근 소품(칼·도구) 그림: 그 인물이 나오는 컷에 참고 그림으로 넣어요.
+    # 옷차림·머리 모양은 인물 시트에 이미 그려져 있어서 넣지 않아요.
+    locked_objects: list[dict[str, Any]] = []
+    if sheets_body.get("kind") == "sheets" and sheets_body.get("phase") != "parts":
+        for p in sheets_body.get("parts") or []:
+            if (p.get("kind") or "object") == "object" and p.get("locked"):
+                b = media.get(p["locked"])
+                if b is not None:
+                    locked_objects.append({**p, "data": b})
 
     _report(ctx, "인물 시트 준비 중")
     # 인물 시트: 외모 명세와 화풍이 같으면 한 번만 그려서 모든 회차가 같이 써요 (04번 일관성 1층).
@@ -453,7 +474,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
 
     artifact_id = ctx["artifact_id"]
     ep = ctx["episode"]["number"] if ctx.get("episode") else 0
-    base = f"series/{ctx['series']['id']}/ep{ep:03d}/art/{artifact_id}"
+    key_base = f"series/{ctx['series']['id']}/ep{ep:03d}/art/{artifact_id}"
 
     def check(
         panel: dict[str, Any], cast: list[dict[str, Any]], data: bytes, local: list[dict[str, Any]],
@@ -496,8 +517,16 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                 sheets.append(b)
         # 화풍 마스터는 남는 자리에 (최소 1장, 많아야 2장)
         use_masters = masters[: max(1, min(2, MAX_REFS - len(sheets)))]
-        refs = use_masters + sheets
-        prompt = _panel_prompt(style, panel, cast, sheet_cast, instruction if redraw and not test_run else "", len(use_masters), base)
+        ids = {c["id"] for c in cast}
+        part_refs = [
+            {"name": p["name"], "owner_name": ", ".join(chars[o]["name"] for o in p.get("owners") or [] if o in chars), "data": p["data"]}
+            for p in locked_objects
+            if ids & set(p.get("owners") or [])
+        ][:MAX_PART_REFS]
+        refs = use_masters + sheets + [p["data"] for p in part_refs]
+        prompt = _panel_prompt(
+            style, panel, cast, sheet_cast, instruction if redraw and not test_run else "", len(use_masters), base, part_refs
+        )
         aspect = ASPECT.get(panel.get("height") or "normal", "3:4")
         seed0 = panel["index"] * 100 + 10 * (ctx.get("attempt") or 1)
 
@@ -511,7 +540,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                     variants.append({"model": m, "error": str(e)[:300]})
                     continue
                 local.append(img.cost_entry())
-                key = media.put(f"{base}/{panel['index']:03d}-{_model_slug(m)}.png", trim_border(img.data))
+                key = media.put(f"{key_base}/{panel['index']:03d}-{_model_slug(m)}.png", trim_border(img.data))
                 c = check(panel, cast, trim_border(img.data), local, sheet_cast, sheets)
                 variants.append({"model": m, "image": key, **c, "passed": bool(_rank(c, s.pass_score)[0])})
             ok = [v for v in variants if "image" in v]
@@ -525,7 +554,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             img = images.generate(prompt, seed=seed0 + k, references=refs or None, aspect_ratio=aspect, model=model)
             local.append(img.cost_entry())
             data = trim_border(img.data)
-            key = media.put(f"{base}/{panel['index']:03d}-{k + 1}.png", data)
+            key = media.put(f"{key_base}/{panel['index']:03d}-{k + 1}.png", data)
             cands.append({"image": key, **check(panel, cast, data, local, sheet_cast, sheets)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break  # 합격 후보가 나오면 더 그리지 않아요

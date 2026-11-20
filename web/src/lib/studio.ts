@@ -230,6 +230,10 @@ export async function approveArtifact(id: string, actor: string, note = "") {
   if (!canApprove({ id: a.id, stage: a.stage as Stage, status: a.status })) {
     throw new StudioError("검토 대기 중인 결과물만 승인할 수 있어요");
   }
+  // 관문: ④+는 부품을 잠그고 그 부품으로 인물 시트를 그린 결과만 승인할 수 있어요
+  if (a.stage === "sheets" && (a.body as { phase?: string }).phase === "parts") {
+    throw new StudioError("부품을 골라 잠그고 '잠근 부품으로 인물 시트 그리기'를 마친 뒤에 승인할 수 있어요");
+  }
   const pending = (a.body as { kind?: string; pending?: number[] }).pending;
   if (a.stage === "art" && pending?.length) {
     throw new StudioError(`아직 그리지 않은 컷이 ${pending.length}개 있어요. '나머지 그리기'를 먼저 눌러 주세요`);

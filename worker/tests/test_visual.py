@@ -109,8 +109,8 @@ class FakeModel:
         elif list(props) in (["characters"], ["characters", "props"], ["characters", "props", "attire"]):
             data = {"characters": [
                 {"id": "Sun Jeong", "name": "순정", "kind": "person", "role": "main", "appearance": "man, 30, topknot, dark navy durumagi",
-                 "period_notes": "straight ring-pommel sword, no guard", "never": ["curved katana", "tsuba"]},
-                {"id": "cow", "name": "누렁소", "kind": "animal", "role": "minor", "appearance": "yellow ox", "period_notes": "", "never": []},
+                 "period_notes": "straight ring-pommel sword, no guard", "hair": "small topknot tied with a thin cord, bare forehead", "never": ["curved katana", "tsuba"]},
+                {"id": "cow", "name": "누렁소", "kind": "animal", "role": "minor", "appearance": "yellow ox", "period_notes": "", "hair": "", "never": []},
             ], "props": [{"id": "sword", "name": "환두대도", "owners": ["Sun Jeong", "nobody"], "description": "straight sword with a gold ring pommel", "search": ["ring pommel sword"]}],
                "attire": [{"id": "silla_man", "name": "신라 남자 옷차림", "owners": ["Sun Jeong", "cow"], "description": "short jacket closed with a belt, wide trousers", "search": ["Silla clay figurine"]}]}
         elif "photos" in props:
@@ -123,6 +123,18 @@ class FakeModel:
             self.fix_tasks = getattr(self, "fix_tasks", []) + [task]
             data = {"updates": [{"id": "cow", "appearance": "yellow ox with short horns", "period_notes": "", "never": ["long horns"],
                                  "edit": "Make both horns short."}], "rules": ["누렁소의 뿔은 짧다.", " "]}
+        elif list(props) == ["variants", "recommended"]:
+            # 부품 후보: 두 번째 후보에 코등이가 보인다고 표시하고 첫 번째를 권함
+            data = {"variants": [{"index": 1, "issues": [{"item": "코등이", "severity": "critical"}]}], "recommended": 0}
+        elif list(props) == ["parts", "defects"]:
+            # 인물 시트: 첫 시트는 잠긴 칼과 달라 불합격, 고쳐 그린 둘째는 합격 (인물별로 셈)
+            key = task.split('"id": "')[1].split('"')[0]
+            self.sheet_seen = getattr(self, "sheet_seen", {})
+            self.sheet_seen[key] = self.sheet_seen.get(key, 0) + 1
+            ok = self.sheet_seen[key] % 2 == 0
+            self.sheet_tasks = getattr(self, "sheet_tasks", []) + [task]
+            data = {"parts": [] if ok or key != "sunjeong" else [{"id": "sword", "matches": False, "note": "코등이가 있음"}],
+                    "defects": [{"code": "K-1", "severity": "minor", "note": "작은 차이"}] if ok else ([] if key == "sunjeong" else [{"code": "GA-3", "severity": "critical", "note": "일본도"}])}
         elif list(props) == ["defects"]:
             # 인물마다 첫 시트는 불합격, 둘째는 합격 (병렬로 돌아도 인물별로 셈)
             key = task.split('"id": "')[1].split('"')[0]
@@ -477,61 +489,74 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path, monkeypatch):
                                               "candidates": [{"name": "먹선", "medium": "ink", "card": "", "style_prompt": "ink wash style", "samples": [master]}]})
     chars = _approved(c, sid, None, "characters", {"markdown": "순정: 신라 화랑"})
 
-    sid_art, sheets = _run(store, tools, sid, None, "sheets", [chars, style])
-    assert sheets["kind"] == "sheets" and [x["id"] for x in sheets["characters"]] == ["sunjeong", "cow"]
-    sj = sheets["characters"][0]
-    # 첫 시트는 치명 결함(일본도)으로 불합격 → 한 번 더 그려 합격본을 남김
-    assert len(sj["candidates"]) == 2 and sj["passed"] and sj["score"] == 97  # 점수는 결함 개수로 계산 (경미 1개)
-    assert sj["sheet"].startswith(f"series/{sid}/sheets/")
-    # 소품 시트를 먼저 그리고 검사(첫 장 불합격 → 둘째 합격), 주인은 명세에 있는 인물만
-    prop = sheets["props"][0]
-    assert prop["owners"] == ["sunjeong"] and prop["passed"] and prop["image"].endswith("prop-sword-2.png")
-    prop_prompts = [(p, n) for p, n in images.prompts if p.count("Prop design sheet")]
-    assert len(prop_prompts) == 1 and "drawn with the blade fully visible" in prop_prompts[0][0]
-    # 두 번째는 다시 그리지 않고 첫 그림에서 걸린 곳만 고쳐요 (첫 그림 + 실물 사진)
-    prop_fix = [(p, n) for p, n in images.prompts if p.startswith("Edit reference image 1, a prop design sheet")]
-    assert len(prop_fix) == 1 and "Change only these problems" in prop_fix[0][0] and prop_fix[0][1] == 2
-    # 시대 의상 시트도 먼저 그려 검사하고, 사람인 주인만 남김
-    attire = sheets["props"][1]
-    assert attire["kind"] == "attire" and attire["owners"] == ["sunjeong"] and attire["passed"]
-    assert sum("Period costume reference sheet" in p for p, _ in images.prompts) == 1
-    assert sum(p.startswith("Edit reference image 1, a period costume design sheet") for p, _ in images.prompts) == 1
-    # 업로드한 실물 사진이 없으면 공용에서 찾아, 검사를 통과한 사진을 소품 시트의 참고 그림으로
-    assert searched == [["ring pommel sword"], ["Silla clay figurine"]] and all(n == 1 for _, n in prop_prompts)
-    # 맞지 않는 사진은 쓰지 않고 검색 기록에 남김
-    assert [(x["prop"], x["accepted"]) for x in sheets["search_log"]] == [("sword", 1), ("silla_man", 0)]
-    assert sheets["found_photos"][0]["license"] == "CC BY-SA 4.0" and sheets["found_photos"][0]["image"].endswith("ref-sword-1.jpg")
-    # 금지 단어는 그림 지시에 넣지 않고 검사에서만 써요. 글자·장식 금지는 늘 넣어요.
-    sheet_prompts = [(p, n) for p, n in images.prompts if "turnaround sheet" in p]
-    assert not any("katana" in p or "Must not include" in p for p, _ in sheet_prompts)
-    assert all("no view labels" in p for p, _ in sheet_prompts)
-    assert sheets["summary"] == {"characters": 2, "passed": 2, "props": 2, "props_passed": 2}
-    assert len(images.prompts) == 9  # 마스터 지우기 1번(지운 뒤 문제가 없어짐) + 소품·의상 4 + 인물 4
-    # 원본 마스터에 금지 소품이 있으면 그것을 지운 깨끗한 마스터를 먼저 만들어 씀
-    assert images.prompts[0][0].startswith("Edit reference image 1. Remove these things completely: 긴 뿔") and images.prompts[0][1] == 1
-    assert sheets["clean_masters"] and sheets["clean_masters"][0].endswith("master-clean-1.png")
-    # 순정은 화풍 마스터 + 소품 시트를 참조로, 고증 사진은 넣지 않음. 마스터에 금지 소품이 있는 소는 마스터 없이.
-    assert sheets["master_warnings"] == []  # 지운 뒤 다시 검사해서 문제가 없으면 모든 인물이 깨끗한 마스터를 써요
-    assert all(n == 1 for p, n in sheet_prompts if "누렁소" in p and p.startswith("Korean"))
-    assert all(n == 3 and "approved prop design for 환두대도" in p and "approved period costume design" in p for p, n in sheet_prompts if "순정" in p)
-    # 지운 뒤 문제가 없어졌으니 한 번만 지움
-    assert sum(p.startswith("Edit reference image 1. Remove these things") for p, _ in images.prompts) == 1
-    # 앞 시도에서 걸린 치명 문제만 첫 시트에서 고쳐 그림 (다시 그리지 않음)
-    assert any(p.startswith("Edit reference image 1, a character design turnaround sheet") and "Fix these problems: GA-3 일본도" in p
-               for p, _ in images.prompts)
+    # 1. 부품 단계: 소품·옷차림·주인공 머리 모양을 싼 모델로 4장씩 그리고, 인물 시트는 아직 그리지 않아요
+    parts_art, pb = _run(store, tools, sid, None, "sheets", [chars, style])
+    assert pb["phase"] == "parts" and [x["id"] for x in pb["characters"]] == ["sunjeong", "cow"]
+    assert [(p["id"], p["kind"]) for p in pb["parts"]] == [("sword", "object"), ("silla_man", "attire"), ("sunjeong_hair", "hair")]
+    assert all(len(p["variants"]) == 4 and p["locked"] is None for p in pb["parts"])
+    assert len(images.prompts) == 12 and all(call["model"] == "fal-ai/nano-banana" for call in images.calls)
+    assert not any("turnaround sheet" in p for p, _ in images.prompts)
+    sword = pb["parts"][0]
+    assert sword["variants"][1]["issues"][0]["item"] == "코등이" and sword["recommended"] == 0 and sword["photos"] == 1
+    hair = pb["parts"][2]
+    assert hair["owners"] == ["sunjeong"] and "Hairstyle and headwear reference sheet" in [p for p, _ in images.prompts if "bare forehead" in p][0]
+    # 공용 사진은 소품·옷만 찾고(머리 모양은 고증 자료 사진만), 맞지 않는 사진은 쓰지 않고 기록에 남김
+    assert searched == [["ring pommel sword"], ["Silla clay figurine"]]
+    assert [(x["prop"], x["accepted"]) for x in pb["search_log"]] == [("sword", 1), ("silla_man", 0)]
+    assert pb["found_photos"][0]["image"].endswith("ref-sword-1.jpg")
 
-    # 고른 인물만 다시 그리기: 명세는 그대로, 지시는 그 인물에게만
+    # 2. 관문: 잠그지 않은 부품이 있으면 인물 시트를 그리지 않아요
+    images.prompts.clear()
+    aid = c.execute("insert into artifacts (series_id, stage, status, attempt, input_artifact_ids) values (%s, 'sheets', 'generating', 2, %s) returning id",
+                    (sid, Jsonb([str(chars), str(style)]))).fetchone()["id"]
+    jid = c.execute("insert into jobs (type, series_id, artifact_id, payload) values ('sheets', %s, %s, %s) returning id",
+                    (sid, aid, Jsonb({"mode": "compose", "base_artifact_id": str(parts_art)}))).fetchone()["id"]
+    process(store, store.claim_by_id(jid, "test"), tools, Config.from_env())
+    assert "잠그지 않은 부품" in c.execute("select error from jobs where id=%s", (jid,)).fetchone()["error"] and not images.prompts
+
+    # 3. 대표가 부품마다 후보를 골라 잠그면, 잠근 부품만 참고해서 인물 시트를 그려요
+    for p in pb["parts"]:
+        p["locked"] = p["variants"][0]["image"]
+    c.execute("update artifacts set body=%s where id=%s", (Jsonb(pb), parts_art))
+    sid_art, sheets = _run(store, tools, sid, None, "sheets", [chars, style], payload={"mode": "compose", "base_artifact_id": str(parts_art)}, attempt=3)
+    assert sheets["phase"] == "sheets" and not any("Prop design sheet" in p or "reference sheet" in p for p, _ in images.prompts)
+    sj = sheets["characters"][0]
+    # 첫 시트는 잠긴 칼과 달라(P-1) 불합격 → 그 부분만 고쳐 그려 합격
+    assert len(sj["candidates"]) == 2 and sj["passed"] and sj["score"] == 97
+    assert sj["candidates"][0]["defects"][0]["code"] == "P-1" and sj["part_checks"] == [
+        {"id": "sunjeong_hair", "name": "순정 머리 모양", "matches": True, "note": ""},
+        {"id": "silla_man", "name": "신라 남자 옷차림", "matches": True, "note": ""},
+        {"id": "sword", "name": "환두대도", "matches": True, "note": ""}]
+    sheet_prompts = [(p, n) for p, n in images.prompts if "turnaround sheet" in p]
+    # 순정: 화풍 마스터 + 잠긴 머리·옷·칼 = 4장, 고쳐 그릴 때는 첫 시트 + 잠긴 부품 3장
+    assert [n for p, n in sheet_prompts if "approved hairstyle and headwear" in p] == [4, 4]
+    assert any(p.startswith("Edit reference image 1, a character design turnaround sheet") and "Fix these problems: P-1" in p for p, _ in sheet_prompts)
+    assert "잠근 부품 그림" in model.sheet_tasks[0]
+    assert not any("katana" in p for p, _ in sheet_prompts) and all("no view labels" in p for p, _ in sheet_prompts)
+    assert sheets["summary"] == {"characters": 2, "passed": 2, "parts": 3, "parts_locked": 3}
+    assert [p["locked"] for p in sheets["parts"]] == [p["locked"] for p in pb["parts"]]
+    # 원본 마스터에 금지 소품이 있으면 지운 깨끗한 마스터를 씀
+    assert images.prompts[0][0].startswith("Edit reference image 1. Remove these things completely: 긴 뿔")
+    assert sheets["clean_masters"] and sheets["master_warnings"] == []
+
+    # 4. 고른 인물만 다시 그리기: 잠근 부품 그대로, 지시는 그 인물에게만
     images.prompts.clear()
     c.execute("update artifacts set status='approved' where id=%s", (sid_art,))
-    _, again = _run(store, tools, sid, None, "sheets", [chars, style], payload={"chars": ["cow"], "base_artifact_id": str(sid_art), "instruction": "뿔을 짧게"}, attempt=2)
+    _, again = _run(store, tools, sid, None, "sheets", [chars, style], payload={"chars": ["cow"], "base_artifact_id": str(sid_art), "instruction": "뿔을 짧게"}, attempt=4)
     assert "뿔을 짧게" in model.fix_tasks[-1]
-    # 첫 번째는 이전 시트(+고증 없음) 한 장을 참조로 고칠 곳만 편집, 두 번째는 새 명세로 새로 그림
+    # 첫 번째는 이전 시트 한 장을 참조로 고칠 곳만 편집, 두 번째는 새 명세로 새로 그림
     assert images.prompts[0][0].startswith("Edit reference image 1") and "Make both horns short." in images.prompts[0][0] and images.prompts[0][1] == 1
     assert "yellow ox with short horns" in images.prompts[1][0] and "뿔을 짧게" in images.prompts[1][0]
     assert again["characters"][0]["sheet"] == sj["sheet"] and again["redrawn"] == ["cow"]
     cow = again["characters"][1]
     assert cow["appearance"] == "yellow ox with short horns" and cow["never"] == ["long horns"]
     assert again["rule_suggestions"] == ["누렁소의 뿔은 짧다."]
+
+    # 5. 부품 하나만 후보 다시 그리기: 그 부품만 새로 4장, 다른 부품의 잠금은 그대로
+    images.prompts.clear()
+    _, redo = _run(store, tools, sid, None, "sheets", [chars, style], payload={"mode": "parts", "parts": ["sword"], "base_artifact_id": str(parts_art), "instruction": "고리를 크게"}, attempt=5)
+    assert len(images.prompts) == 4 and all("Director's note: 고리를 크게" in p for p, _ in images.prompts)
+    assert redo["parts"][0]["locked"] is None and redo["parts"][1]["locked"] == pb["parts"][1]["locked"] and redo["redrawn_parts"] == ["sword"]
 
     # ⑦ 작화는 승인된 시트와 명세를 그대로 써요 (시트를 새로 그리지 않음)
     images.prompts.clear()
@@ -540,8 +565,23 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path, monkeypatch):
     assert not any("Character turnaround sheet" in p for p, _ in images.prompts)
     assert [x["id"] for x in art["characters"]] == ["sunjeong", "cow"]
     assert art["characters"][0]["sheet"] == sj["sheet"]
+    # 그림 지시는 화풍 기본 문장으로 시작해요 (저장 경로가 끼어들면 안 돼요)
+    assert images.prompts and not any(p.startswith("series/") for p, _ in images.prompts)
     check_tasks = [t for props, t, _ in model.calls if "people_count" in props]
     assert check_tasks and "먹선의 굵기 변화" in check_tasks[0]  # 먹선 화풍이면 잉크 질감을 결함으로 보지 않음
+
+
+def test_panel_prompt_adds_locked_part_refs():
+    from noriva_worker.visual import _panel_prompt
+
+    cast = [{"id": "sunjeong", "name": "순정", "kind": "person", "appearance": "young hwarang"}]
+    parts = [{"name": "환두대도", "owner_name": "순정", "data": b""}]
+    p = _panel_prompt("st", {"shot": "wide", "description": "d"}, cast, cast, "", 1, "BASE.", parts)
+    assert p.startswith("BASE.")
+    assert "Reference image 2 is the design sheet for 순정" in p
+    assert "Reference image 3 is the approved, period-accurate design of 환두대도 (순정)" in p
+    assert "Do not add these objects if the panel does not call for them." in p
+    assert "period-accurate design" not in _panel_prompt("st", {"shot": "wide", "description": "d"}, cast, cast, "", 1)
 
 
 def test_commons_queries_are_shortened():
@@ -583,19 +623,25 @@ def test_research_stage_feeds_style_and_sheets(store, tmp_path, monkeypatch):
     master = media.put(f"series/{sid}/style/m.png", png())
     style_ok = _approved(c, sid, None, "style", {"kind": "style", "markdown": "셀", "chosen": 0, "style_masters": [master],
                                                  "candidates": [{"name": "셀", "medium": "cel", "card": "", "style_prompt": "cel style", "samples": [master]}]})
-    _, sheets = _run(store, tools, sid, None, "sheets", [chars, style_ok, rid])
+    parts_art, sheets = _run(store, tools, sid, None, "sheets", [chars, style_ok, rid])
     assert sheets["found_photos"][0]["image"] == sword["photos"][0]["image"]
     assert searched == [["Silla clay figurine"]]  # 의상은 고증 자료에 사진이 없어서 공용에서 찾음
     spec_task = [t for props, t, _ in model.calls if list(props) == ["characters", "props", "attire"]][-1]
     assert "고증 자료" in spec_task
-    # 마스터는 문제가 있을 때만 고쳐 그리고(원본을 먼저 검사), 어떤 그림에서 만들었는지 남겨요
-    assert not any("approved period design" in p for p, _ in images.prompts)
-    assert sheets["clean_from"] == [master]
-    master_screen = [t for props, t, _ in model.calls if "violations" in props][-1]
-    assert "people" in master_screen
     # 그리기 전에 명세 글을 고증 자료와 맞춰 보고, 고친 것을 남겨요
     assert "③+ 고증 자료" in model.lint_tasks[-1] and "small topknot" in model.lint_tasks[-1]
     assert sheets["spec_fixes"] and sheets["spec_fixes"][0]["changes"] == "금지 목록을 줄였어요"
+    # 부품 후보 검사도 고증 자료를 기준으로 봐요
+    review_tasks = [t for props, t, _ in model.calls if list(props) == ["variants", "recommended"]]
+    assert review_tasks and all("straight sword with a gold ring pommel" in t for t in review_tasks)
+    # 잠근 뒤 조합: 마스터는 문제가 있을 때만 고쳐 그리고(원본을 먼저 검사), 어떤 그림에서 만들었는지 남겨요
+    for p in sheets["parts"]:
+        p["locked"] = p["variants"][0]["image"]
+    c.execute("update artifacts set body=%s where id=%s", (Jsonb(sheets), parts_art))
+    _, composed = _run(store, tools, sid, None, "sheets", [chars, style_ok, rid], payload={"mode": "compose", "base_artifact_id": str(parts_art)}, attempt=2)
+    assert composed["clean_from"] == [master] and composed["phase"] == "sheets"
+    master_screen = [t for props, t, _ in model.calls if "violations" in props][-1]
+    assert "people" in master_screen and "③+ 고증 자료" in master_screen
 
 
 def test_rhythm_warnings_find_repeated_shots_and_flat_angles():
