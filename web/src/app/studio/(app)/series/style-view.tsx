@@ -89,7 +89,7 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
         ) : null}
         {body.candidates.some((c) => c.sample_issues?.some((x) => x.length)) ? (
           <p className="mb-3 rounded-[5px] border border-plum/40 px-3 py-2 text-[12px] text-ink-soft">
-            마스터로 고른 그림의 옷·머리 모양·소품·장식은 이후 모든 인물과 컷에 따라 그려져요. 아래에 빨간 표시가 있는 그림은 시대에 맞지 않는 것이 보여서 고르지 않는 걸 권해요.
+            마스터로 고른 그림의 옷·머리 모양·소품·장식은 이후 모든 인물과 컷에 따라 그려져요. 아래에 빨간 표시가 있는 그림은 시대에 맞지 않는 것이 보여서 마스터로 고를 수 없어요. 고를 그림이 부족하면 다시 생성해 주세요.
           </p>
         ) : null}
         <div className="space-y-5">
@@ -112,7 +112,14 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
                         loading="lazy"
                       />
                       <label className="mt-1 inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 text-[12px]">
-                        <input type="checkbox" name="masters" value={k} defaultChecked={masters.has(k)} disabled={!canApprove} className="size-4 accent-[var(--color-pine)]" />
+                        <input
+                          type="checkbox"
+                          name="masters"
+                          value={k}
+                          defaultChecked={masters.has(k)}
+                          disabled={!canApprove || !!c.sample_issues?.[si]?.some((x) => x.severity === "critical")}
+                          className="size-4 accent-[var(--color-pine)]"
+                        />
                         마스터로
                       </label>
                       {c.sample_issues?.[si]?.length ? (
