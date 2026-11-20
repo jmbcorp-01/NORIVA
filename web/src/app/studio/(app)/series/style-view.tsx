@@ -207,8 +207,8 @@ export function ImageModelPicker({ seriesId, back, current }: { seriesId: string
         그림 모델
       </label>
       <select id="image-model" name="model" defaultValue={current ?? ""} className="rounded-[4px] border border-line-strong bg-paper px-2 py-1 text-[13px]">
-        <option value="">기본 모델 (Nano Banana)</option>
-        {IMAGE_MODELS.filter((m) => m.id !== "fal-ai/nano-banana").map((m) => (
+        <option value="">기본 모델 (Nano Banana Pro)</option>
+        {IMAGE_MODELS.filter((m) => m.id !== "fal-ai/nano-banana-pro").map((m) => (
           <option key={m.id} value={m.id}>
             {m.label} (장당 약 ${m.price})
           </option>
@@ -216,7 +216,7 @@ export function ImageModelPicker({ seriesId, back, current }: { seriesId: string
       </select>
       <Button type="submit">저장</Button>
       <span className="w-full text-[12px] text-ink-soft">
-        지금 {imageModelLabel(current)}. ④ 샘플 9장과 ⑦ 작화가 이 모델로 그려요. Nano Banana Pro는 지시를 가장 잘 따르고, Seedream 4는 아시아 만화체에 강하고 저렴해요.
+        지금 {imageModelLabel(current)}. ④ 샘플 9장과 ⑦ 작화가 이 모델로 그려요. 기본인 Nano Banana Pro가 지시를 가장 잘 따라 품질이 가장 좋아요. Seedream 4는 아시아 만화체에 강하고 저렴해요.
       </span>
     </form>
   );
