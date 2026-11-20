@@ -619,6 +619,15 @@ export async function setStyleChoice(formData: FormData) {
   redirect(path);
 }
 
+function masterBlocked(cands: { samples: (string | null)[]; sample_issues?: { severity: string }[][] }[]): Set<string> {
+  const out = new Set<string>();
+  for (const c of cands)
+    c.samples.forEach((k, si) => {
+      if (k && c.sample_issues?.[si]?.some((x) => x.severity === "critical")) out.add(k);
+    });
+  return out;
+}
+
 /** ④ 화풍: 후보 하나와 화풍 마스터 그림을 골라 승인해요. 마스터는 ⑦ 작화의 모든 컷에 화풍 참조로 들어가요. */
 export async function approveStyle(formData: FormData) {
   const owner = await requireOwner();
@@ -626,11 +635,17 @@ export async function approveStyle(formData: FormData) {
   const id = String(formData.get("artifactId"));
   try {
     const [a] = await db.select().from(schema.artifacts).where(eq(schema.artifacts.id, id));
-    const body = a?.body as { kind?: string; candidates?: { samples: (string | null)[] }[] } | undefined;
+    const body = a?.body as
+      | { kind?: string; candidates?: { samples: (string | null)[]; sample_issues?: { item: string; severity: string }[][] }[] }
+      | undefined;
     if (!a || body?.kind !== "style" || !body.candidates) throw new StudioError("화풍 샘플이 있는 결과물이 아니에요");
     const samples = new Set(body.candidates.flatMap((c) => c.samples.filter(Boolean) as string[]));
     const masters = formData.getAll("masters").map(String).filter((k) => samples.has(k));
     if (masters.length < 1 || masters.length > 5) throw new StudioError("화풍 마스터로 쓸 그림을 1~5장 골라 주세요");
+    // 시대 검사에서 치명 문제가 나온 그림은 마스터가 될 수 없어요. 이후 모든 인물과 컷이 그 옷·머리·소품을 따라 그려요.
+    const blocked = masterBlocked(body.candidates);
+    if (masters.some((k) => blocked.has(k)))
+      throw new StudioError("'고르지 마세요' 표시가 있는 그림은 화풍 마스터로 쓸 수 없어요. 표시 없는 그림을 골라 주세요");
     const chosen = body.candidates.findIndex((c) => c.samples.includes(masters[0]));
     await db
       .update(schema.artifacts)

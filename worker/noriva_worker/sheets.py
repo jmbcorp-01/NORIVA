@@ -62,9 +62,12 @@ SPEC_TASK = """
   나이, 얼굴형, 눈, 머리 모양과 색, 체형, 의상(형태·길이·색), 고정 소품, 신발 순서로 구체적인 단어만 쓴다.
 - period_notes: 시대 고증을 영어로, **맞는 생김새만** 긍정형으로 쓴다(예: straight single-edged sword with a round ring pommel and a plain grip,
   straight scabbard). 금지할 것의 이름(일본도, 코등이 등)은 여기 쓰지 않고 never에만 쓴다.
-- never: 이 인물에 절대 그리면 안 되는 것 영어 목록 (예: curved katana, round tsuba guard, Japanese hakama, Chinese Qing robe, modern clothing).
+- never: 이 인물에 절대 그리면 안 되는 것 영어 목록, 많아야 8개 (예: curved katana, round tsuba guard, Japanese hakama, Chinese Qing robe, modern clothing).
+  그림 모델이 이 인물에서 실제로 틀리기 쉬운 핵심만 고른다. 항목 하나하나가 검사에서 치명 결함이 되므로 비슷한 말을 여러 번 쓰지 않는다.
   검사에서만 쓰고 그림 지시에는 넣지 않는다.
-- ③+ 고증 자료가 있으면 그것이 기준이다. period_notes와 appearance의 옷·머리는 그 자료의 영어 문구를 따르고,
+- ③+ 고증 자료가 있으면 그것이 기준이다. period_notes와 appearance의 옷·머리·관모·무기·도구는 그 자료의 영어 문구를 따르고
+  (자료에 없는 부품이나 장식, 예를 들어 칼의 손 보호판이나 감은 손잡이 끈을 더하지 않는다),
+  같은 계층·성별 인물끼리 머리 모양과 머리 장식이 서로 어긋나지 않게 한다(한 인물에 금지한 이마 띠를 다른 인물에 쓰지 않는다),
   props와 attire는 그 자료의 항목(무기·도구 → props, 옷·머리 → attire)에서 고르며 id와 description을 그 항목 그대로 쓴다.
 - props: 그림 모델이 흔히 잘못 그리는 시대 소품 중 주요 인물이 늘 지니는 **모양이 단단한 물건**(칼·창·활 같은 무기, 도구, 장신구), 많아야 4개.
   두건·옷·머리 모양처럼 몸에 걸친 것은 소품이 아니라 appearance에 쓴다.
@@ -135,9 +138,13 @@ code는 H-2(복식), H-6(무기), H-7(관모·장신구·머리), AI-xx(그림 �
 {spec}
 """
 FIX_BATCH = 3  # 명세 고치기를 한 번에 넣는 인물 수
+NEVER_MAX = 8  # 금지 목록이 길면 항목마다 치명 결함이 되어 점수가 0으로 떨어져요. 핵심만 남겨요.
 
 MASTER_SCHEMA = _obj(
-    {"violations": _arr(_obj({"item": _STR, "character_ids": _arr(_STR), "note": _STR, "fix": _STR}))}
+    {
+        "people": _arr(_obj({"who": _STR, "hair": _STR, "headwear": _STR, "clothing": _STR})),
+        "violations": _arr(_obj({"item": _STR, "character_ids": _arr(_STR), "note": _STR, "fix": _STR})),
+    }
 )
 
 MASTER_TASK = """# 과제: 화풍 마스터의 소품 검사
@@ -147,6 +154,10 @@ MASTER_TASK = """# 과제: 화풍 마스터의 소품 검사
 시대·나라가 다른 무기·복식(일본도와 코등이, 하카마, 기모노, 변발 등)이 보이면 모두 적어라.
 """ + PERIOD_JUDGE_NOTE + """
 머리 모양·머리 장식(망건, 이마 띠, 드러난 상투), 다른 시대 옷(고름, 일본식 옷깃)도 소품과 똑같이 본다.
+- people: 먼저 그림 속 사람마다(얼굴만 보여도) 보이는 그대로 한국어로 적는다. 판단하지 말고 본 것만 쓴다.
+  hair: 머리를 묶은 위치와 모양, 상투가 드러났는지. headwear: 이마나 머리에 두르거나 쓴 것(띠, 끈, 천, 관, 없으면 "없음"). clothing: 깃과 여밈, 소매, 띠.
+- 그다음 people의 묘사를 ③+ 고증 자료의 머리 모양·관모·옷 항목과 하나씩 비교한다. 자료와 다른 것은 모두 violations에 적는다.
+  특히 이마를 가로지르는 띠나 끈, 자료에 없는 머리 장식, 자료와 다른 상투 모양은 얼굴 클로즈업에서도 반드시 적는다.
 - item: 보이는 것(한국어), character_ids: 그 소품을 따라 그리면 안 되는 인물 id, note: 어디에 어떻게 보이는지 한 문장.
 - fix: 그림 편집 모델에 줄 영어 한 문장. 지우기만 하면 빈자리가 어색한 것(머리 모양, 옷)은 무엇으로 바꿀지 긍정형으로 쓴다
   (예: "Replace the forehead band and exposed topknot with hair tied in a simple low knot with a plain cloth tie").
@@ -171,6 +182,13 @@ PHOTO_TASK = """# 과제: 고증 참고 사진 확인
 ## 소품·의상
 {props}
 """
+
+NORMALIZE_PROMPT = (
+    "Edit reference image 1. Redraw the hair, headwear and clothing of every person in the image to match this approved period design exactly: {look} "
+    "Nothing is worn across the forehead unless the design above describes it. "
+    "Keep everything else exactly the same: faces, expressions, bodies, poses, hands, line weight, coloring, shading, lighting and background. "
+    "Do not add any text."
+)
 
 CLEAN_PROMPT = (
     "Edit reference image 1. Remove these things completely: {items}. {fixes} "
@@ -322,6 +340,11 @@ def _issues(chars: list[dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+def _counts(defects: list[dict[str, Any]]) -> dict[str, int]:
+    """점수만 보면 그림 솜씨 점수로 읽혀요. 명세·고증을 몇 개 어겼는지 함께 남겨요."""
+    return {s: sum(1 for d in defects if d.get("severity") == s) for s in ("critical", "major")}
+
+
 def _spec_json(c: dict[str, Any]) -> str:
     keys = ("id", "name", "kind", "appearance", "period_notes", "never")
     return json.dumps({k: c.get(k) for k in keys}, ensure_ascii=False)
@@ -394,7 +417,8 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                         if (u.get(k) or "").strip():
                             c[k] = u[k].strip()
                     if u.get("never"):
-                        c["never"] = list(dict.fromkeys([*(c.get("never") or []), *u["never"]]))
+                        # 대표 지시로 새로 막은 것을 앞에 두고, 전체는 핵심만 남겨요
+                        c["never"] = list(dict.fromkeys([*u["never"], *(c.get("never") or [])]))[:NEVER_MAX + 2]
                     if (u.get("edit") or "").strip():
                         edits[c["id"]] = u["edit"].strip()
             rule_suggestions = list(dict.fromkeys(rules))[:8]
@@ -414,6 +438,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                 cid += "x"
             seen.add(cid)
             c["id"] = cid
+            c["never"] = [str(x) for x in c.get("never") or [] if str(x).strip()][:NEVER_MAX]
         props = []
         people = {c["id"] for c in chars if c.get("kind", "person") == "person"}
         for kind, items, n in (("object", r.data.get("props") or [], 4), ("attire", r.data.get("attire") or [], 2)):
@@ -433,7 +458,10 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     #    지우고도 남아 있으면 그 소품과 엮인 인물만 마스터를 빼요.
     master_warnings: list[dict[str, Any]] = []
     no_master: set[str] = set()
-    clean_keys: list[str] = list(prev.get("clean_masters") or []) if only else []
+    master_keys = [str(k) for k in (style_body.get("style_masters") or [])[:2]]
+    # 깨끗한 마스터는 지금 고른 화풍 마스터와 같은 그림에서 만든 것만 다시 써요(화풍을 다시 고르면 새로 만들어요)
+    same_master = prev.get("clean_from") == master_keys and prev.get("clean_research") == research_body.get("era")
+    clean_keys: list[str] = list(prev.get("clean_masters") or []) if only and same_master else []
     ids = {c["id"] for c in todo}
 
     def screen(imgs: list[bytes]) -> list[dict[str, Any]]:
@@ -452,13 +480,32 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             for v in r.data.get("violations") or []
         ]
 
+    look = "; ".join(
+        f"{it.get('name', '')} ({', '.join(it.get('who') or []) or 'everyone'}): {it['description']}"
+        for it in research_items.values()
+        if it.get("category") in ("attire", "hair", "headwear") and (it.get("description") or "").strip()
+    )
     if clean_keys and all(media.get(k) for k in clean_keys):
         masters = [m for m in (media.get(k) for k in clean_keys) if m]
-    elif masters and any(c.get("never") for c in todo):
+        # 다시 그리기: 지난번 마스터 검사 결과를 그대로 이어 써요
+        master_warnings = [dict(v) for v in prev.get("master_warnings") or []]
+        for v in master_warnings:
+            no_master.update(x for x in v.get("characters") or [] if x in ids)
+    elif masters:
+        cleaned_any = False
+        if look:
+            # 그림 모델은 마스터의 머리·옷까지 따라 그려요. 검사 전에 ③+ 고증 자료대로 머리·옷을 먼저 고쳐 그려요.
+            _report(ctx, "화풍 마스터의 머리·옷을 고증 자료대로 고치는 중")
+            fixed = []
+            for i, m in enumerate(masters):
+                img = images.generate(NORMALIZE_PROMPT.format(look=look), seed=2 + i, aspect_ratio="3:4", references=[m], model=model)
+                costs.add(img.cost_entry())
+                fixed.append(trim_border(img.data))
+            masters = fixed
+            cleaned_any = True
         _report(ctx, "화풍 마스터의 소품 검사 중")
         found = screen(masters)
         # 한 번에 안 지워지면 남은 것만 한 번 더 지워요(머리 모양처럼 바꿔 그려야 하는 것은 fix 문장으로)
-        cleaned_any = False
         for rnd in range(2):
             if not found:
                 break
@@ -594,8 +641,11 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         for _, local in done:
             costs.extend(local)
         props = [new_props.get(p["id"], p) for p in props]
-    # 검사를 통과한 소품 시트만 인물 시트의 참고 그림으로 써요. 틀린 소품을 넣으면 인물도 같이 틀려요.
-    prop_imgs = {p["id"]: thumbnail(img, 1024) for p in props if p.get("passed") and p.get("image") and (img := media.get(p["image"]))}
+    # 치명 결함(다른 시대·나라 모양)이 없는 소품·의상 시트는 인물 시트의 참고 그림으로 써요.
+    # 참고 그림이 없으면 그림 모델이 익숙한 일본도·하카마로 돌아가서, 주요 결함 몇 개 있는 시트가 없는 것보다 훨씬 나아요.
+    for p in props:
+        p["as_ref"] = bool(p.get("image")) and (bool(p.get("passed")) or not any(d.get("severity") == "critical" for d in p.get("defects") or []))
+    prop_imgs = {p["id"]: thumbnail(img, 1024) for p in props if p["as_ref"] and (img := media.get(p["image"]))}
 
     def props_of(c: dict[str, Any]) -> list[dict[str, Any]]:
         mine = [p for p in props if c["id"] in p["owners"] and p["id"] in prop_imgs]
@@ -609,7 +659,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             notes.append(f"두 번째부터 {len(masters)}장은 고른 화풍 마스터다. 선과 채색이 이 화풍과 같은지 본다(마스터의 인물·소품·장식은 기준이 아니다).")
         if mine:
             a = len(masters) + 2
-            notes.append(f"{a}번째부터 {len(mine)}장은 검사를 통과한 소품·의상 시트({', '.join(p['name'] for p in mine)})다. 의상 시트와 옷의 재단·깃·머리 모양이 다르면 주요다.")
+            notes.append(f"{a}번째부터 {len(mine)}장은 이 작품의 기준 소품·의상 시트({', '.join(p['name'] for p in mine)})다. 의상 시트와 옷의 재단·깃·머리 모양이 다르면 주요다.")
         r = llm.json(
             system,
             CHECK_TASK.format(
@@ -660,7 +710,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
             "score": best["score"],
             "defects": best["defects"],
             "passed": ok(best),
-            "candidates": [{"image": t["image"], "score": t["score"]} for t in tries],
+            "candidates": [{"image": t["image"], "score": t["score"], **_counts(t["defects"]), "defects": t["defects"]} for t in tries],
         }, local
 
     results = _map_progress(ctx, 4, draw, todo, "인물 시트 그리는 중")
@@ -694,6 +744,8 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         "master_warnings": master_warnings,
         "props": props,
         "clean_masters": clean_keys,
+        "clean_from": master_keys,
+        "clean_research": research_body.get("era"),
         "photo_notes": photo_notes,
         "found_photos": found_photos,
         "search_log": search_log,

@@ -92,6 +92,8 @@ class FakeModel:
                 {"id": "sword", "category": "weapon", "name": "환두대도", "who": ["순정"], "description": "straight sword with a gold ring pommel",
                  "mistakes": ["코등이 있는 일본도"], "search": ["ring pommel sword"], "certainty": "high"},
                 {"id": "dragon", "category": "creature", "name": "동해 용", "who": [], "description": "seal-like sea dragon", "mistakes": [], "search": [], "certainty": "low"},
+                {"id": "hair", "category": "hair", "name": "머리 모양", "who": ["모든 인물"], "description": "small topknot covered by a plain cloth cap",
+                 "mistakes": ["이마 띠"], "search": [], "certainty": "medium"},
             ]}
         elif "photos" in props and "matches:" in task:
             data = {"photos": [{"index": 0, "matches": True, "real_photo": True, "note": "실물"}]}
@@ -556,7 +558,7 @@ def test_research_stage_feeds_style_and_sheets(store, tmp_path, monkeypatch):
 
     rid, research = _run(store, tools, sid, None, "research", [chars])
     assert research["kind"] == "research" and research["era"] == "통일신라 8세기"
-    sword, story_dragon = research["items"]
+    sword, story_dragon, hair = research["items"]
     assert sword["id"] == "sword" and sword["photos"][0]["license"] == "CC0" and sword["photos"][0]["image"].endswith("sword-1.jpg")
     assert story_dragon["photos"] == [] and searched == [["ring pommel sword"]]  # 설화 속 존재는 사진을 찾지 않아요
     assert "생김새: straight sword" in research["markdown"] and not images.prompts  # 그림은 그리지 않아요
@@ -576,6 +578,11 @@ def test_research_stage_feeds_style_and_sheets(store, tmp_path, monkeypatch):
     assert searched == [["Silla clay figurine"]]  # 의상은 고증 자료에 사진이 없어서 공용에서 찾음
     spec_task = [t for props, t, _ in model.calls if list(props) == ["characters", "props", "attire"]][-1]
     assert "고증 자료" in spec_task
+    # 마스터는 검사 전에 고증 자료의 머리 모양대로 고쳐 그리고, 그 깨끗한 마스터를 어떤 그림에서 만들었는지 남겨요
+    assert any("approved period design" in p and "small topknot covered by a plain cloth cap" in p for p, _ in images.prompts)
+    assert sheets["clean_masters"] and sheets["clean_from"] == [master]
+    master_screen = [t for props, t, _ in model.calls if "violations" in props][-1]
+    assert "people" in master_screen
 
 
 def test_rhythm_warnings_find_repeated_shots_and_flat_angles():

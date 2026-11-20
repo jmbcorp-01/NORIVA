@@ -5,6 +5,16 @@ import { addSeriesRules, redrawSheets, updateHistoryRefs } from "../../actions";
 import { mediaUrl } from "./panel-views";
 
 type Defect = { code: string; severity: "critical" | "major" | "minor"; note: string };
+/** 점수는 그림 솜씨가 아니라 명세·고증 위반 개수로 매겨요(치명 −30, 주요 −10). 무엇을 어겼는지 같이 보여 줘요. */
+function violations(critical: number, major: number): string {
+  const parts = [critical ? `치명 ${critical}` : "", major ? `주요 ${major}` : ""].filter(Boolean);
+  return parts.length ? `위반 ${parts.join(" · ")}` : "위반 없음";
+}
+
+function count(defects: Defect[] | undefined, s: Defect["severity"]): number {
+  return (defects ?? []).filter((d) => d.severity === s).length;
+}
+
 type SheetChar = {
   id: string;
   name: string;
@@ -17,7 +27,7 @@ type SheetChar = {
   score?: number;
   passed?: boolean;
   defects?: Defect[];
-  candidates?: { image: string; score: number }[];
+  candidates?: { image: string; score: number; critical?: number; major?: number }[];
 };
 type SheetsBody = {
   kind: "sheets";
@@ -30,7 +40,7 @@ type SheetsBody = {
   clean_masters?: string[];
   found_photos?: { prop: string; image: string; title: string; page: string; license: string; artist: string }[];
   photo_notes?: { index: number; real_photo: boolean; props: string[]; note: string }[];
-  props?: { id: string; name: string; owners: string[]; description: string; kind?: string; image?: string; score?: number; passed?: boolean; defects?: Defect[] }[];
+  props?: { id: string; name: string; owners: string[]; description: string; kind?: string; image?: string; score?: number; passed?: boolean; as_ref?: boolean; defects?: Defect[] }[];
   search_log?: { prop: string; queries: string[]; candidates: number; accepted: number; notes: string[] }[];
   summary: { characters: number; passed: number };
 };
@@ -77,16 +87,17 @@ export function SheetsView({
           <ul className="mt-1 space-y-0.5 text-ink-soft">
             {failed.map((c) => (
               <li key={c.id}>
-                {c.name} {c.score}점 · {(c.defects ?? []).filter((d) => d.severity !== "minor").slice(0, 2).map((d) => d.note).join(" / ") || "기준 점수 미달"}
+                {c.name} {c.score}점 ({violations(count(c.defects, "critical"), count(c.defects, "major"))}) · {(c.defects ?? []).filter((d) => d.severity !== "minor").slice(0, 2).map((d) => d.note).join(" / ") || "기준 점수 미달"}
               </li>
             ))}
           </ul>
+          <p className="mt-1 text-ink-faint">점수는 그림 솜씨가 아니라 인물 명세와 ③+ 고증 자료를 어긴 개수로 매겨요. 치명 1개에 30점, 주요 1개에 10점이 깎여요.</p>
           <p className="mt-1 text-ink-faint">다시 그리면 지난 검사에서 걸린 치명·주요 문제를 자동으로 고치라고 넣어요. 지시는 더 바꾸고 싶은 것만 적으면 돼요.</p>
         </div>
       ) : null}
       {body.clean_masters?.length ? (
         <div className="mt-2 text-[12px] text-ink-soft">
-          <p>화풍 마스터에서 금지 소품과 장식을 지운 깨끗한 마스터로 그렸어요. ⑦ 작화도 이 그림을 써요.</p>
+          <p>화풍 마스터의 머리·옷을 ③+ 고증 자료대로 고치고 금지 소품과 장식을 지운 깨끗한 마스터로 그렸어요. ⑦ 작화도 이 그림을 써요.</p>
           <div className="mt-1 flex gap-2">
             {body.clean_masters.map((k) => (
               <ZoomImage key={k} src={mediaUrl(k)} alt="깨끗한 화풍 마스터" className="h-24 w-auto rounded-[4px] border border-line" loading="lazy" />
@@ -168,6 +179,8 @@ export function SheetsView({
                   {p.kind === "attire" ? <span className="text-ink-faint">의상</span> : null}
                   <span className="text-ink-faint">{p.owners.join(", ")}</span>
                   {typeof p.score === "number" ? <Badge tone={p.passed ? "pine" : "plum"}>{p.score}점</Badge> : null}
+                  {typeof p.score === "number" ? <span className="text-ink-faint">{violations(count(p.defects, "critical"), count(p.defects, "major"))}</span> : null}
+                  {p.as_ref && !p.passed ? <span className="text-ink-soft">치명 결함이 없어 참고 그림으로 썼어요</span> : null}
                 </div>
                 {p.defects?.filter((d) => d.severity !== "minor").map((d, i) => (
                   <p key={i} className={d.severity === "critical" ? "text-plum" : "text-ink-soft"}>
@@ -192,7 +205,7 @@ export function SheetsView({
                 <div className="mt-1 flex gap-2">
                   {c.candidates.map((x, i) => (
                     <a key={x.image} href={mediaUrl(x.image)} target="_blank" className="text-[11px] text-indigo underline-offset-2 hover:underline">
-                      후보 {i + 1} · {x.score}점
+                      후보 {i + 1} · {x.score}점{typeof x.critical === "number" ? ` (${violations(x.critical, x.major ?? 0)})` : ""}
                     </a>
                   ))}
                 </div>
@@ -205,6 +218,7 @@ export function SheetsView({
                   {c.id} · {KIND[c.kind ?? "person"]}
                 </span>
                 {typeof c.score === "number" ? <Badge tone={c.passed ? "pine" : "plum"}>{c.score}점</Badge> : null}
+                {typeof c.score === "number" ? <span className="text-[12px] text-ink-faint">{violations(count(c.defects, "critical"), count(c.defects, "major"))}</span> : null}
               </div>
               <p className="mt-1 text-ink-soft">{c.appearance}</p>
               {c.period_notes ? <p className="mt-1 text-[12px] text-ink-soft">고증: {c.period_notes}</p> : null}
