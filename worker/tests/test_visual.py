@@ -530,7 +530,13 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path, monkeypatch):
     sheet_prompts = [(p, n) for p, n in images.prompts if "turnaround sheet" in p]
     # 순정: 화풍 마스터 + 잠긴 머리·옷·칼 = 4장, 고쳐 그릴 때는 첫 시트 + 잠긴 부품 3장
     assert [n for p, n in sheet_prompts if "approved hairstyle and headwear" in p] == [4, 4]
-    assert any(p.startswith("Edit reference image 1, a character design turnaround sheet") and "Fix these problems: P-1" in p for p, _ in sheet_prompts)
+    # 잠긴 부품과 다른 곳은 금지어 없이 '그 참고 그림과 똑같이'로 고쳐요
+    assert any(p.startswith("Edit reference image 1, a character design turnaround sheet")
+               and "Make this object's shape, size and fittings wherever it appears identical to reference image 4." in p
+               and "P-1" not in p for p, _ in sheet_prompts)
+    # 옷차림 그림 속 인물의 머리는 따라 그리지 않고, 전신 그림의 머리는 클로즈업과 같게
+    first = sheet_prompts[0][0]
+    assert "ignore the face, hair and headwear of the figure" in first and "small heads of the full-body views" in first
     assert "잠근 부품 그림" in model.sheet_tasks[0]
     assert not any("katana" in p for p, _ in sheet_prompts) and all("no view labels" in p for p, _ in sheet_prompts)
     assert sheets["summary"] == {"characters": 2, "passed": 2, "parts": 3, "parts_locked": 3}
@@ -727,3 +733,19 @@ def test_fal_retries_no_output_with_new_seed(monkeypatch):
     with pytest.raises(NoImageError):
         fal.generate("p", seed=5)
     assert len(seeds) == 3
+
+
+def test_fix_text_points_to_locked_refs_without_naming_bad_items():
+    from noriva_worker.sheets import _fix_text
+
+    props = [{"id": "h", "kind": "hair"}, {"id": "a", "kind": "attire"}, {"id": "s", "kind": "object"}]
+    defects = [
+        {"code": "P-1", "severity": "critical", "note": "머리: 이마띠", "part": "h"},
+        {"code": "P-1", "severity": "minor", "note": "옷: 버클", "part": "a"},
+        {"code": "K-1", "severity": "major", "note": "흉터 없음"},
+        {"code": "V-7", "severity": "minor", "note": "선"},
+    ]
+    t = _fix_text(defects, props)
+    assert "identical to reference image 2" in t and "full-body front, side and back views" in t
+    assert "reference image 3" not in t and "이마띠" not in t  # 경미한 부품 차이는 고치지 않고, 금지 물건 이름은 쓰지 않아요
+    assert "Also fix: K-1 흉터 없음" in t and "V-7" not in t

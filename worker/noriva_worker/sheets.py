@@ -97,7 +97,7 @@ CHECK_SCHEMA = _obj(
 
 SHEET_CHECK_SCHEMA = _obj(
     {
-        "parts": _arr(_obj({"id": _STR, "matches": {"type": "boolean"}, "note": _STR})),
+        "parts": _arr(_obj({"id": _STR, "matches": {"type": "boolean"}, "severity": {"type": "string", "enum": ["critical", "major", "minor"]}, "note": _STR})),
         "defects": _arr(
             _obj({"code": _STR, "severity": {"type": "string", "enum": ["critical", "major", "minor"]}, "note": _STR})
         ),
@@ -112,9 +112,14 @@ CHECK_TASK = """# 과제: 인물 시트 검사
   시트 한 장에 담을 수 없는 것(다른 의상, 다른 장면, 크기 비교 대상)은 결함으로 적지 않는다. 얼굴 클로즈업 표정은 중립·화남·웃음이면 된다.
 - 대표가 잠근 부품 그림(칼·도구, 옷차림, 머리 모양)이 함께 있으면 그것이 기준이다. 글 명세와 부품 그림이 다르면 그림이 우선이고, 그 차이는 결함이 아니다.
   parts에 부품마다 시트 속 모양이 잠긴 부품 그림과 같은지(matches)와 다르면 어디가 다른지(note, 한국어 한 문장)를 적는다.
+  다르면 severity를 정한다: 실루엣·구조가 다름(머리를 감싸거나 이마를 가로지르는 것이 생김, 칼날·칼집 모양, 손잡이와 칼날 사이 보호판의 모양·크기, 옷 길이·여밈 방향)은 critical,
+  눈에 띄는 장식·색 차이는 major, 버클·끈 끝·소매 띠 폭 같은 작은 부속 차이는 minor.
+  전신 정면·측면·뒷모습을 모두 본다. 얼굴 클로즈업만 맞고 전신 그림이 다르면 다른 것이다.
+  잠긴 부품이 다루는 물건(그 칼, 그 옷, 그 머리 모양)의 차이는 parts에만 적고 defects에 다시 적지 않는다. 'never' 항목이라도 부품에 속하면 parts에만 적는다.
 - 그다음 명세의 period_notes와 appearance 중 부품이 다루지 않는 것(얼굴, 나이, 체형, 색, 흉터 같은 고정 특징)을 그림과 맞춰 본다.
 - 소품 시트가 함께 있으면 인물이 지닌 소품이 소품 시트와 같은 물건인지 본다. 다르면 치명이다.
 - 치명(critical): 명세의 'never'에 있는 것이 보임, 시대·나라가 다른 무기나 복식(일본도, 코등이, 하카마, 기모노, 중국 청나라 옷 등), 글자·워터마크, 얼굴·손 해부학 붕괴.
+  (아래 칼·머리 규칙은 그 물건의 잠긴 부품 그림이 없을 때만 쓴다. 잠긴 그림에 있는 모양은 결함이 아니다.)
   칼은 특히 엄격하게 본다: 명세가 코등이 없는 칼인데 손잡이와 칼날 사이에 둥근·네모 코등이가 있음, 일본도식으로 끈을 마름모로 감은 손잡이,
   휜 칼날이나 휜 칼집, 명세에 있는 고리자루(ring pommel)가 없음 — 이 중 하나라도 보이면 치명이다.
   명세와 다른 머리 모양(예: 높이 올린 쪽머리가 명세인데 낮게 묶음)도 이 인물의 기준을 바꾸므로 치명으로 적는다.
@@ -301,8 +306,10 @@ def _prop_refs_text(props: list[dict[str, Any]], start: int) -> list[str]:
             "copy exactly this hair construction and headwear, or the bare head if none is shown, in every view; the face follows the character description."
             if p.get("kind") == "hair"
             else f"Reference image {start + i} is the approved period costume design ({p['description']}): "
-            "dress this character in exactly this cut of clothing (length, collar, closure, sleeves, belt, trousers or skirt, shoes) "
-            "and this hairstyle construction; colors and personal details follow the character description."
+            "dress this character in exactly this cut of clothing (length, collar, closure, sleeves, belt, trousers or skirt, shoes); "
+            + ("ignore the face, hair and headwear of the figure in this image, the hair follows the hairstyle reference; "
+               if any(q.get("kind") == "hair" for q in props) else "copy its hairstyle construction too; ")
+            + "colors and personal details follow the character description."
             if p.get("kind") == "attire"
             else f"Reference image {start + i} is the approved prop design for {p['name']} ({p['description']}): "
             "wherever this object appears, draw exactly this object with the same shape, fittings and colors."
@@ -327,6 +334,8 @@ def _sheet_prompt(base: str, style: str, c: dict[str, Any], n_masters: int, prop
         else "Full body front, side and back views plus one head close-up.",
         f"Era-accurate details: {c['period_notes']}" if c.get("period_notes") else "",
         *refs,
+        "The hair and headwear on the small heads of the full-body views are exactly the same as in the head close-ups."
+        if any(p.get("kind") == "hair" for p in props) else "",
         f"Style: {style}",
         "Pure flat white background with no texture.",
         NO_TEXT,
@@ -420,6 +429,26 @@ def _edit_prompt(c: dict[str, Any], edit: str, props: list[dict[str, Any]]) -> s
         NO_TEXT,
     ]
     return " ".join(p for p in parts if p)
+
+
+def _fix_text(defects: list[dict[str, Any]], props: list[dict[str, Any]]) -> str:
+    """다시 그릴 때 줄 고칠 점. 잠긴 부품과 다른 곳은 금지어를 쓰지 않고 '그 참고 그림과 똑같이'로 말해요
+    (그림 모델은 지시에 나온 물건 이름을 오히려 그려 넣어요)."""
+    idx = {p["id"]: i + 2 for i, p in enumerate(props)}
+    out = []
+    for d in defects:
+        pid = d.get("part")
+        if d.get("severity") == "minor" or pid not in idx:
+            continue
+        kind = next((p.get("kind") for p in props if p["id"] == pid), "object")
+        what = {"hair": "the hair and headwear on every head, including the small heads of the full-body front, side and back views; "
+                        "the forehead and hairline look exactly as in that reference",
+                "attire": "the clothing cut, closure, belt and shoes in every view"}.get(kind, "this object's shape, size and fittings wherever it appears")
+        out.append(f"Make {what} identical to reference image {idx[pid]}.")
+    rest = _issue_lines([d for d in defects if not d.get("part")])
+    if rest:
+        out.append(f"Also fix: {rest}")
+    return " ".join(out)
 
 
 def _issue_lines(defects: list[dict[str, Any]]) -> str:
@@ -872,12 +901,15 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         local.append(r.result.cost_entry())
         names = {p["id"]: p["name"] for p in mine}
         verdict = {_slug(x.get("id", "")): x for x in r.data.get("parts") or []}
-        part_checks = [
-            {"id": pid, "name": nm, "matches": bool(verdict.get(pid, {}).get("matches", True)), "note": verdict.get(pid, {}).get("note", "")}
-            for pid, nm in names.items()
-        ]
-        # 잠긴 부품과 다르면 치명이에요. 부품은 대표가 고른 기준이라 모든 회차가 그 모양을 따라야 해요.
-        defects = [*r.data["defects"], *({"code": "P-1", "severity": "critical", "note": f"{x['name']}: 잠긴 부품과 다름. {x['note']}".strip()}
+        part_checks = []
+        for pid, nm in names.items():
+            v = verdict.get(pid, {})
+            x = {"id": pid, "name": nm, "matches": bool(v.get("matches", True)), "note": v.get("note", "")}
+            if not x["matches"]:
+                x["severity"] = v.get("severity") if v.get("severity") in WEIGHT else "critical"
+            part_checks.append(x)
+        # 잠긴 부품과 다르면 그 차이의 크기대로 깎아요. 모양·구조가 다르면 치명, 작은 부속 차이는 경미.
+        defects = [*r.data["defects"], *({"code": "P-1", "severity": x["severity"], "note": f"{x['name']}: 잠긴 부품과 다름. {x['note']}".strip(), "part": x["id"]}
                                          for x in part_checks if not x["matches"])]
         return {"score": score_of(defects), "defects": defects, "part_checks": part_checks}
 
@@ -898,13 +930,13 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                 break
             seed = 1 + k + 10 * (ctx.get("attempt") or 1)
             prev_best = max(tries, key=lambda t: t["score"]) if tries else None
-            fix = _issue_lines(prev_best["defects"]) if prev_best else ""
+            fix = _fix_text(prev_best["defects"], mine) if prev_best else ""
             if k == 0 and old:
                 img = images.generate(_edit_prompt(c, edits[c["id"]], mine), seed=seed, aspect_ratio="4:3", references=[old, *prop_refs], model=model)
             elif prev_best and fix and not (old and k == 1):
                 # (대표 지시로 이전 시트를 고친 첫 그림이 떨어지면, 두 번째는 새 명세로 새로 그려요)
                 # 다시 그리지 않고 지금까지 가장 나은 시트에서 걸린 곳만 고쳐요. 맞게 그린 얼굴·옷은 그대로 남아요.
-                img = images.generate(_edit_prompt(c, f"Fix these problems: {fix}", mine), seed=seed, aspect_ratio="4:3",
+                img = images.generate(_edit_prompt(c, fix, mine), seed=seed, aspect_ratio="4:3",
                                       references=[prev_best["data"], *prop_refs], model=model)
             else:
                 img = images.generate(_sheet_prompt(base, style, c, n_masters, mine, note), seed=seed, aspect_ratio="4:3", references=refs or None, model=model)
