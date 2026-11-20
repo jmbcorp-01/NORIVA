@@ -103,6 +103,9 @@ class FakeModel:
             # 화풍 샘플 시대 검사: 첫 샘플만 걸려서 한 번 더 그림
             self.sample_checks = getattr(self, "sample_checks", 0) + 1
             data = {"issues": [{"item": "망건", "severity": "critical", "fix": "Hair in a low knot with a cloth tie."}] if self.sample_checks == 1 else []}
+        elif "그리기 전 명세 글 검사" in task:
+            self.lint_tasks = getattr(self, "lint_tasks", []) + [task]
+            data = {"characters": [{"id": "Sun Jeong", "appearance": "", "period_notes": "", "never": ["curved katana", "tsuba"], "changes": "금지 목록을 줄였어요"}], "props": []}
         elif list(props) in (["characters"], ["characters", "props"], ["characters", "props", "attire"]):
             data = {"characters": [
                 {"id": "Sun Jeong", "name": "순정", "kind": "person", "role": "main", "appearance": "man, 30, topknot, dark navy durumagi",
@@ -482,11 +485,15 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path, monkeypatch):
     prop = sheets["props"][0]
     assert prop["owners"] == ["sunjeong"] and prop["passed"] and prop["image"].endswith("prop-sword-2.png")
     prop_prompts = [(p, n) for p, n in images.prompts if p.count("Prop design sheet")]
-    assert len(prop_prompts) == 2 and "drawn with the blade fully visible" in prop_prompts[0][0]
+    assert len(prop_prompts) == 1 and "drawn with the blade fully visible" in prop_prompts[0][0]
+    # 두 번째는 다시 그리지 않고 첫 그림에서 걸린 곳만 고쳐요 (첫 그림 + 실물 사진)
+    prop_fix = [(p, n) for p, n in images.prompts if p.startswith("Edit reference image 1, a prop design sheet")]
+    assert len(prop_fix) == 1 and "Change only these problems" in prop_fix[0][0] and prop_fix[0][1] == 2
     # 시대 의상 시트도 먼저 그려 검사하고, 사람인 주인만 남김
     attire = sheets["props"][1]
     assert attire["kind"] == "attire" and attire["owners"] == ["sunjeong"] and attire["passed"]
-    assert sum("Period costume reference sheet" in p for p, _ in images.prompts) == 2
+    assert sum("Period costume reference sheet" in p for p, _ in images.prompts) == 1
+    assert sum(p.startswith("Edit reference image 1, a period costume design sheet") for p, _ in images.prompts) == 1
     # 업로드한 실물 사진이 없으면 공용에서 찾아, 검사를 통과한 사진을 소품 시트의 참고 그림으로
     assert searched == [["ring pommel sword"], ["Silla clay figurine"]] and all(n == 1 for _, n in prop_prompts)
     # 맞지 않는 사진은 쓰지 않고 검색 기록에 남김
@@ -507,8 +514,9 @@ def test_sheets_stage_then_art_uses_fixed_sheets(store, tmp_path, monkeypatch):
     assert all(n == 3 and "approved prop design for 환두대도" in p and "approved period costume design" in p for p, n in sheet_prompts if "순정" in p)
     # 한 번에 안 지워지면 고칠 문장을 넣어 한 번 더 지움
     assert images.prompts[1][0].startswith("Edit reference image 1. Remove these things completely: 긴 뿔")
-    # 앞 시도에서 걸린 치명 문제를 다음 그림 지시에 넣음
-    assert any("Fix these problems found in the previous attempt: GA-3 일본도" in p for p, _ in images.prompts if "순정" in p)
+    # 앞 시도에서 걸린 치명 문제만 첫 시트에서 고쳐 그림 (다시 그리지 않음)
+    assert any(p.startswith("Edit reference image 1, a character design turnaround sheet") and "Fix these problems: GA-3 일본도" in p
+               for p, _ in images.prompts)
 
     # 고른 인물만 다시 그리기: 명세는 그대로, 지시는 그 인물에게만
     images.prompts.clear()
@@ -583,6 +591,9 @@ def test_research_stage_feeds_style_and_sheets(store, tmp_path, monkeypatch):
     assert sheets["clean_masters"] and sheets["clean_from"] == [master]
     master_screen = [t for props, t, _ in model.calls if "violations" in props][-1]
     assert "people" in master_screen
+    # 그리기 전에 명세 글을 고증 자료와 맞춰 보고, 고친 것을 남겨요
+    assert "③+ 고증 자료" in model.lint_tasks[-1] and "small topknot" in model.lint_tasks[-1]
+    assert sheets["spec_fixes"] and sheets["spec_fixes"][0]["changes"] == "금지 목록을 줄였어요"
 
 
 def test_rhythm_warnings_find_repeated_shots_and_flat_angles():
@@ -592,3 +603,17 @@ def test_rhythm_warnings_find_repeated_shots_and_flat_angles():
         [("wide", "high angle"), ("close-up", "eye level"), ("close-up", "eye level"), ("close-up", "eye level"), ("medium", "eye level"), ("wide", "low angle")])]
     w = rhythm_warnings(ps)
     assert any(x.startswith("2~4컷") for x in w) and any("정면 눈높이" in x for x in w)
+
+
+def test_sheet_retries_stop_when_stalled_or_over_budget():
+    """고쳐 그려도 치명 결함이 줄지 않으면 멈추고, 다시 그리기 비용 상한을 넘으면 더 그리지 않아요."""
+    from noriva_worker.sheets import _Budget, _stalled
+
+    crit = {"code": "H-6", "severity": "critical", "note": "코등이"}
+    assert not _stalled([{"defects": [crit], "score": 70}])
+    assert _stalled([{"defects": [crit], "score": 70}, {"defects": [crit], "score": 70}])
+    assert not _stalled([{"defects": [crit, crit], "score": 40}, {"defects": [crit], "score": 70}])
+    b = _Budget(0.1)
+    assert b.ok()
+    b.spend({"cost_usd": 0.15})
+    assert not b.ok() and _Budget(0).ok()
