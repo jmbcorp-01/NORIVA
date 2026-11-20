@@ -79,6 +79,31 @@ score는 0~100. 이 시트를 30화 동안 그대로 써도 될 때만 80 이상
 
 SHEET_PASS = 80
 
+FIX_SCHEMA = _obj(
+    {
+        "updates": _arr(
+            _obj({"id": _STR, "appearance": _STR, "period_notes": _STR, "never": _arr(_STR), "edit": _STR})
+        )
+    }
+)
+
+FIX_TASK = """# 과제: ④+ 인물 시트 — 대표 지시를 고정 명세에 반영
+
+대표가 아래 인물을 다시 그리라며 지시를 남겼다. 지시 하나에 여러 인물 이야기가 섞여 있을 수 있다. 인물마다 자기에게 해당하는 부분만 반영한다.
+- appearance, period_notes, never: 지시를 반영한 새 명세(영어). 지시와 관계없는 부분은 글자 그대로 둔다. appearance는 70단어 이내.
+  ⑦ 작화는 appearance와 never만 보므로, 지시가 무기·소품·머리 모양을 말하면 appearance에도 그 생김새를 구체적으로 적는다.
+  지시가 없애라고 한 것(예: 코등이, 휜 칼, 두건 끈)은 never에 영어로 더한다.
+- edit: 이전 시트 그림에서 바꿀 것만 적은 영어 편집 지시 한두 문장
+  (예: Replace the sword with a straight single-edged Silla ring-pommel sword (hwandu daedo): no guard at all, plain grip, round ring at the pommel end, straight plain scabbard.).
+  이 인물에 해당하는 지시가 없으면 빈 문자열.
+
+## 대표 지시
+{instruction}
+
+## 다시 그릴 인물의 현재 명세
+{specs}
+"""
+
 
 def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9_-]", "", (s or "").lower()) or "c"
@@ -87,7 +112,10 @@ def _slug(s: str) -> str:
 def _sheet_prompt(base: str, style: str, c: dict[str, Any], n_masters: int, n_history: int, note: str) -> str:
     refs = []
     if n_masters:
-        refs.append(f"Reference image(s) 1-{n_masters} are this series' approved style masters: match their line, coloring and finish, not their characters.")
+        refs.append(
+            f"Reference image(s) 1-{n_masters} are this series' approved style masters: match their line, coloring and finish only. "
+            "Do not copy their characters, weapons, props, costumes or hairstyles."
+        )
     if n_history:
         a = n_masters + 1
         refs.append(
@@ -107,6 +135,23 @@ def _sheet_prompt(base: str, style: str, c: dict[str, Any], n_masters: int, n_hi
         f"Style: {style}",
         "Pure flat white background with no texture. No text, labels or watermark.",
         f"Director's note: {note}" if note else "",
+    ]
+    return " ".join(p for p in parts if p)
+
+
+def _edit_prompt(c: dict[str, Any], edit: str, n_history: int) -> str:
+    """이전 시트에서 고칠 곳만 바꾸는 편집 지시. 얼굴·옷·구도는 그대로 두고 지시한 것만 바꿔요."""
+    never = ", ".join(c.get("never") or [])
+    parts = [
+        "Edit reference image 1, a character design turnaround sheet for a Korean webtoon.",
+        "Keep the same character, face, body, poses, layout, outfit colors and drawing style exactly as they are.",
+        f"Change only this: {edit}",
+        "Apply the change consistently in every view (front, side, back) and in the close-ups where it is visible.",
+        f"Reference image(s) 2-{1 + n_history} are historical references: follow their real shapes, not their drawing style." if n_history else "",
+        f"Character spec: {c['appearance']}",
+        f"Era-accurate details: {c['period_notes']}" if c.get("period_notes") else "",
+        f"Must not include: {never}." if never else "",
+        "Pure flat white background with no texture. No text, labels or watermark.",
     ]
     return " ".join(p for p in parts if p)
 
@@ -138,9 +183,33 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     history = [h for h in (media.get_private(k) for k in (brief.get("historyRefs") or [])[:3]) if h]
     history = [thumbnail(h, 1280) for h in history]
 
-    # 1. 고정 명세: 고를 인물만 다시 그릴 때는 이전 명세를 그대로 써요
+    # 1. 고정 명세: 고른 인물만 다시 그릴 때는 이전 명세를 쓰고, 대표 지시가 있으면 그 인물 명세에 반영해요
+    #    (반영하지 않으면 ⑦ 작화가 예전 명세로 다시 그려요)
+    edits: dict[str, str] = {}
     if only and prev.get("kind") == "sheets":
         chars = [dict(c) for c in prev["characters"]]
+        targets = [c for c in chars if c["id"] in only]
+        if instruction and targets:
+            _report(ctx, "대표 지시를 인물 명세에 반영하는 중")
+            r = llm.json(
+                system,
+                FIX_TASK.format(instruction=instruction, specs="\n".join(_spec_json(c) for c in targets)),
+                FIX_SCHEMA,
+                effort="medium",
+                max_tokens=8000,
+            )
+            costs.add(r.result.cost_entry())
+            for u in r.data.get("updates") or []:
+                c = next((x for x in targets if x["id"] == _slug(u.get("id", ""))), None)
+                if not c:
+                    continue
+                for k in ("appearance", "period_notes"):
+                    if (u.get(k) or "").strip():
+                        c[k] = u[k].strip()
+                if u.get("never"):
+                    c["never"] = list(dict.fromkeys([*(c.get("never") or []), *u["never"]]))
+                if (u.get("edit") or "").strip():
+                    edits[c["id"]] = u["edit"].strip()
     else:
         only = []
         _report(ctx, "인물 외모 명세 고정하는 중")
@@ -197,8 +266,14 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         note = instruction if only else ""
         prompt = _sheet_prompt(base, style, c, len(masters), len(history), note)
         tries: list[dict[str, Any]] = []
+        # 대표가 고칠 곳을 지시했으면 첫 번째는 이전 시트를 그대로 두고 그 부분만 고쳐요. 두 번째는 새 명세로 새로 그려요.
+        old = media.get(c["sheet"]) if edits.get(c["id"]) and c.get("sheet") else None
         for k in range(2):
-            img = images.generate(prompt, seed=1 + k + 10 * (ctx.get("attempt") or 1), aspect_ratio="4:3", references=(masters + history) or None, model=model)
+            seed = 1 + k + 10 * (ctx.get("attempt") or 1)
+            if k == 0 and old:
+                img = images.generate(_edit_prompt(c, edits[c["id"]], len(history)), seed=seed, aspect_ratio="4:3", references=[old, *history], model=model)
+            else:
+                img = images.generate(prompt, seed=seed, aspect_ratio="4:3", references=(masters + history) or None, model=model)
             local.append(img.cost_entry())
             data = trim_border(img.data)
             key = media.put(f"{out_base}/{c['id']}-{k + 1}.png", data)
