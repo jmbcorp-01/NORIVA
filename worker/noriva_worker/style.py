@@ -5,12 +5,18 @@
 2. 화풍 후보 3개를 화풍 카드(한국어)와 영어 화풍 문구로 쓰고, 시험 장면 3개를 정해요.
 3. 후보 3개 × 장면 3개 = 9장을 그려 대표가 고르게 해요. 고른 그림은 '화풍 마스터'가 되어
    ⑦ 작화의 모든 컷에 화풍 참조 이미지로 들어가요.
-4. 그림 모델은 마스터의 옷·머리·소품·장식까지 따라 그려요. 그래서 샘플마다 시대 검사를 하고,
-   걸리면 고쳐서 한 번 더 그려요. 그래도 남은 문제는 그림 아래에 표시해 대표가 피해서 고르게 해요.
+4. 그림 모델은 마스터의 옷·머리·소품·장식까지 따라 그려요. 그래서 처음부터 틀리지 않게 그려요.
+   - 시험 장면은 화풍(선·채색·연출)을 보는 그림이라, 그림 모델이 잘 틀리는 고증 소품(칼, 관모·머리 장식)은 화면에 넣지 않아요.
+     소품과 옷차림은 ④+의 소품·의상 시트가 실물 사진을 보고 따로 맡아요.
+   - 그리기 전에 장면 지시를 한 번 더 읽어 위험한 것을 빼고, 옷·머리는 구조까지 긍정형으로 고쳐 써요.
+     금지 단어 목록('Avoid: katana…')은 오히려 그 모양을 떠올리게 해서 지시에서 빼요.
+   - 그린 뒤 시대 검사는 마지막 안전장치예요. 걸리면 고쳐서 한 번 더 그리고, 남은 것만 표시해요.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
@@ -73,12 +79,37 @@ PLAN_TASK = """
   1) 주인공 감정 클로즈업 (눈썹·입·시선이 구체적인 표정, 연출 기호 포함)
   2) 장르의 핵심 순간을 극적인 카메라로 (액션이면 동작 정점을 로우·하이 앵글과 속도선으로, 공포면 리빌, 로맨스면 두 인물 거리감). 정면 눈높이 구도 금지.
   3) 시대 고증이 드러나는 와이드 장소 컷 (원근과 깊이가 분명하게)
-  prompt는 영어로, 인물 외모(나이, 머리, 옷, 고정 소품)를 인물 문서 그대로 넣고 카메라 각도·거리·조명과 시대 고증을 구체적으로. 글자·말풍선은 넣지 않는다.
-  무기·관모·의상 같은 시대 소품은 실제 생김새를 영어로 구체적으로 적고(예: straight single-edged ring-pommel sword with no guard), 이미지 모델이 흔히 잘못 그리는 것(일본도와 코등이, 하카마, 기모노, 변발, 도리이)은 'no ...'로 막는다.
-  고른 시험 그림은 화풍 마스터가 되어 이후 인물 시트와 모든 컷이 그 소품까지 따라 그린다. 생김새를 확신할 수 없는 소품은 장면에서 빼거나 가린다.
+  prompt는 영어로, 인물 외모(나이, 얼굴, 체형)와 카메라 각도·거리·조명을 구체적으로. 글자·말풍선은 넣지 않는다.
+  고른 시험 그림은 화풍 마스터가 되어 이후 인물 시트와 모든 컷이 그 옷·머리·소품까지 따라 그린다. 그래서 시험 장면은 화풍만 보여 주고 고증 위험을 만들지 않는다.
+  - 칼·창 같은 무기, 관모·머리띠·머리 장식은 화면에 넣지 않는다(액션은 맨손, 몸짓, 동물·자연물과의 대결, 효과선으로 보여 준다).
+  - 머리 모양은 그 시대에 맞는 단순한 모양 하나를 구조까지 적는다(예: hair gathered into one small low knot at the back of the head, tied with a thin dark cord, no band across the forehead).
+  - 옷은 형태를 구조까지 긍정형으로 적는다(길이, 여밈 방향과 방법, 깃 모양, 소매, 허리띠, 바지·치마, 신발). 장식 끈이나 매듭 같은 모호한 말은 쓰지 않는다.
+  - 건물은 멀리 작게, 단순한 형태(초가, 낮은 흙담)로. 고증이 어려운 건축은 크게 넣지 않는다.
+  - 'Avoid:', 'no katana' 같은 금지 단어 목록은 쓰지 않는다. 금지 단어는 이미지 모델이 오히려 그 모양을 떠올리게 한다. 맞는 모습만 쓴다.
 """
 
 SCENE_ASPECT = ["3:4", "9:16", "4:3"]
+
+SCENE_REVIEW_SCHEMA = _obj({"scenes": _arr(_obj({"title": _STR, "prompt": _STR, "changes": _STR}))})
+
+SCENE_REVIEW_TASK = """# 과제: 시험 장면 지시 고증 점검 (그리기 전)
+
+아래 시험 장면 3개는 화풍 후보 샘플을 그릴 영어 지시다. 고른 샘플은 화풍 마스터가 되어 이후 모든 인물과 컷이 옷·머리·소품까지 따라 그린다.
+그림 모델은 다른 시대·나라 모양(일본도와 코등이, 기모노식 옷깃, 망건과 이마 띠, 조선 한복의 고름, 조선 양반가 한옥)으로 잘못 그리기 쉽다.
+장면마다 지시를 다시 써라.
+- 칼·창 같은 무기와 관모·머리띠·머리 장식이 보이면 화면에서 뺀다(맨손, 몸짓, 효과선으로 같은 감정과 긴장을 살린다).
+- 머리 모양과 옷은 이 시대에 맞는 단순한 모양을 구조까지 긍정형으로 적는다. 모호한 말(headwrap, robe, decorative cord)은 구체적인 형태로 바꾼다.
+- 고증이 어려운 건물은 멀리 작게, 단순한 형태로 바꾼다.
+- 'Avoid:' 목록과 'no ...' 같은 금지 단어는 모두 지운다(글자·말풍선 금지만 남긴다).
+- 카메라, 구도, 표정, 조명, 팔레트, 장면의 핵심 순간은 그대로 둔다. title은 그대로.
+- changes: 무엇을 바꿨는지 한국어 한 문장(바꾼 게 없으면 빈 문자열).
+
+## 작품의 시대와 고증
+{era}
+
+## 시험 장면
+{scenes}
+"""
 
 SAMPLE_CHECK_SCHEMA = _obj(
     {"issues": _arr(_obj({"item": _STR, "severity": {"type": "string", "enum": ["critical", "major"]}, "fix": _STR}))}
@@ -100,6 +131,14 @@ SAMPLE_CHECK_TASK = """# 과제: 화풍 샘플의 시대 검사
 ## 이 장면의 지시
 {scene}
 """
+
+
+_AVOID = re.compile(r"\s*\b(Avoid|Do not include|Must not include)\s*:[^\n]*$", re.I | re.S)
+
+
+def _strip_avoid(prompt: str) -> str:
+    """장면 지시 끝의 금지 단어 목록을 지워요. 금지 단어는 그림 모델이 오히려 그 모양을 떠올리게 해요."""
+    return _AVOID.sub("", prompt or "").strip()
 
 
 def _era_text(ctx: dict[str, Any]) -> str:
@@ -173,6 +212,23 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
     jobs = [(ci, si) for ci in range(len(cands)) for si in range(len(scenes))]
 
     era = _era_text(ctx)
+    # 그리기 전에 장면 지시를 고증 눈으로 다시 써요. 틀린 그림을 그린 뒤 버리는 것보다 훨씬 싸요.
+    _report(ctx, "시험 장면 지시 고증 점검 중")
+    rv = llm.json(
+        system,
+        SCENE_REVIEW_TASK.format(era=era, scenes="\n".join(json.dumps(s, ensure_ascii=False) for s in scenes)),
+        SCENE_REVIEW_SCHEMA,
+        effort="medium",
+        max_tokens=16000,
+    )
+    costs.add(rv.result.cost_entry())
+    reviewed = rv.data.get("scenes") or []
+    for i, s in enumerate(scenes):
+        new = reviewed[i] if i < len(reviewed) else {}
+        if (new.get("prompt") or "").strip():
+            s["prompt"] = new["prompt"].strip()
+        s["prompt"] = _strip_avoid(s["prompt"])
+        s["changes"] = (new.get("changes") or "").strip()
 
     def check(data: bytes, si: int, local: list[dict[str, Any]]) -> list[dict[str, Any]]:
         r = llm.json(
@@ -193,8 +249,8 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
         ci, si = job
         prompt = (
             f"{base_for(cands[ci].get('medium'))} One single webtoon panel, one continuous image edge to edge, no borders, no split panels. "
-            f"{scenes[si]['prompt']} Style: {cands[ci]['style_prompt']} "
-            "Korean setting: no Japanese or Chinese architecture, katana, kimono or kanji. No text, letters, speech bubbles or watermark."
+            f"{scenes[si]['prompt']} Style: {_strip_avoid(cands[ci]['style_prompt'])} "
+            "No text, letters, speech bubbles or watermark."
         )
         local: list[dict[str, Any]] = []
         tries: list[tuple[bytes, list[dict[str, Any]]]] = []
@@ -233,7 +289,7 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
         md += ["## 참고 캡처에서 뽑은 기준 값", _criteria_text(criteria), ""]
     for i, c in enumerate(out_cands):
         md += [f"## 후보 {i + 1}. {c['name']}", c["card"], "", f"영어 화풍 문구: {c['style_prompt']}", ""]
-    md += ["## 시험 장면"] + [f"{i + 1}. {s['title']}: {s['prompt']}" for i, s in enumerate(scenes)]
+    md += ["## 시험 장면"] + [f"{i + 1}. {s['title']}: {s['prompt']}" + (f" (고증 점검: {s['changes']})" if s.get("changes") else "") for i, s in enumerate(scenes)]
 
     body = {
         "kind": "style",

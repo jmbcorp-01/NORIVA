@@ -87,6 +87,8 @@ class FakeModel:
         elif "shading_steps" in props:
             data = {"line": "굵은 외곽선", "coloring": "셀", "shading_steps": 2, "palette": "고채도", "proportions": "8등신",
                     "faces": "눈 중간", "backgrounds": "색면", "effects": "집중선", "panel_rhythm": "클로즈업 많음", "avoid": "수채"}
+        elif "scenes" in props and "candidates" not in props:
+            data = {"scenes": [{"title": f"장면{i}", "prompt": f"reviewed scene {i}. Avoid: katana, tsuba", "changes": "칼을 뺐어요" if i == 2 else ""} for i in range(1, 4)]}
         elif "issues" in props:
             # 화풍 샘플 시대 검사: 첫 샘플만 걸려서 한 번 더 그림
             self.sample_checks = getattr(self, "sample_checks", 0) + 1
@@ -324,6 +326,9 @@ def test_style_samples_criteria_and_masters_feed_art(store, tmp_path):
     # 시대 검사에 걸린 샘플은 고칠 점을 넣어 한 번 더 그리고, 통과하면 표시가 남지 않음
     assert sum("Draw these details correctly: Hair in a low knot" in p for p, _ in images.prompts) == 1
     assert all(all(x == [] for x in cd["sample_issues"]) for cd in style["candidates"])
+    # 그리기 전에 장면 지시를 고증 점검으로 다시 쓰고, 금지 단어 목록은 지움
+    assert all("reviewed scene" in p and "Avoid" not in p and "katana" not in p for p, _ in images.prompts)
+    assert [s.get("changes") for s in style["scenes"]] == ["", "칼을 뺐어요", ""]
     crit_call = next(call for call in model.calls if "shading_steps" in call[0])
     assert crit_call[2] == 1  # 참고 캡처는 기준 값 분석에만 쓰여요
     assert all(n == 0 for _, n in images.prompts)  # 그림 모델에는 참고 캡처를 보내지 않아요

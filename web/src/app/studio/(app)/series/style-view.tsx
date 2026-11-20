@@ -17,7 +17,7 @@ type StyleBody = {
     samples: (string | null)[];
     sample_issues?: { item: string; severity: "critical" | "major" }[][];
   }[];
-  scenes: { title: string; prompt: string }[];
+  scenes: { title: string; prompt: string; changes?: string }[];
   model?: string | null;
   style_masters?: string[];
   chosen?: number | null;
@@ -78,6 +78,15 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
           후보 3개를 같은 장면 3개로 그렸어요 ({imageModelLabel(body.model)}). 가장 웹툰다운 그림을 1~5장 고르면 화풍 마스터가 되어, 작화의 모든 컷이 이 그림의 선과 채색을 따라요. 같은 후보 안에서 고르는 걸 권해요.
         </p>
         <p className="mb-3 text-[12px] text-ink-faint">장면: {body.scenes.map((s, i) => `${i + 1}. ${s.title}`).join(" · ")}</p>
+        {body.scenes.some((s) => s.changes) ? (
+          <details className="mb-3 text-[12px] text-ink-soft">
+            <summary className="cursor-pointer text-indigo">그리기 전에 고증 점검으로 바꾼 것</summary>
+            <ul className="mt-1 space-y-0.5">
+              {body.scenes.map((s, i) => (s.changes ? <li key={i}>{i + 1}. {s.changes}</li> : null))}
+            </ul>
+            <p className="mt-1 text-ink-faint">칼·관모 같은 고증 소품은 시험 장면에 넣지 않아요. ④+의 소품·의상 시트가 실물 사진을 보고 따로 그려요.</p>
+          </details>
+        ) : null}
         {body.candidates.some((c) => c.sample_issues?.some((x) => x.length)) ? (
           <p className="mb-3 rounded-[5px] border border-plum/40 px-3 py-2 text-[12px] text-ink-soft">
             마스터로 고른 그림의 옷·머리 모양·소품·장식은 이후 모든 인물과 컷에 따라 그려져요. 아래에 빨간 표시가 있는 그림은 시대에 맞지 않는 것이 보여서 고르지 않는 걸 권해요.
