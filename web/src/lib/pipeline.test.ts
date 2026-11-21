@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   allDownstream,
+  sheetBlockers,
+  restGate,
   canStart,
   inputHash,
   nextToEnqueue,
@@ -110,5 +112,41 @@ describe("downstream regeneration", () => {
   it("hashes inputs independent of order", () => {
     expect(inputHash(["b", "a"])).toBe(inputHash(["a", "b", "a"]));
     expect(inputHash(["a"])).not.toBe(inputHash(["b"]));
+  });
+});
+
+describe("sheetBlockers", () => {
+  it("blocks approval when a main character sheet still has a critical defect", () => {
+    const body = {
+      characters: [
+        { id: "sunjeong", name: "순정", role: "main", defects: [{ severity: "critical" }, { severity: "minor" }] },
+        { id: "suro", name: "수로", role: "main", defects: [{ severity: "major" }] },
+        { id: "elder", name: "노인", role: "supporting", defects: [{ severity: "critical" }] },
+      ],
+    };
+    expect(sheetBlockers(body)).toEqual(["순정"]);
+    expect(sheetBlockers({ characters: [] })).toEqual([]);
+    expect(sheetBlockers(null)).toEqual([]);
+  });
+});
+
+describe("restGate", () => {
+  const panels = [
+    { index: 1, score: 40, passed: false },
+    { index: 2, score: 55, passed: false },
+    { index: 3, score: 90, passed: true },
+  ];
+  it("blocks the rest when no test panel passed and estimates the cost", () => {
+    const g = restGate({ panels, test_panels: [1, 2], model: "fal-ai/nano-banana-pro" }, 10);
+    expect(g).toEqual({ passed: 0, total: 2, estimate: 4.4, blocked: true });
+  });
+  it("lets the rest through when a test panel passed", () => {
+    const g = restGate({ panels, test_panels: [1, 3], model: "fal-ai/nano-banana" }, 5);
+    expect(g.blocked).toBe(false);
+    expect(g.passed).toBe(1);
+    expect(g.estimate).toBe(1.1);
+  });
+  it("does not block when nothing was checked yet", () => {
+    expect(restGate({ panels: [{ index: 1 }], test_panels: [1] }, 3).blocked).toBe(false);
   });
 });

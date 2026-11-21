@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import anthropic
+
+from . import ledger
 
 # 달러 / 100만 토큰 (claude-opus-5-5 기준, 2026-11)
 PRICES = {
@@ -21,9 +23,17 @@ class LLMResult:
     model: str
     usage: dict[str, int]
     cost_usd: float
+    recorded: bool = field(default=False, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        # Claude 한 번 값이 나간 순간 장부에 적어요 (CLAUDE.md 1-3)
+        self.recorded = ledger.record(self._entry())
+
+    def _entry(self) -> dict[str, Any]:
+        return {"provider": "anthropic", "model": self.model, "units": self.usage, "cost_usd": self.cost_usd}
 
     def cost_entry(self) -> dict[str, Any]:
-        return {"provider": "anthropic", "model": self.model, "units": self.usage, "cost_usd": self.cost_usd}
+        return {**self._entry(), "recorded": self.recorded}
 
 
 @dataclass

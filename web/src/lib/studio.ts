@@ -10,6 +10,7 @@ import {
   nextToEnqueue,
   STAGE_INFO,
   EXTRA_GUIDELINE_AGENTS,
+  sheetBlockers,
   UPSTREAM,
   type LatestArtifact,
   type Stage,
@@ -233,6 +234,13 @@ export async function approveArtifact(id: string, actor: string, note = "") {
   // 관문: ④+는 부품을 잠그고 그 부품으로 인물 시트를 그린 결과만 승인할 수 있어요
   if (a.stage === "sheets" && (a.body as { phase?: string }).phase === "parts") {
     throw new StudioError("부품을 골라 잠그고 '잠근 부품으로 인물 시트 그리기'를 마친 뒤에 승인할 수 있어요");
+  }
+  const blockers = a.stage === "sheets" ? sheetBlockers(a.body) : [];
+  if (blockers.length) {
+    throw new StudioError(
+      `주인공 ${blockers.join(", ")}의 시트에 치명 결함이 남아 있어요. 이대로 승인하면 ⑦ 작화가 모든 컷에서 같은 실수를 따라 그려요. ` +
+        "틀린 부품은 '잠근 부품 바꾸기'로 다시 고르고, 그 인물만 다시 그려 주세요",
+    );
   }
   const pending = (a.body as { kind?: string; pending?: number[] }).pending;
   if (a.stage === "art" && pending?.length) {

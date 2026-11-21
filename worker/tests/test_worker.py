@@ -234,3 +234,29 @@ def test_shrink_ref_limits_reference_size():
     tiny = io.BytesIO()
     Image.new("RGB", (100, 100)).save(tiny, "PNG")
     assert shrink_ref(tiny.getvalue()) == tiny.getvalue()
+
+
+def test_cost_is_recorded_right_after_each_call_and_not_twice(store):
+    """유료 호출 결과가 생기는 순간 장부에 적고, 작업이 끝날 때 다시 적지 않아요 (CLAUDE.md 1-3)."""
+    from noriva_worker import ledger
+    from noriva_worker.images import ImageResult
+
+    c = store.conn
+    sid = c.execute(
+        "insert into series (slug, title, genre, brief) values (%s, '장부', '오컬트·호러', %s) returning id",
+        (f"ledger-{uuid.uuid4().hex[:8]}", Jsonb({})),
+    ).fetchone()["id"]
+    jid = c.execute("insert into jobs (type, series_id, payload) values ('art', %s, %s) returning id", (sid, Jsonb({}))).fetchone()["id"]
+    job = {"id": jid, "series_id": sid, "episode_id": None, "artifact_id": None}
+    ledger.set_sink(lambda cost: store.record_cost(job, cost))
+    try:
+        img = ImageResult(data=b"x", model="fal-ai/nano-banana-pro", cost_usd=0.15)
+        # 작업이 끝나기 전에 이미 장부에 있어요 (도중에 실패해도 남아요)
+        assert c.execute("select count(*) as n from cost_ledger where job_id=%s", (jid,)).fetchone()["n"] == 1
+        entries = [img.cost_entry(), img.cost_entry()]
+    finally:
+        ledger.set_sink(None)
+    old = ImageResult(data=b"y", model="fal-ai/nano-banana-pro", cost_usd=0.15)  # 기록 함수 없이 생긴 비용
+    store.finish(job, {}, entries + [old.cost_entry()])
+    rows = c.execute("select cost_usd from cost_ledger where job_id=%s", (jid,)).fetchall()
+    assert round(sum(float(r["cost_usd"]) for r in rows), 2) == 0.30  # 바로 적은 1장 + 끝날 때 적은 1장

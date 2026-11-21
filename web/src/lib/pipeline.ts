@@ -242,3 +242,30 @@ export const IMAGE_MODELS = [
   { id: "fal-ai/bytedance/seedream/v4", label: "Seedream 4", price: 0.03 },
 ] as const;
 export const imageModelLabel = (id?: string | null) => IMAGE_MODELS.find((m) => m.id === id)?.label ?? "기본 모델";
+
+/** ④+ 승인 관문: 주인공 시트에 치명 결함(잠근 부품과 다름 포함)이 남아 있으면 그 이름들을 돌려줘요.
+ *  틀린 시트를 승인하면 ⑦ 작화가 모든 컷에서 그 실수를 따라 그려서, 컷을 몇 번 다시 그려도 떨어져요. */
+export function sheetBlockers(body: unknown): string[] {
+  const b = body as { characters?: { name?: string; id?: string; role?: string; defects?: { severity?: string }[] }[] } | null;
+  return (b?.characters ?? [])
+    .filter((c) => c.role === "main" && (c.defects ?? []).some((d) => d.severity === "critical"))
+    .map((c) => c.name || c.id || "?");
+}
+
+/** 컷 하나를 그리고 검사하는 어림 비용: 그림 최대 2장 + 검사 2번(장당 약 $0.07). */
+export const CHECK_COST_PER_IMAGE = 0.07;
+
+/** ⑦ '나머지 그리기' 관문: 시험 컷 합격률과 나머지를 그리는 어림 비용.
+ *  시험 컷이 하나도 합격하지 못하면 나머지도 같은 문제로 떨어질 가능성이 높아 막아요. */
+export function restGate(
+  body: unknown,
+  pendingCount: number,
+): { passed: number; total: number; estimate: number; blocked: boolean } {
+  const b = body as { panels?: { index: number; passed?: boolean; score?: number }[]; test_panels?: number[]; model?: string | null } | null;
+  const tests = new Set(b?.test_panels ?? []);
+  const checked = (b?.panels ?? []).filter((p) => tests.has(p.index) && typeof p.score === "number");
+  const passed = checked.filter((p) => p.passed).length;
+  const price = IMAGE_MODELS.find((m) => m.id === b?.model)?.price ?? IMAGE_MODELS[0].price;
+  const estimate = Math.round(pendingCount * 2 * (price + CHECK_COST_PER_IMAGE) * 100) / 100;
+  return { passed, total: checked.length, estimate, blocked: checked.length > 0 && passed === 0 };
+}
