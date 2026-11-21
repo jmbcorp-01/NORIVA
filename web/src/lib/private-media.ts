@@ -42,3 +42,21 @@ export async function getPrivate(key: string): Promise<Uint8Array | null> {
     return null;
   }
 }
+
+/** 공개 그림(media/) 읽기: 유료 회차 그림을 비공개 저장소로 옮길 때 써요 */
+export async function getPublicMedia(key: string): Promise<Uint8Array | null> {
+  const bucket = process.env.ASSETS_BUCKET;
+  try {
+    if (bucket) {
+      const { GetObjectCommand } = await import("@aws-sdk/client-s3");
+      const r = await (await s3()).send(new GetObjectCommand({ Bucket: bucket, Key: `media/${key}` }));
+      return r.Body ? await r.Body.transformToByteArray() : null;
+    }
+    const root = path.resolve(process.env.MEDIA_DIR ?? path.join(process.cwd(), "..", ".media"));
+    const file = path.resolve(root, key);
+    if (!file.startsWith(root + path.sep)) return null;
+    return new Uint8Array(await readFile(file));
+  } catch {
+    return null;
+  }
+}

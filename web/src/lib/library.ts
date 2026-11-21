@@ -79,3 +79,25 @@ export async function recordProgress(readerId: string, slug: string, number: num
     });
   return true;
 }
+
+/** 이 작품에서 마지막으로 읽은 회차 번호 */
+export async function lastReadIn(readerId: string, seriesId: string): Promise<{ number: number; finished: boolean } | null> {
+  const [r] = await db
+    .select({ number: episodes.number, max: readingProgress.maxPanel, count: readingProgress.panelCount })
+    .from(readingProgress)
+    .innerJoin(episodes, eq(episodes.id, readingProgress.episodeId))
+    .where(and(eq(readingProgress.readerId, readerId), eq(readingProgress.seriesId, seriesId)))
+    .orderBy(desc(readingProgress.updatedAt))
+    .limit(1);
+  return r ? { number: r.number, finished: r.count > 0 && r.max >= r.count } : null;
+}
+
+/** 이 작품에서 읽은 회차 번호들 (끝까지 본 회차) */
+export async function readNumbers(readerId: string, seriesId: string): Promise<Set<number>> {
+  const rows = await db
+    .select({ number: episodes.number })
+    .from(readingProgress)
+    .innerJoin(episodes, eq(episodes.id, readingProgress.episodeId))
+    .where(and(eq(readingProgress.readerId, readerId), eq(readingProgress.seriesId, seriesId), sql`${readingProgress.maxPanel} >= ${readingProgress.panelCount}`));
+  return new Set(rows.map((r) => r.number));
+}

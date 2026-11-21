@@ -71,6 +71,13 @@
       "when": 1795179364825,
       "tag": "0009_research_stage",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795244097493,
+      "tag": "0010_reader_commerce",
+      "breakpoints": true
     }
   ]
 }
