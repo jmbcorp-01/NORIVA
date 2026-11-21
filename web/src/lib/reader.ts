@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Locale } from "./publish";
 
-const { series, episodes, episodeAssets, seriesSources, sources } = schema;
+const { series, episodes, episodeAssets, seriesSources, sources, viewEvents, bookmarks } = schema;
 
 /** 독자에게 보이는 회차: 공개됐거나 예약 시각이 지난 회차 */
 const visibleEpisode = and(inArray(episodes.status, ["published", "scheduled"]), lte(episodes.publishAt, sql`now()`));
@@ -21,6 +21,12 @@ export type ReaderSeries = {
   episodeCount: number;
   latestAt: Date | null;
   roots: { name: string; category: string }[];
+  /** 검색용 다른 언어 제목 */
+  altTitle: string;
+  paid: boolean;
+  waitFree: boolean;
+  isDummy: boolean;
+  latestNumber: number;
 };
 
 function pick(ko: string, en: string, locale: Locale) {
@@ -33,6 +39,7 @@ export async function listSeries(locale: Locale): Promise<ReaderSeries[]> {
       s: series,
       count: sql<number>`count(${episodes.id})::int`,
       latestAt: sql<Date | null>`max(${episodes.publishAt})`,
+      latestNumber: sql<number>`max(${episodes.number})::int`,
     })
     .from(series)
     .innerJoin(episodes, and(eq(episodes.seriesId, series.id), visibleEpisode))
@@ -44,7 +51,7 @@ export async function listSeries(locale: Locale): Promise<ReaderSeries[]> {
     .from(seriesSources)
     .innerJoin(sources, eq(sources.id, seriesSources.sourceId))
     .where(inArray(seriesSources.seriesId, rows.map((r) => r.s.id)));
-  return rows.map(({ s, count, latestAt }) => ({
+  return rows.map(({ s, count, latestAt, latestNumber }) => ({
     id: s.id,
     slug: s.slug,
     title: pick(s.title, s.titleEn, locale),
@@ -57,7 +64,43 @@ export async function listSeries(locale: Locale): Promise<ReaderSeries[]> {
     episodeCount: count,
     latestAt: latestAt ? new Date(latestAt) : null,
     roots: roots.filter((r) => r.seriesId === s.id).map((r) => ({ name: r.name, category: r.category })),
+    altTitle: locale === "en" ? s.title : s.titleEn,
+    paid: s.paid,
+    waitFree: s.waitFree,
+    isDummy: s.isDummy,
+    latestNumber,
   }));
+}
+
+/** 이번 주(7일) 많이 본 작품. 조회 기록이 아직 적으면 관심 수, 그다음 최신순으로 채워요. */
+export async function weeklyRanking(all: ReaderSeries[], limit = 10): Promise<ReaderSeries[]> {
+  if (all.length === 0) return [];
+  const [views, saves] = await Promise.all([
+    db
+      .select({ id: viewEvents.seriesId, n: sql<number>`count(*)::int` })
+      .from(viewEvents)
+      .where(sql`${viewEvents.createdAt} > now() - interval '7 days'`)
+      .groupBy(viewEvents.seriesId),
+    db.select({ id: bookmarks.seriesId, n: sql<number>`count(*)::int` }).from(bookmarks).groupBy(bookmarks.seriesId),
+  ]);
+  const v = new Map(views.map((r) => [r.id, r.n]));
+  const b = new Map(saves.map((r) => [r.id, r.n]));
+  const at = (s: ReaderSeries) => s.latestAt?.getTime() ?? 0;
+  return [...all].sort((x, y) => (v.get(y.id) ?? 0) - (v.get(x.id) ?? 0) || (b.get(y.id) ?? 0) - (b.get(x.id) ?? 0) || at(y) - at(x)).slice(0, limit);
+}
+
+/** 회차 조회 한 번 (순위 계산용). 실패해도 화면은 계속 보여줘요. */
+export async function recordView(seriesId: string, episodeId: string, readerId: string | null) {
+  await db.insert(viewEvents).values({ seriesId, episodeId, readerId }).catch(() => {});
+}
+
+/** 제목·한 줄 소개·뿌리 이름으로 찾아요. 작품 수가 적어서 화면 서버에서 걸러요. */
+export function searchSeries(all: ReaderSeries[], q: string): ReaderSeries[] {
+  const needle = q.trim().toLowerCase().normalize("NFC");
+  if (!needle) return [];
+  return all.filter((s) =>
+    [s.title, s.altTitle, s.logline, s.genre, ...s.roots.map((r) => r.name)].some((f) => f.toLowerCase().normalize("NFC").includes(needle)),
+  );
 }
 
 export async function getSeries(slug: string, locale: Locale) {
@@ -65,7 +108,15 @@ export async function getSeries(slug: string, locale: Locale) {
   if (!s) return null;
   const [eps, roots] = await Promise.all([
     db
-      .select({ number: episodes.number, title: episodes.title, titleEn: episodes.titleEn, publishAt: episodes.publishAt })
+      .select({
+        id: episodes.id,
+        number: episodes.number,
+        title: episodes.title,
+        titleEn: episodes.titleEn,
+        publishAt: episodes.publishAt,
+        priceCoins: episodes.priceCoins,
+        earlyAccess: episodes.earlyAccess,
+      })
       .from(episodes)
       .where(and(eq(episodes.seriesId, s.id), visibleEpisode))
       .orderBy(asc(episodes.number)),
@@ -89,7 +140,15 @@ export async function getSeries(slug: string, locale: Locale) {
     days: s.scheduleDays,
     status: s.status,
     roots,
-    episodes: eps.map((e) => ({ number: e.number, title: pick(e.title, e.titleEn, locale), publishAt: e.publishAt })),
+    sale: { id: s.id, paid: s.paid, freeEpisodes: s.freeEpisodes, waitFree: s.waitFree, isDummy: s.isDummy },
+    episodes: eps.map((e) => ({
+      id: e.id,
+      number: e.number,
+      title: pick(e.title, e.titleEn, locale),
+      publishAt: e.publishAt,
+      priceCoins: e.priceCoins,
+      earlyAccess: e.earlyAccess,
+    })),
   };
 }
 
@@ -112,4 +171,39 @@ export async function getEpisode(slug: string, number: number, locale: Locale) {
     prev: s.episodes[idx - 1]?.number ?? null,
     next: s.episodes[idx + 1]?.number ?? null,
   };
+}
+
+/** 회차 목록 작은 그림: 공개본 첫 컷 */
+export async function episodeThumbs(seriesId: string, locale: Locale): Promise<Map<number, string>> {
+  const rows = await db
+    .select({ number: episodes.number, image: sql<string | null>`${episodeAssets.panels}->0->>'image'` })
+    .from(episodeAssets)
+    .innerJoin(episodes, eq(episodes.id, episodeAssets.episodeId))
+    .where(and(eq(episodes.seriesId, seriesId), eq(episodeAssets.locale, locale)));
+  return new Map(rows.filter((r) => r.image).map((r) => [r.number, r.image!]));
+}
+
+export async function bookmarkCount(seriesId: string): Promise<number> {
+  const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(bookmarks).where(eq(bookmarks.seriesId, seriesId));
+  return r?.n ?? 0;
+}
+
+/** 회차 반응 수와 내 반응 */
+export async function reactions(episodeId: string, readerId: string | null) {
+  const { episodeReactions } = schema;
+  const rows = await db
+    .select({ kind: episodeReactions.kind, n: sql<number>`count(*)::int` })
+    .from(episodeReactions)
+    .where(eq(episodeReactions.episodeId, episodeId))
+    .groupBy(episodeReactions.kind);
+  const mine = readerId
+    ? (await db.select({ kind: episodeReactions.kind }).from(episodeReactions).where(and(eq(episodeReactions.episodeId, episodeId), eq(episodeReactions.readerId, readerId))))[0]?.kind ?? null
+    : null;
+  const by = new Map(rows.map((r) => [r.kind, r.n]));
+  return { fun: by.get("fun") ?? 0, meh: by.get("meh") ?? 0, mine };
+}
+
+/** 24시간 안에 올라온 회차가 있는지 (UP 표시) */
+export function isFresh(at: Date | null | undefined): boolean {
+  return Boolean(at && Date.now() - at.getTime() < 24 * 3600 * 1000);
 }

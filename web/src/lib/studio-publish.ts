@@ -4,6 +4,7 @@ import { db, schema } from "@/db";
 import { isApproved, type Stage } from "./pipeline";
 import { LOCALES, PublishError, toPublishedPanels } from "./publish";
 import { latestArtifacts, StudioError } from "./studio";
+import { protectSeriesPanels } from "./panel-media";
 
 const { episodes, episodeAssets, series, decisionLedger, artifacts } = schema;
 
@@ -53,6 +54,9 @@ export async function publishEpisode(episodeId: string, actor: string, publishAt
       note: `${ep.number}화 ${scheduled ? `예약 공개 ${when.toISOString()}` : "공개"}`,
     });
   });
+  // 유료 작품이면 공개본 그림을 비공개 저장소로 옮겨요 (독자에게는 서명 주소로만 보여줘요)
+  const [s] = await db.select({ paid: series.paid }).from(series).where(eq(series.id, ep.seriesId));
+  if (s?.paid) await protectSeriesPanels(ep.seriesId);
 }
 
 export async function unpublishEpisode(episodeId: string, actor: string) {

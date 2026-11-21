@@ -6,14 +6,14 @@ import { Cover } from "./cover";
 /** 이어보기 가로 줄: 표지, 제목, 어디까지 봤는지, 이어볼 회차 */
 export function ContinueRow({ items, t }: { items: ContinueItem[]; t: Dict }) {
   return (
-    <ul className="flex gap-2.5 overflow-x-auto px-4 pb-1 pt-3">
+    <ul className="-mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0">
       {items.map((it) => {
         const ep = it.nextEpisode ?? it.lastEpisode;
         return (
           <li key={it.series.id} className="flex-none">
             <Link
               href={`/series/${it.series.slug}/${ep}`}
-              className="flex w-[248px] gap-3 rounded-[6px] border border-line bg-paper-raised p-2.5"
+              className="flex w-[280px] gap-3 rounded-[8px] border border-line bg-paper-raised p-2.5 hover:border-line-strong"
             >
               <Cover src={it.series.cover} title={it.series.title} className="w-[54px] flex-none" />
               <span className="flex min-w-0 flex-1 flex-col">

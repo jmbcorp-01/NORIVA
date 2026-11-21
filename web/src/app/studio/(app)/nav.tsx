@@ -10,6 +10,9 @@ const ITEMS = [
   { href: "/studio/sources", label: "소재 라이브러리" },
   { href: "/studio/guidelines", label: "지침 관리" },
   { href: "/studio/jobs", label: "작업 큐" },
+  { href: "/studio/store", label: "판매 관리" },
+  { href: "/studio/samples", label: "샘플 작품" },
+  { href: "/studio/security", label: "보안" },
   { href: "/studio/guide", label: "사용 안내" },
 ];
 

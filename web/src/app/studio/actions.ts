@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { and, desc, eq, inArray, isNull, max, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -17,6 +18,9 @@ import { ALL_STAGES, IMAGE_MODELS, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
 import { enqueueJob, notifyWorker } from "@/lib/queue";
 import { putPrivate } from "@/lib/private-media";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
+import { totpSecret } from "@/lib/studio-2fa";
+import { verifyTotp } from "@/lib/totp";
 import type { GuidelineBody } from "@/db/schema";
 
 const lines = (v: FormDataEntryValue | null) =>
@@ -39,9 +43,13 @@ function back(path: string, error?: unknown): never {
 export async function login(formData: FormData) {
   const email = String(formData.get("email") ?? "");
   const password = String(formData.get("password") ?? "");
+  // 같은 곳에서 15분에 10번까지만 시도할 수 있어요
+  if (!(await rateLimit(`studio-login:${clientIp(await headers())}`, 10, 900))) redirect("/studio/login?error=limit");
   if (!(await checkCredentials(email, password))) {
     redirect("/studio/login?error=1");
   }
+  const secret = await totpSecret();
+  if (secret && !verifyTotp(secret, String(formData.get("code") ?? ""))) redirect("/studio/login?error=code");
   await startSession(email.trim().toLowerCase());
   redirect("/studio");
 }

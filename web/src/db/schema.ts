@@ -156,6 +156,12 @@ export const series = pgTable("series", {
   scheduleDays: jsonb("schedule_days").$type<string[]>().notNull().default([]),
   // 작화·회차 플롯 등 게이트를 자동 승인으로 바꿀 단계 목록
   autoApprove: jsonb("auto_approve").$type<string[]>().notNull().default([]),
+  // 독자 화면 판매 설정. paid가 false면 모든 회차 무료 (오픈 베타)
+  paid: boolean("paid").notNull().default(false),
+  freeEpisodes: integer("free_episodes").notNull().default(3),
+  waitFree: boolean("wait_free").notNull().default(true),
+  // 스튜디오 '더미 채우기'로 만든 IR용 샘플 작품. '더미 모두 삭제'가 이 표시만 보고 지워요
+  isDummy: boolean("is_dummy").notNull().default(false),
   ...ts(),
 });
 
@@ -194,6 +200,9 @@ export const episodes = pgTable(
     logline: text("logline").notNull().default(""),
     status: episodeStatus("status").notNull().default("draft"),
     publishAt: timestamp("publish_at", { withTimezone: true }),
+    // 유료 작품에서 이 회차를 소장하는 값 (코인). 선공개 회차는 기다무로 열 수 없어요
+    priceCoins: integer("price_coins").notNull().default(3),
+    earlyAccess: boolean("early_access").notNull().default(false),
     ...ts(),
   },
   (t) => [uniqueIndex("episodes_series_number").on(t.seriesId, t.number)],
@@ -420,6 +429,8 @@ export const readers = pgTable("readers", {
   locale: text("locale").notNull().default("ko"),
   // 올리면 이전에 발급한 로그인이 모두 끊겨요 (전체 로그아웃, 탈퇴)
   sessionVersion: integer("session_version").notNull().default(1),
+  // 회차 열기 시트에서 '다음부터 묻지 않고 바로 열기'를 골랐는지
+  autoUnlock: boolean("auto_unlock").notNull().default(false),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   ...ts(),
 });
@@ -472,3 +483,183 @@ export const readingProgress = pgTable(
   },
   (t) => [primaryKey({ columns: [t.readerId, t.episodeId] }), index("reading_progress_reader_updated").on(t.readerId, t.updatedAt)],
 );
+
+/* ─── 판매: 코인, 회차 열기, 패스 (01번 4절, 05번 3절) ─── */
+
+/** 코인 충전 상품. 스튜디오에서 등록·수정·삭제해요. 스토어 상품 ID는 App Store Connect·Play Console에 만든 ID와 같게 적어요. */
+export const coinProducts = pgTable("coin_products", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  coins: integer("coins").notNull(),
+  bonusCoins: integer("bonus_coins").notNull().default(0),
+  priceKrw: integer("price_krw").notNull(),
+  appleProductId: text("apple_product_id").notNull().default(""),
+  googleProductId: text("google_product_id").notNull().default(""),
+  badge: text("badge").notNull().default(""),
+  sort: integer("sort").notNull().default(0),
+  active: boolean("active").notNull().default(true),
+  ...ts(),
+});
+
+/** 독자 코인 잔액. 충전 코인(paid)과 보너스 코인(free)을 나눠 두고 보너스부터 써요. */
+export const coinWallets = pgTable("coin_wallets", {
+  readerId: uuid("reader_id")
+    .primaryKey()
+    .references(() => readers.id, { onDelete: "cascade" }),
+  paid: integer("paid").notNull().default(0),
+  free: integer("free").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** 코인 장부: 잔액이 바뀔 때마다 한 줄. 같은 요청 키는 한 번만 들어가요 (두 번 눌러도 한 번만 처리). */
+export const coinTransactions = pgTable(
+  "coin_transactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    readerId: uuid("reader_id")
+      .notNull()
+      .references(() => readers.id, { onDelete: "cascade" }),
+    deltaPaid: integer("delta_paid").notNull().default(0),
+    deltaFree: integer("delta_free").notNull().default(0),
+    reason: text("reason").notNull(), // charge | unlock | refund | event | expire
+    refId: text("ref_id"),
+    balanceAfter: integer("balance_after").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("coin_transactions_idem").on(t.readerId, t.idempotencyKey), index("coin_transactions_reader_at").on(t.readerId, t.createdAt)],
+);
+
+/** 결제 기록. 탈퇴해도 법정 보관 기간(5년) 동안 남겨야 해서 독자와 끊어도 지우지 않아요. */
+export const payments = pgTable(
+  "payments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    readerId: uuid("reader_id").references(() => readers.id, { onDelete: "set null" }),
+    kind: text("kind").notNull(), // coin | pass
+    productId: text("product_id").notNull(),
+    amountKrw: integer("amount_krw").notNull(),
+    store: text("store").notNull(), // test | app_store | play | web
+    storeTransactionId: text("store_transaction_id").notNull(),
+    status: text("status").notNull(), // paid | refunded | failed
+    raw: jsonb("raw").$type<Record<string, unknown>>().notNull().default({}),
+    ...ts(),
+  },
+  (t) => [uniqueIndex("payments_store_tx").on(t.store, t.storeTransactionId)],
+);
+
+/** 독자가 연 회차 (영구 소장 또는 기다무·패스로 한 번 열람) */
+export const episodeUnlocks = pgTable(
+  "episode_unlocks",
+  {
+    readerId: uuid("reader_id")
+      .notNull()
+      .references(() => readers.id, { onDelete: "cascade" }),
+    episodeId: uuid("episode_id")
+      .notNull()
+      .references(() => episodes.id, { onDelete: "cascade" }),
+    method: text("method").notNull(), // coin | wait_free | event
+    coinsSpent: integer("coins_spent").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.readerId, t.episodeId] })],
+);
+
+/** 기다리면 무료: 작품마다 다음 무료 회차를 열 수 있는 시각 */
+export const waitFreeTimers = pgTable(
+  "wait_free_timers",
+  {
+    readerId: uuid("reader_id")
+      .notNull()
+      .references(() => readers.id, { onDelete: "cascade" }),
+    seriesId: uuid("series_id")
+      .notNull()
+      .references(() => series.id, { onDelete: "cascade" }),
+    nextAt: timestamp("next_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.readerId, t.seriesId] })],
+);
+
+/** NORIVA 패스 (월 구독) */
+export const subscriptions = pgTable("subscriptions", {
+  readerId: uuid("reader_id")
+    .primaryKey()
+    .references(() => readers.id, { onDelete: "cascade" }),
+  store: text("store").notNull(), // test | app_store | play | web
+  status: text("status").notNull(), // active | canceled | expired
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  ...ts(),
+});
+
+/** 회차 반응: 재미있어(fun) / 아쉬워(meh). 댓글은 운영하면서 넣어요. */
+export const episodeReactions = pgTable(
+  "episode_reactions",
+  {
+    readerId: uuid("reader_id")
+      .notNull()
+      .references(() => readers.id, { onDelete: "cascade" }),
+    episodeId: uuid("episode_id")
+      .notNull()
+      .references(() => episodes.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // fun | meh
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.readerId, t.episodeId] }), index("episode_reactions_episode").on(t.episodeId)],
+);
+
+/** 회차 조회 (이번 주 순위). 로그인하지 않은 독자도 세요. */
+export const viewEvents = pgTable(
+  "view_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    seriesId: uuid("series_id")
+      .notNull()
+      .references(() => series.id, { onDelete: "cascade" }),
+    episodeId: uuid("episode_id")
+      .notNull()
+      .references(() => episodes.id, { onDelete: "cascade" }),
+    readerId: uuid("reader_id").references(() => readers.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("view_events_at").on(t.createdAt, t.seriesId)],
+);
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    readerId: uuid("reader_id")
+      .notNull()
+      .references(() => readers.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // new_episode | wait_free | notice
+    title: text("title").notNull(),
+    body: text("body").notNull().default(""),
+    href: text("href").notNull().default(""),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("notifications_reader_at").on(t.readerId, t.createdAt)],
+);
+
+export const notificationPrefs = pgTable("notification_prefs", {
+  readerId: uuid("reader_id")
+    .primaryKey()
+    .references(() => readers.id, { onDelete: "cascade" }),
+  newEpisode: boolean("new_episode").notNull().default(true),
+  waitFree: boolean("wait_free").notNull().default(true),
+  events: boolean("events").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** 스튜디오 설정 값 (대표 2단계 인증 비밀 키 등) */
+export const studioSettings = pgTable("studio_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** 요청 횟수 제한 (로그인, 회차 열기, 충전). 서버가 여러 대여도 같이 세요. */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+  count: integer("count").notNull().default(0),
+});
