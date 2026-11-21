@@ -244,8 +244,9 @@ def test_art_lettering_review_flow(store, tmp_path):
     assert art["characters"][0]["sheet"].startswith(f"series/{sid}/refs/")
     cost = c.execute("select provider, units, cost_usd from cost_ledger where series_id=%s order by provider", (sid,)).fetchall()
     assert {r["provider"] for r in cost} == {"anthropic", "fal"}
-    fal = next(r for r in cost if r["provider"] == "fal")
-    assert fal["units"]["calls"] == 5 and float(fal["cost_usd"]) == 0.2
+    fal = [r for r in cost if r["provider"] == "fal"]
+    # 그림 값은 그릴 때마다 바로 한 줄씩 적혀요 (CLAUDE.md 1-3)
+    assert sum(r["units"]["calls"] for r in fal) == 5 and round(sum(float(r["cost_usd"]) for r in fal), 4) == 0.2
 
     # 2컷만 다시 그리기: 1컷은 그대로, 인물 시트는 다시 그리지 않음
     images.prompts.clear()
@@ -797,7 +798,8 @@ def test_art_resumes_after_interruption(store, tmp_path):
     assert all(p.get("image") for p in a["body"]["panels"])
     # 첫 시도에서 쓴 그림 값도 비용에 남아요
     n = c.execute("select coalesce(sum((units->>'images')::int), 0) as n from cost_ledger where job_id=%s and provider='fal'", (jid,)).fetchone()["n"]
-    assert n == len(a["body"]["panels"])
+    # 실패한 첫 시도에서 그린 인물 시트·첫 컷까지 모두, 한 번씩만 적혀요
+    assert n == len(first.prompts) + len(second.prompts) == len(a["body"]["panels"]) + 1
 
 
 def test_art_skips_panel_blocked_by_safety_filter(store, tmp_path):
@@ -884,3 +886,18 @@ def test_art_rechecks_old_images_instead_of_redrawing(store, tmp_path):
     assert not any("One single webtoon panel" in p for p, _ in second.prompts)  # 새로 그린 컷 없음
     assert sum(1 for props, _, _ in model.calls if "people_count" in props) - checks_before == 2  # 검사만 2번
     assert all(p["image"] for p in a["body"]["panels"])
+
+
+def test_same_critical_stops_redraws_and_attire_override_prompt():
+    from noriva_worker.visual import _panel_prompt, _same_critical
+
+    a = {"defects": [{"code": "H-6", "severity": "critical"}, {"code": "K-1", "severity": "major"}]}
+    b = {"defects": [{"code": "H-6", "severity": "critical"}]}
+    c = {"defects": [{"code": "K-1", "severity": "major"}]}
+    assert _same_critical(a, b) and not _same_critical(a, c) and not _same_critical(c, c)
+
+    cast = [{"id": "suro", "name": "수로", "kind": "person", "appearance": "woman"}]
+    parts = [{"name": "신라 여인 옷", "owner_name": "수로", "data": b"", "kind": "attire", "overrides": True}]
+    p = _panel_prompt("st", {"shot": "wide", "description": "d"}, cast, cast, "", 1, "BASE.", parts)
+    assert "Reference image 3 is the approved, period-accurate costume of 수로" in p
+    assert "Where the design sheet differs from this reference, follow this reference." in p

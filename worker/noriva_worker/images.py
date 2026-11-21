@@ -6,8 +6,10 @@ import base64
 import io
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
+
+from . import ledger
 
 RETRY_STATUS = {403, 429, 500, 502, 503, 504}
 
@@ -17,9 +19,17 @@ class ImageResult:
     data: bytes
     model: str
     cost_usd: float
+    recorded: bool = field(default=False, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        # 그림 한 장 값이 나간 순간 장부에 적어요 (CLAUDE.md 1-3)
+        self.recorded = ledger.record(self._entry())
+
+    def _entry(self) -> dict:
+        return {"provider": "fal", "model": self.model, "units": {"images": 1}, "cost_usd": self.cost_usd}
 
     def cost_entry(self) -> dict:
-        return {"provider": "fal", "model": self.model, "units": {"images": 1}, "cost_usd": self.cost_usd}
+        return {**self._entry(), "recorded": self.recorded}
 
 
 class ImageGen(Protocol):

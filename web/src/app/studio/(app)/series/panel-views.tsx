@@ -1,5 +1,5 @@
 import { Badge, Button, Input } from "@/components/ui";
-import { IMAGE_MODELS, imageModelLabel } from "@/lib/pipeline";
+import { IMAGE_MODELS, imageModelLabel, restGate } from "@/lib/pipeline";
 import { artNextStep, redrawPanels } from "../../actions";
 import { LetteredStrip, type LetteredPanel } from "./lettered-strip";
 import { ZoomImage } from "@/components/zoom-image";
@@ -242,6 +242,7 @@ function HiddenFields({ h, mode }: { h: Hidden; mode: string }) {
 
 /** 시험 컷 관문: 시험 컷만 그린 상태에서 나머지를 그릴지, 모델을 비교할지 고르는 곳 */
 function TestGate({ body, pending, tests, compared, hidden }: { body: ArtBody; pending: number[]; tests: number[]; compared: boolean; hidden: Hidden }) {
+  const gate = restGate(body, pending.length);
   return (
     <div className="mb-5 rounded-[6px] border border-ochre/40 bg-ochre-soft/40 px-4 py-3 text-[13px] leading-relaxed">
       <p className="font-medium">
@@ -250,12 +251,18 @@ function TestGate({ body, pending, tests, compared, hidden }: { body: ArtBody; p
       <p className="mt-1 text-ink-soft">
         그림이 웹툰답고 인물이 시트와 같으면 나머지를 그려요. 아쉬우면 고른 컷 다시 그리기나 모델 비교를 해 보세요. 비교는 시험 컷을 모델마다 한 장씩 그려요.
       </p>
+      {gate.total ? (
+        <p className={`mt-2 font-medium ${gate.blocked ? "text-plum" : ""}`}>
+          시험 컷 {gate.total}장 중 {gate.passed}장 합격 · 나머지 {pending.length}컷 예상 비용 약 ${gate.estimate}
+          {gate.blocked ? " · 시험 컷이 모두 떨어져서 나머지 그리기를 막았어요. 인물 시트를 고치거나 시험 컷을 다시 그려 합격시켜 주세요." : null}
+        </p>
+      ) : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {!compared ? (
           <form action={artNextStep}>
             <HiddenFields h={hidden} mode="rest" />
             <input type="hidden" name="pending" value={pending.join(",")} />
-            <Button type="submit" variant="primary">
+            <Button type="submit" variant="primary" disabled={gate.blocked}>
               나머지 {pending.length}컷 그리기 · {imageModelLabel(body.model)}
             </Button>
           </form>

@@ -14,7 +14,7 @@ import {
   startStage,
   StudioError,
 } from "@/lib/studio";
-import { ALL_STAGES, IMAGE_MODELS, type Stage } from "@/lib/pipeline";
+import { ALL_STAGES, IMAGE_MODELS, restGate, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
 import { enqueueJob, notifyWorker } from "@/lib/queue";
 import { putPrivate } from "@/lib/private-media";
@@ -342,6 +342,17 @@ export async function artNextStep(formData: FormData) {
     if (mode === "rest") {
       panels = nums("pending");
       if (!panels.length) throw new StudioError("남은 컷이 없어요");
+      // 시험 컷이 하나도 합격하지 못했으면 나머지도 같은 이유로 떨어져요. 돈을 쓰기 전에 막아요.
+      const [base] = await db
+        .select({ body: schema.artifacts.body })
+        .from(schema.artifacts)
+        .where(eq(schema.artifacts.id, String(formData.get("artifactId"))));
+      const gate = restGate(base?.body, panels.length);
+      if (gate.blocked)
+        throw new StudioError(
+          `시험 컷 ${gate.total}장이 모두 떨어졌어요. 이대로 나머지를 그리면 약 $${gate.estimate}를 쓰고도 같은 문제로 떨어질 가능성이 높아요. ` +
+            "④+ 인물 시트를 먼저 고치거나, 시험 컷을 다시 그려 합격시킨 뒤 나머지를 그려 주세요",
+        );
     } else if (mode === "compare") {
       const models = formData.getAll("models").map(String).filter((m) => known.has(m));
       if (models.length < 2) throw new StudioError("비교할 모델을 두 개 이상 골라 주세요");

@@ -63,6 +63,13 @@ def _clip(v: Any, lo: float = 0.0, hi: float = 100.0) -> float:
         return lo
 
 
+def _same_critical(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """두 후보가 같은 치명 결함(같은 규칙 코드)으로 떨어졌는지. 그렇다면 같은 지시로 또 그려도 같은 결과예요."""
+    ca = {d.get("code") for d in a.get("defects") or [] if d.get("severity") == "critical"}
+    cb = {d.get("code") for d in b.get("defects") or [] if d.get("severity") == "critical"}
+    return bool(ca) and bool(ca & cb)
+
+
 def _load_json(media: Media, key: str) -> Any:
     try:
         b = media.get(key)
@@ -319,8 +326,14 @@ def _panel_prompt(
         " No text, letters, speech bubbles, signature or watermark anywhere.",
         (
             " ".join(
-                f"Reference image {i + 1 + n_masters + len(sheet_cast)} is the approved, period-accurate design of "
-                f"{p['name']} ({p['owner_name']}): whenever it appears in this panel draw exactly this shape, length and fittings."
+                (
+                    f"Reference image {i + 1 + n_masters + len(sheet_cast)} is the approved, period-accurate "
+                    + {"attire": f"costume of {p['owner_name']}: dress them in exactly this cut of clothing",
+                       "hair": f"hairstyle and headwear of {p['owner_name']}: copy exactly this hair construction"}.get(
+                           p.get("kind", "object"), f"design of {p['name']} ({p['owner_name']}): whenever it appears in this panel draw exactly this shape, length and fittings")
+                    + "."
+                    + (" Where the design sheet differs from this reference, follow this reference." if p.get("overrides") else "")
+                )
                 for i, p in enumerate(part_refs)
             )
             + " Do not add these objects if the panel does not call for them."
@@ -355,7 +368,7 @@ def kind_of(c: dict[str, Any]) -> str:
 
 MAX_SHEETS = 4  # 한 컷에 넣는 인물 시트 수
 MAX_REFS = 5  # 화풍 마스터 + 인물 시트 합계
-MAX_PART_REFS = 2  # ④+에서 잠근 소품(칼·도구) 그림. 시트에 작게 그려져 모양이 흐려지는 걸 막아요
+MAX_PART_REFS = 3  # ④+에서 잠근 소품(칼·도구) 그림. 시트에 작게 그려져 모양이 흐려지는 걸 막아요
 
 
 def _sheet_key(series_id: str, char: dict[str, Any], style: str) -> str:
@@ -473,15 +486,24 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
 
     style = plan["style_prompt"]
     chars = {c["id"]: dict(c) for c in plan["characters"]}
-    # ④+에서 대표가 잠근 소품(칼·도구) 그림: 그 인물이 나오는 컷에 참고 그림으로 넣어요.
-    # 옷차림·머리 모양은 인물 시트에 이미 그려져 있어서 넣지 않아요.
+    # ④+에서 대표가 잠근 부품 그림: 그 인물이 나오는 컷에 참고 그림으로 넣어요.
+    # 소품(칼·도구)은 늘 넣어요. 옷차림·머리 모양은 시트가 그 부품과 다르게 그려졌을 때만 넣어요
+    # (틀린 시트를 따라 그리지 않게, 부품 그림이 시트보다 우선이라고 지시해요).
+    mismatched = {
+        pc["id"]
+        for c in (sheets_body.get("characters") or [])
+        for pc in (c.get("part_checks") or [])
+        if not pc.get("matches", True)
+    }
     locked_objects: list[dict[str, Any]] = []
     if sheets_body.get("kind") == "sheets" and sheets_body.get("phase") != "parts":
         for p in sheets_body.get("parts") or []:
-            if (p.get("kind") or "object") == "object" and p.get("locked"):
+            kind = p.get("kind") or "object"
+            if p.get("locked") and (kind == "object" or p["id"] in mismatched):
                 b = media.get(p["locked"])
                 if b is not None:
-                    locked_objects.append({**p, "data": b})
+                    locked_objects.append({**p, "kind": kind, "data": b, "overrides": p["id"] in mismatched})
+        locked_objects.sort(key=lambda p: not p["overrides"])  # 시트가 틀린 부품을 먼저 넣어요
 
     _report(ctx, "인물 시트 준비 중")
     # 인물 시트: 외모 명세와 화풍이 같으면 한 번만 그려서 모든 회차가 같이 써요 (04번 일관성 1층).
@@ -550,7 +572,8 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         use_masters = masters[: max(1, min(2, MAX_REFS - len(sheets)))]
         ids = {c["id"] for c in cast}
         part_refs = [
-            {"name": p["name"], "owner_name": ", ".join(chars[o]["name"] for o in p.get("owners") or [] if o in chars), "data": p["data"]}
+            {"name": p["name"], "owner_name": ", ".join(chars[o]["name"] for o in p.get("owners") or [] if o in chars), "data": p["data"],
+             "kind": p.get("kind", "object"), "overrides": p.get("overrides", False)}
             for p in locked_objects
             if ids & set(p.get("owners") or [])
         ][:MAX_PART_REFS]
@@ -585,6 +608,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         # 같은 결과물을 다시 돌리는 경우(작업기 종료, 이어서 그리기): 지난 시도에서 그려 둔 그림이 있으면
         # 새로 그리지 않고 검사만 다시 해요. 이 컷의 지시와 맞으면 그대로 써요 (그리기보다 훨씬 싸요).
         n_old = 0
+        stalled = False
         for k in range(1, 4):
             old_key = f"{key_base}/{panel['index']:03d}-{k}.png"
             old = media.get(old_key)
@@ -609,6 +633,9 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             cands.append({"image": key, **check(panel, cast, data, local, sheet_cast, sheets)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break  # 합격 후보가 나오면 더 그리지 않아요
+            if len(cands) >= 2 and _same_critical(cands[-1], cands[-2]):
+                stalled = True
+                break  # 같은 치명 결함이 연달아 나오면 다시 그려도 소용없어요 (시트·지시를 고쳐야 해요)
         if not cands:
             out = {**panel, "prompt": prompt, "aspect": aspect, "model": model or images_default_model(images), "image": None,
                    "score": 0, "defects": [], "passed": False, "candidates": [], "drawn_in": artifact_id,
@@ -627,6 +654,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             "passed": bool(_rank(best, s.pass_score)[0]),
             "candidates": [{"image": c["image"], "score": c["score"]} for c in cands],
             "drawn_in": artifact_id,
+            **({"stalled": "같은 치명 결함이 두 번 연달아 나와 더 그리지 않았어요. 인물 시트나 지시를 고친 뒤 다시 그려 주세요."} if stalled else {}),
         }
         out.pop("variants", None)
         return out, local

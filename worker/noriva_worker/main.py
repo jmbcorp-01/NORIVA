@@ -18,6 +18,7 @@ import httpx
 
 from .config import Config
 from .handlers import Tools, run_stage
+from . import ledger
 from .images import FalImage, ImageNotConfiguredError, NoImageError
 from .llm import RefusedError, TextModel, TruncatedError
 from .media import media_from_env
@@ -56,6 +57,14 @@ def process(store: Store, job: dict, tools: Tools, cfg: Config) -> None:
     def report(step: str, done: int | None = None, total: int | None = None) -> None:
         store.set_progress(job["id"], step, done, total)
 
+    ledger.set_sink(lambda cost: store.record_cost(job, cost))
+    try:
+        _process(store, job, tools, cfg, report)
+    finally:
+        ledger.set_sink(None)
+
+
+def _process(store: Store, job: dict, tools: Tools, cfg: Config, report) -> None:
     try:
         if job["type"] == "scout":
             report("웹에서 시장 조사 중")

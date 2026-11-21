@@ -111,9 +111,12 @@ class Store:
                 "update jobs set status = 'done', error = null, finished_at = now(), updated_at = now() where id = %s",
                 (job["id"],),
             )
-            # 같은 제공자·모델 호출은 한 줄로 합쳐요 (작화 한 번에 호출이 수백 번이라)
+            # 호출하자마자 장부에 적은 비용(recorded)은 다시 적지 않아요.
+            # 남은 것(예전 이어 그리기 기록 등)만 같은 제공자·모델끼리 한 줄로 합쳐 적어요.
             merged: dict[tuple[str, str], dict[str, Any]] = {}
             for cost in costs:
+                if cost.get("recorded"):
+                    continue
                 m = merged.setdefault((cost["provider"], cost["model"]), {"units": {}, "cost_usd": 0.0, "calls": 0})
                 m["calls"] += 1
                 m["cost_usd"] += cost["cost_usd"]
@@ -125,6 +128,14 @@ class Store:
                        values (%s, %s, %s, %s, %s, %s, %s)""",
                     (job["series_id"], job["episode_id"], job["id"], provider, model, Jsonb({**m["units"], "calls": m["calls"]}), round(m["cost_usd"], 4)),
                 )
+
+    def record_cost(self, job: dict[str, Any], cost: dict[str, Any]) -> None:
+        """유료 호출 한 번의 비용을 바로 장부에 적어요. 작업이 실패해도 남아요."""
+        self.conn.execute(
+            """insert into cost_ledger (series_id, episode_id, job_id, provider, model, units, cost_usd)
+               values (%s, %s, %s, %s, %s, %s, %s)""",
+            (job["series_id"], job["episode_id"], job["id"], cost["provider"], cost["model"], Jsonb({**cost["units"], "calls": 1}), round(cost["cost_usd"], 4)),
+        )
 
     def fail(self, job: dict[str, Any], error: str, max_attempts: int, retryable: bool, partial: dict[str, Any] | None = None) -> bool:
         """다시 시도할 수 있으면 대기열로 돌려보내고 True. 아니면 실패로 끝내고 False."""
