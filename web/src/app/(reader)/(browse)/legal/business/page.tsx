@@ -6,28 +6,25 @@ import { DICT, getLocale } from "@/lib/i18n";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Business information" };
 
+const LABELS = {
+  ko: { company: "상호", ceo: "대표자", regNo: "사업자등록번호", salesNo: "통신판매업 신고번호", address: "주소", phone: "전화", email: "이메일", privacyOfficer: "개인정보 보호책임자", hosting: "호스팅 서비스 제공자", tbd: "등록 예정" },
+  en: { company: "Company", ceo: "CEO", regNo: "Business registration no.", salesNo: "Mail-order business no.", address: "Address", phone: "Phone", email: "Email", privacyOfficer: "Privacy officer", hosting: "Hosting provider", tbd: "Coming soon" },
+} as const;
+
 export default async function Business() {
-  const t = DICT[await getLocale()];
-  const b = businessInfo();
-  const tbd = "등록 예정";
-  const rows: [string, string][] = [
-    ["상호", b.company],
-    ["대표자", b.ceo || tbd],
-    ["사업자등록번호", b.regNo || tbd],
-    ["통신판매업 신고번호", b.salesNo || tbd],
-    ["주소", b.address || tbd],
-    ["전화", b.phone || tbd],
-    ["이메일", b.email || tbd],
-    ["개인정보 보호책임자", b.privacyOfficer || b.ceo || tbd],
-  ];
+  const locale = await getLocale();
+  const t = DICT[locale];
+  const b = businessInfo(locale);
+  const L = LABELS[locale];
+  const keys = ["company", "ceo", "regNo", "salesNo", "address", "phone", "email", "privacyOfficer", "hosting"] as const;
   return (
     <div className="mx-auto max-w-[720px] px-4 pt-6">
       <PageTitle>{t.business}</PageTitle>
       <dl className="mt-5 border-t border-line">
-        {rows.map(([k, v]) => (
+        {keys.map((k) => (
           <div key={k} className="flex gap-4 border-b border-line py-3 text-[14.5px]">
-            <dt className="w-[150px] flex-none text-ink-faint">{k}</dt>
-            <dd>{v}</dd>
+            <dt className="w-[150px] flex-none text-ink-faint">{L[k]}</dt>
+            <dd className="min-w-0 break-words">{b[k] || L.tbd}</dd>
           </div>
         ))}
       </dl>

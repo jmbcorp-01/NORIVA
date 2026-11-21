@@ -5,6 +5,7 @@ import { HeaderTools } from "@/components/reader/header-tools";
 import { IconSearch } from "@/components/reader/icons";
 import { LangToggle } from "@/components/reader/lang-toggle";
 import { TabBar } from "@/components/reader/tab-bar";
+import { businessInfo, COMPANY_EN } from "@/lib/business";
 import { DICT, getLocale } from "@/lib/i18n";
 import { chromeData } from "@/lib/reader-chrome";
 import { currentReader } from "@/lib/reader-auth";
@@ -13,6 +14,7 @@ import { currentReader } from "@/lib/reader-auth";
 export default async function BrowseLayout({ children }: { children: React.ReactNode }) {
   const locale = await getLocale();
   const t = DICT[locale];
+  const b = businessInfo(locale);
   const reader = await currentReader();
   const { coins, unread } = await chromeData(reader);
   const nav = [
@@ -59,9 +61,12 @@ export default async function BrowseLayout({ children }: { children: React.React
           <Link href="/legal/business">{t.business}</Link>
           <Link href="/support">{t.support}</Link>
         </nav>
-        <p className="mt-3">{t.aiNote}</p>
+        <p className="mt-3">
+          {[b.company, b.ceo, b.regNo, b.salesNo, b.address, b.email].filter(Boolean).join(" · ")}
+        </p>
+        <p className="mt-1">{t.aiNote}</p>
         <p className="mt-1">{t.copyrightLine}</p>
-        <p className="mt-1">© JMB Corporation Inc.</p>
+        <p className="mt-1">© {COMPANY_EN}</p>
       </footer>
       <TabBar labels={{ home: t.home, explore: t.explore, library: t.library, me: t.me }} />
     </div>

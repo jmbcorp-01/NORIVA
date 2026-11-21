@@ -104,6 +104,7 @@ export function UnlockSheet(p: {
               <span>{t.haveCoins(p.coins ?? 0)}</span>
               {enough ? <span>{t.afterUse(p.coins! - a.price)}</span> : null}
             </div>
+            <p className="px-0.5 text-[11.5px] leading-relaxed text-ink-faint">{t.unlockNotice}</p>
             {!enough ? (
               <Link href={`/coins?next=${encodeURIComponent(`/series/${p.slug}?open=${p.ep.number}`)}`} className={`${btn.seal} w-full`}>
                 {t.needCoins(a.price - (p.coins ?? 0))}
