@@ -16,7 +16,10 @@ type StyleBody = {
     style_prompt: string;
     samples: (string | null)[];
     sample_issues?: { item: string; severity: "critical" | "major" }[][];
+    /** 기준 그림(대표 그림·참고 캡처)과 화풍이 맞는 정도 0~100. 검사하지 않았으면 null */
+    sample_match?: (number | null)[];
   }[];
+  own_art?: number;
   scenes: { title: string; prompt: string; changes?: string }[];
   model?: string | null;
   style_masters?: string[];
@@ -53,7 +56,9 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
     <div className="space-y-5">
       {body.criteria ? (
         <div className="rounded-[5px] bg-paper-sunk px-4 py-3 text-[13px]">
-          <p className="mb-1.5 text-[12px] font-medium text-ink-soft">참고 캡처에서 뽑은 기준 값 (그림은 쓰지 않고 이 값만 참고했어요)</p>
+          <p className="mb-1.5 text-[12px] font-medium text-ink-soft">
+            {body.own_art ? "내 그림과 참고 캡처에서 뽑은 기준 값 (내 그림은 그림 모델이 직접 보고 따라 그렸어요)" : "참고 캡처에서 뽑은 기준 값 (캡처는 그림 모델에 보내지 않고 이 값만 참고했어요)"}
+          </p>
           <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
             {Object.entries(CRITERIA_LABEL).map(([k, label]) =>
               body.criteria?.[k] !== undefined && body.criteria?.[k] !== "" ? (
@@ -129,6 +134,11 @@ export function StyleView({ body, artifactId, back, canApprove }: { body: StyleB
                         </p>
                       ) : c.sample_issues ? (
                         <p className="text-[12px] text-pine">시대 검사 통과</p>
+                      ) : null}
+                      {typeof c.sample_match?.[si] === "number" ? (
+                        <p className={(c.sample_match[si] ?? 0) >= 75 ? "text-[12px] text-ink-soft" : "text-[12px] text-plum"}>
+                          {body.own_art ? "내 그림" : "참고 그림"}과 화풍 일치 {c.sample_match[si]}점
+                        </p>
                       ) : null}
                     </div>
                   ) : (
@@ -274,8 +284,42 @@ export function ImageModelPicker({ seriesId, back, current }: { seriesId: string
   );
 }
 
-export function StyleRefs({ seriesId, refs, back }: { seriesId: string; refs: string[]; back: string }) {
+export function StyleRefs({ seriesId, refs, own = [], back }: { seriesId: string; refs: string[]; own?: string[]; back: string }) {
   return (
+    <>
+    <div className="mb-4 rounded-[5px] border border-line px-4 py-3 text-[13px]">
+      <p className="font-medium">내가 그린 그림 {own.length ? `${own.length}장` : ""}</p>
+      <p className="mt-0.5 text-[12px] text-ink-soft">
+        대표님이 직접 그렸거나 권리를 가진 그림을 1~3장 올리면, 그림 모델이 이 그림을 직접 보고 같은 선·채색·얼굴 구성으로 화풍 샘플, 인물 시트, 컷을 그려요. 샘플마다 이 그림과 얼마나 맞는지 점수도 보여 줘요.
+        남의 웹툰 캡처는 여기 말고 아래 &lsquo;참고 웹툰 캡처&rsquo;에 올려 주세요.
+      </p>
+      {own.length ? (
+        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+          {own.map((k) => (
+            <form key={k} action={updateStyleRefs} className="w-[96px] flex-none">
+              <input type="hidden" name="back" value={back} />
+              <input type="hidden" name="seriesId" value={seriesId} />
+              <input type="hidden" name="kind" value="own" />
+              <input type="hidden" name="remove" value={k} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={`/studio/private-media/${k}`} alt="내 그림" className="aspect-[3/4] w-full rounded-[4px] border border-line object-cover" />
+              <button type="submit" className="mt-1 text-[11px] text-ink-soft hover:text-plum">
+                빼기
+              </button>
+            </form>
+          ))}
+        </div>
+      ) : null}
+      {own.length < 3 ? (
+        <form action={updateStyleRefs} className="mt-3 flex flex-wrap items-center gap-2">
+          <input type="hidden" name="back" value={back} />
+          <input type="hidden" name="seriesId" value={seriesId} />
+          <input type="hidden" name="kind" value="own" />
+          <input type="file" name="files" accept="image/png,image/jpeg,image/webp" multiple className="text-[12px]" />
+          <Button type="submit">올리기</Button>
+        </form>
+      ) : null}
+    </div>
     <div className="mb-4 rounded-[5px] border border-line px-4 py-3 text-[13px]">
       <p className="font-medium">참고 웹툰 캡처 {refs.length ? `${refs.length}장` : ""}</p>
       <p className="mt-0.5 text-[12px] text-ink-soft">
@@ -306,5 +350,6 @@ export function StyleRefs({ seriesId, refs, back }: { seriesId: string; refs: st
         </form>
       ) : null}
     </div>
+    </>
   );
 }

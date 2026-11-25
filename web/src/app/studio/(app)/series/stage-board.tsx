@@ -113,7 +113,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                         busy={scoutBusy}
                         error={scoutJob?.status === "failed" ? (scoutJob.error ?? "찾기에 실패했어요") : null}
                       />
-                      <StyleRefs seriesId={seriesId} refs={styleRefs} back={back} />
+                      <StyleRefs seriesId={seriesId} refs={styleRefs} own={brief?.ownArt ?? []} back={back} />
                       <ImageModelPicker seriesId={seriesId} back={back} current={brief?.imageModel} />
                     </>
                   ) : null}

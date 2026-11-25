@@ -394,7 +394,7 @@ export async function artNextStep(formData: FormData) {
 
 const REF_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
-/** ④ 화풍 참고 캡처 올리기·빼기. 그림 모델에는 보내지 않고 기준 값 분석에만 써요. */
+/** ④ 화풍 기준 그림 올리기·빼기. 참고 캡처는 기준 값 분석에만, 대표가 그린 그림(kind=own)은 그림 모델이 직접 보고 따라 그려요. */
 export async function updateStyleRefs(formData: FormData) {
   await requireOwner();
   const path = String(formData.get("back"));
@@ -402,24 +402,30 @@ export async function updateStyleRefs(formData: FormData) {
   try {
     const [s] = await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId));
     if (!s) throw new StudioError("작품을 찾을 수 없어요");
-    let refs = [...(s.brief.styleRefs ?? [])];
+    // kind=own: 대표가 직접 그린 그림 (그림 모델이 직접 보고 따라 그려요). 그 밖: 참고 웹툰 캡처 (기준 값 분석에만)
+    const own = String(formData.get("kind") ?? "") === "own";
+    const limit = own ? 3 : 8;
+    let refs = [...((own ? s.brief.ownArt : s.brief.styleRefs) ?? [])];
     const remove = String(formData.get("remove") ?? "");
     if (remove) {
       refs = refs.filter((r) => r !== remove);
     } else {
       const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
       if (!files.length) throw new StudioError("올릴 그림을 골라 주세요");
-      if (refs.length + files.length > 8) throw new StudioError("참고 캡처는 8장까지예요");
+      if (refs.length + files.length > limit) throw new StudioError(own ? "내 그림은 3장까지예요" : "참고 캡처는 8장까지예요");
       for (const f of files) {
         const ext = REF_TYPES[f.type];
         if (!ext) throw new StudioError("PNG, JPG, WEBP 그림만 올릴 수 있어요");
         if (f.size > 5 * 1024 * 1024) throw new StudioError("한 장에 5MB까지 올릴 수 있어요");
-        const key = `series/${seriesId}/style-refs/${crypto.randomUUID()}.${ext}`;
+        const key = `series/${seriesId}/${own ? "own-art" : "style-refs"}/${crypto.randomUUID()}.${ext}`;
         await putPrivate(key, new Uint8Array(await f.arrayBuffer()), f.type);
         refs.push(key);
       }
     }
-    await db.update(schema.series).set({ brief: { ...s.brief, styleRefs: refs } }).where(eq(schema.series.id, seriesId));
+    await db
+      .update(schema.series)
+      .set({ brief: { ...s.brief, ...(own ? { ownArt: refs } : { styleRefs: refs }) } })
+      .where(eq(schema.series.id, seriesId));
   } catch (e) {
     back(path, e);
   }

@@ -20,6 +20,9 @@ type ArtPanel = {
   passed?: boolean;
   defects?: Defect[];
   candidates?: { image: string; score: number }[];
+  scene?: number;
+  scene_ref?: boolean;
+  color_matched?: boolean;
   variants?: { model: string; image?: string; score?: number; passed?: boolean; error?: string }[];
 };
 type ArtBody = {
@@ -28,6 +31,9 @@ type ArtBody = {
   panels: ArtPanel[];
   flagged: number[];
   rhythm_warnings?: string[];
+  /** 그리기 전 이야기 연결 검사: 고친 컷과 대본에서 빠진 사건 */
+  story_check?: { fixed?: { index: number; problem: string }[]; missing_beats?: string[]; error?: string };
+  scenes?: { id: number; place: string }[];
   redrawn?: number[];
   pending?: number[];
   blocked?: { index: number; note: string }[];
@@ -91,6 +97,34 @@ export function ArtView({
           </ul>
         </div>
       ) : null}
+      {body.story_check && (body.story_check.missing_beats?.length || body.story_check.fixed?.length || body.story_check.error) ? (
+        <div className="mt-2 rounded-[5px] border border-line px-3 py-2 text-[12px]">
+          <p className="font-medium">그리기 전 이야기 연결 검사</p>
+          {body.story_check.missing_beats?.length ? (
+            <>
+              <p className="mt-1 text-plum">대본에서 빠진 사건이 있어요. 콘티에서 넣고 다시 만드는 게 그림을 다시 그리는 것보다 싸요.</p>
+              <ul className="mt-0.5 list-disc pl-4 text-ink-soft">
+                {body.story_check.missing_beats.map((m) => (
+                  <li key={m}>{m}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {body.story_check.fixed?.length ? (
+            <>
+              <p className="mt-1 text-ink-soft">앞뒤가 안 맞아 그리기 전에 지시를 고친 컷:</p>
+              <ul className="mt-0.5 list-disc pl-4 text-ink-soft">
+                {body.story_check.fixed.map((f) => (
+                  <li key={f.index}>
+                    {f.index}컷: {f.problem}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {body.story_check.error ? <p className="mt-1 text-ink-soft">검사를 하지 못했어요. 콘티를 직접 한 번 확인해 주세요.</p> : null}
+        </div>
+      ) : null}
       <RuleTally panels={body.panels} />
 
       {body.characters.some((c) => c.sheet) ? (
@@ -147,7 +181,10 @@ export function ArtView({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-serif text-[15px] font-semibold">{p.index}컷</span>
                   <span className="text-ink-faint">
+                    {typeof p.scene === "number" ? `장면 ${p.scene} · ` : ""}
                     {p.shot} · {p.height === "long" ? "긴 컷" : p.height === "short" ? "짧은 컷" : "보통 컷"}
+                    {p.scene_ref ? " · 앞 컷 이어 그림" : ""}
+                    {p.color_matched ? " · 색 맞춤" : ""}
                   </span>
                   {typeof p.score === "number" ? <Badge tone={p.passed ? "pine" : "plum"}>{p.score}점</Badge> : null}
                 </div>
