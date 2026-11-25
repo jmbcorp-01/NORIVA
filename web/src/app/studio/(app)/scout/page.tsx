@@ -5,7 +5,8 @@ import { db, schema } from "@/db";
 import type { CandidateBody, MarketReport } from "@/db/schema";
 import { Badge, Button, Card, Empty, formatDate, Input, Notice, PageHeader } from "@/components/ui";
 import { SOURCE_CATEGORY } from "@/lib/labels";
-import { adoptCandidate, dismissCandidate, startScout } from "../../actions";
+import { scoutAutoEnabled } from "@/lib/scout-auto";
+import { adoptCandidate, dismissCandidate, startScout, toggleScoutAuto } from "../../actions";
 
 const REGION = { kr: "국내", global: "해외", both: "국내·해외" } as const;
 const RUN_STATUS = { running: "조사 중", done: "완료", failed: "실패" } as const;
@@ -17,7 +18,8 @@ export default async function ScoutPage({
 }) {
   const { error, started, adopted } = await searchParams;
   const { scoutRuns, sourceCandidates } = schema;
-  const [runs, pending, decided] = await Promise.all([
+  const [auto, runs, pending, decided] = await Promise.all([
+    scoutAutoEnabled(),
     db.select().from(scoutRuns).orderBy(desc(scoutRuns.createdAt)).limit(12),
     db
       .select()
@@ -41,7 +43,7 @@ export default async function ScoutPage({
     <>
       <PageHeader
         title="소재 발굴"
-        sub="AI가 웹에서 지금의 국내·해외 웹툰 시장을 조사하고, 그 흐름에 맞는 한국 설화·역사·민속 소재를 골라 와요. 대표가 채택한 후보만 소재 라이브러리에 들어가요. 매주 월요일 아침에도 자동으로 한 번 돌아요."
+        sub="AI가 웹에서 지금의 국내·해외 웹툰 시장을 조사하고, 그 흐름에 맞는 한국 설화·역사·민속 소재를 골라 와요. 대표가 채택한 후보만 소재 라이브러리에 들어가요. 필요할 때 아래에서 직접 시작하고, 자동 실행은 켰을 때만 돌아요."
       />
       <ErrorNotice>{error}</ErrorNotice>
       {started ? <Notice tone="indigo">조사를 시작했어요. 보통 5~15분 걸려요. 이 화면을 나중에 새로고침하면 결과가 보여요.</Notice> : null}
@@ -71,6 +73,24 @@ export default async function ScoutPage({
           한 번에 약 $1~3 (웹 검색 15회 안팎과 정리). 대표가 넘긴 후보와 이유를 기억해서 다음 조사에 반영해요.
           {running ? ` 지금 조사 중이에요 (${formatDate(running.createdAt)} 시작).` : ""}
         </p>
+        <form action={toggleScoutAuto} className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-3">
+          <input type="hidden" name="on" value={auto ? "0" : "1"} />
+          <span className="text-[13px] font-medium">자동 실행</span>
+          <button
+            type="submit"
+            role="switch"
+            aria-checked={auto}
+            aria-label={auto ? "자동 실행 끄기" : "자동 실행 켜기"}
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${auto ? "bg-pine" : "bg-line-strong"}`}
+          >
+            <span className={`inline-block h-4 w-4 rounded-full bg-paper-raised shadow transition-transform ${auto ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+          </button>
+          <span className="text-[12px] text-ink-faint">
+            {auto
+              ? "켜짐: 매주 월요일 오전 9시에 자동으로 한 번 조사해요 (한 번에 약 $1~3)."
+              : "꺼짐: 대표가 '시장 조사 시작'을 누를 때만 조사해요. 자동으로는 돈이 나가지 않아요."}
+          </span>
+        </form>
       </Card>
 
       {latest?.report ? <Report report={latest.report} at={latest.createdAt} trigger={latest.trigger} /> : null}
