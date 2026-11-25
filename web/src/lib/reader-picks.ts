@@ -12,14 +12,15 @@ export function sortFreshFirst(list: ReaderSeries[], now = Date.now()): ReaderSe
  * 회차 끝 추천: 같은 뿌리(설화·민속 분류)를 가장 높게, 같은 장르를 그다음으로 쳐요.
  * 지금 작품과 겹치는 게 하나도 없는 작품은 빼고, 진짜 작품이면 샘플 작품은 추천하지 않아요.
  */
-export function similarSeries(all: ReaderSeries[], current: { id: string; genre: string; roots: { category: string }[]; isDummy?: boolean }, n = 3): ReaderSeries[] {
+export function similarSeries(all: ReaderSeries[], current: { id: string; genre: string; roots: { category: string }[]; isDummy?: boolean; format?: "webtoon" | "novel" }, n = 3): ReaderSeries[] {
   const cats = new Set(current.roots.map((r) => r.category));
   const score = (s: ReaderSeries) => 2 * s.roots.filter((r) => cats.has(r.category)).length + (s.genre === current.genre ? 1 : 0);
   return all
     .filter((s) => s.id !== current.id && (current.isDummy || !s.isDummy))
     .map((s) => ({ s, k: score(s) }))
     .filter((x) => x.k > 0)
-    .sort((a, b) => b.k - a.k || (b.s.latestAt?.getTime() ?? 0) - (a.s.latestAt?.getTime() ?? 0))
+    // 점수가 같으면 같은 형식(웹툰·웹소설)을 먼저
+    .sort((a, b) => b.k - a.k || Number(b.s.format === current.format) - Number(a.s.format === current.format) || (b.s.latestAt?.getTime() ?? 0) - (a.s.latestAt?.getTime() ?? 0))
     .slice(0, n)
     .map((x) => x.s);
 }

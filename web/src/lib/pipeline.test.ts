@@ -9,6 +9,8 @@ import {
   stageStates,
   UPSTREAM,
   ALL_STAGES,
+  extraGuidelineAgents,
+  stagesFor,
   type LatestArtifact,
 } from "./pipeline";
 
@@ -148,5 +150,35 @@ describe("restGate", () => {
   });
   it("does not block when nothing was checked yet", () => {
     expect(restGate({ panels: [{ index: 1 }], test_panels: [1] }, 3).blocked).toBe(false);
+  });
+});
+
+describe("웹소설 단계 (07번)", () => {
+  it("그림 단계 없이 플롯 → 집필 → 퇴고로 가요", () => {
+    expect(stagesFor("novel")).toEqual(["concept", "story", "characters", "research", "plot", "manuscript", "copyedit"]);
+    expect(UPSTREAM.manuscript).toEqual(["plot", "characters", "research"]);
+    expect(UPSTREAM.copyedit).toEqual(["manuscript"]);
+  });
+
+  it("웹소설은 고증 승인 뒤 화풍을, 플롯 승인 뒤 콘티를 큐에 넣지 않아요", () => {
+    const series = { concept: a("concept", "approved"), story: a("story", "approved"), characters: a("characters", "approved") };
+    expect(nextToEnqueue("research", series, "novel")).toEqual([]);
+    expect(nextToEnqueue("research", series)).toEqual(["style"]);
+    const ep = { ...series, research: a("research", "approved") };
+    expect(nextToEnqueue("plot", ep, "novel")).toEqual(["manuscript"]);
+    expect(nextToEnqueue("plot", ep)).toEqual(["storyboard"]);
+    expect(nextToEnqueue("manuscript", ep, "novel")).toEqual(["copyedit"]);
+  });
+
+  it("웹툰 단계 흐름은 그대로예요", () => {
+    expect(allDownstream("plot")).toEqual(["storyboard", "art", "lettering", "review"]);
+    expect(allDownstream("plot", "novel")).toEqual(["manuscript", "copyedit"]);
+    expect(allDownstream("characters", "novel")).toEqual(["research", "plot", "manuscript", "copyedit"]);
+  });
+
+  it("웹소설 글 단계는 웹소설 작가 지침을 함께 읽어요", () => {
+    expect(extraGuidelineAgents("story", "novel")).toEqual(["novelist"]);
+    expect(extraGuidelineAgents("story")).toEqual([]);
+    expect(extraGuidelineAgents("lettering")).toEqual(["translator_en"]);
   });
 });

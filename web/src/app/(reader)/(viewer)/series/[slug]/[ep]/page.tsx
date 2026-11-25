@@ -18,6 +18,10 @@ import { currentReader } from "@/lib/reader-auth";
 import { reactAction, toggleBookmark } from "@/app/reader-actions";
 import { isBookmarked } from "@/lib/library";
 import { ViewerChrome } from "@/components/reader/viewer-chrome";
+import { ResumePrompt, TextSettingsButton } from "@/components/reader/text-settings";
+import { episodeProgress } from "@/lib/library";
+import { parseTextSettings, resumeParagraph, SCENE_BREAK, TEXT_SETTINGS_COOKIE, textStyle } from "@/lib/novel-text";
+import { cookies } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
@@ -36,13 +40,18 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 const GAP = { none: "mt-0", normal: "mt-6", long: "mt-20" } as const;
 
-/** 뷰어: 세로로 이어지는 컷 위에 고른 언어의 말풍선을 얹어요. 글자 크기는 화면 폭에 맞춰 커지고 작아져요. */
+/**
+ * 뷰어: 웹툰은 세로로 이어지는 컷 위에 고른 언어의 말풍선을 얹어요. 글자 크기는 화면 폭에 맞춰 커지고 작아져요.
+ * 웹소설은 문단을 이어 보여주고, 독자가 고른 글자 크기·줄 간격·글꼴·배경을 써요 (07번 2단계).
+ */
 export default async function Viewer({ params }: { params: Promise<{ slug: string; ep: string }> }) {
   const r = await load(params);
   if (!r?.data) notFound();
   const { locale, data } = r;
   const t = DICT[locale];
-  const { series: s, episode, panels, prev, next } = data;
+  const { series: s, episode, prev, next } = data;
+  const novel = data.kind === "novel";
+  const panels = data.kind === "webtoon" ? data.panels : [];
 
   // 그림을 보여주기 전에 서버에서 볼 수 있는지 확인해요. 잠긴 회차면 회차 열기 시트로 보내요.
   const reader = await currentReader();
@@ -55,11 +64,22 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
   const [thumbs, all] = await Promise.all([next ? episodeThumbs(s.id, locale) : Promise.resolve(new Map<number, string>()), listSeries(locale)]);
   const nextEp = next ? s.episodes.find((e) => e.number === next) : null;
   const nextThumb = next ? thumbs.get(next) : undefined;
-  const picks = similarSeries(all, { id: s.id, genre: s.genre, roots: s.roots, isDummy: s.sale.isDummy });
+  const picks = similarSeries(all, { id: s.id, genre: s.genre, roots: s.roots, isDummy: s.sale.isDummy, format: s.format });
+  // 웹소설 보기 설정(이 기기 쿠키)과 이어 읽기 위치
+  const textSettings = novel ? parseTextSettings((await cookies()).get(TEXT_SETTINGS_COOKIE)?.value) : null;
+  const paragraphs = data.kind === "novel" ? data.paragraphs : [];
+  const seen = novel && reader ? await episodeProgress(reader.id, episode.id) : null;
+  const resumeAt = seen ? resumeParagraph(seen.max, paragraphs.length) : null;
   const nav = "flex h-12 flex-1 items-center justify-center rounded-[6px] border border-line bg-paper-raised text-[14px]";
 
   return (
-    <div className="min-h-dvh bg-paper">
+    <div
+      id="viewer-root"
+      className="min-h-dvh bg-paper text-ink"
+      data-font={textSettings?.font}
+      data-theme-text={textSettings?.theme}
+      style={textSettings ? (textStyle(textSettings) as React.CSSProperties) : undefined}
+    >
       <ViewerChrome
         top={
           <div className="mx-auto flex h-14 max-w-[720px] items-center gap-1 pr-2">
@@ -70,6 +90,28 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
               <span className="font-bold">{s.title}</span>
               <span className="ml-1.5 text-ink-faint">{t.episodes(episode.number)}</span>
             </p>
+            {textSettings ? (
+              <TextSettingsButton
+                rootId="viewer-root"
+                initial={textSettings}
+                labels={{
+                  textSettings: t.textSettings,
+                  textSize: t.textSize,
+                  lineHeight: t.lineHeight,
+                  textFont: t.textFont,
+                  fontSerif: t.fontSerif,
+                  fontSans: t.fontSans,
+                  textTheme: t.textTheme,
+                  themePaper: t.themePaper,
+                  themeSepia: t.themeSepia,
+                  themeNight: t.themeNight,
+                  close: t.close,
+                  lineTight: t.lineTight,
+                  lineNormal: t.lineNormal,
+                  lineWide: t.lineWide,
+                }}
+              />
+            ) : null}
             <Suspense>
               <LangToggle locale={locale} label={t.langLabel} />
             </Suspense>
@@ -98,10 +140,22 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
           <h1 className="sr-only">
             {s.title} {t.epNo(episode.number)} {episode.title}
           </h1>
-          {panels.map((p, i) => (
-            <Panel key={p.index} p={p} first={i === 0} n={i + 1} />
-          ))}
-          <ProgressTracker slug={s.slug} ep={episode.number} panelCount={panels.length} />
+          {data.kind === "novel" ? (
+            <>
+              {resumeAt ? <ResumePrompt at={resumeAt} ask={t.resumeAsk} go={t.resumeGo} close={t.close} /> : null}
+              {data.textLocale !== locale && t.koOnly ? <p className="mx-4 mt-4 rounded-[6px] bg-paper-sunk px-3 py-2.5 text-[13px] text-ink-soft">{t.koOnly}</p> : null}
+              <NovelBody
+                paragraphs={paragraphs}
+                no={t.epNo(episode.number)}
+                title={episode.title}
+                minutes={data.readMinutes ? t.readMin(data.readMinutes) : ""}
+                lang={data.textLocale}
+              />
+            </>
+          ) : (
+            panels.map((p, i) => <Panel key={p.index} p={p} first={i === 0} n={i + 1} />)
+          )}
+          <ProgressTracker slug={s.slug} ep={episode.number} panelCount={novel ? paragraphs.length : panels.length} />
 
           <div className="px-4 pb-28 pt-14 text-center">
             {s.sale.isDummy ? <p className="mx-auto mb-6 max-w-[420px] rounded-[6px] bg-plum-soft px-3 py-2.5 text-[13px] text-plum">{t.sampleNote}</p> : null}
@@ -188,12 +242,38 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
                 </Link>
               ) : null}
             </nav>
-            <p className="mt-10 text-[11px] text-ink-faint">{t.aiNote}</p>
+            <p className="mt-10 text-[11px] text-ink-faint">{novel ? t.aiMadeNovel : t.aiNote}</p>
             <p className="mt-1 text-[11px] text-ink-faint">{t.copyrightLine}</p>
           </div>
         </main>
       </ViewerChrome>
     </div>
+  );
+}
+
+/** 웹소설 본문. 문단마다 번호(data-panel)를 붙여 어디까지 읽었는지 기록해요 */
+function NovelBody({ paragraphs, no, title, minutes, lang }: { paragraphs: string[]; no: string; title: string; minutes: string; lang: string }) {
+  return (
+    <article lang={lang} className="px-5 pb-4 pt-10 font-serif in-data-[font=sans]:font-sans md:px-10">
+      <header className="mb-12 text-center">
+        <p className="text-[13px] text-ink-faint">{no}</p>
+        {title ? <h2 className="mt-1.5 font-serif text-[23px] font-semibold leading-snug">{title}</h2> : null}
+        {minutes ? <p className="mt-2 text-[12px] text-ink-faint">{minutes}</p> : null}
+      </header>
+      <div className="break-keep text-ink" style={{ fontSize: "var(--nv-size, 17px)", lineHeight: "var(--nv-line, 1.8)" }}>
+        {paragraphs.map((p, i) =>
+          p === SCENE_BREAK ? (
+            <div key={i} data-panel={i + 1} role="separator" className="my-[2.2em] text-center text-[0.8em] tracking-[0.6em] text-ink-faint">
+              ＊＊＊
+            </div>
+          ) : (
+            <p key={i} data-panel={i + 1} className="mb-[0.95em]">
+              {p}
+            </p>
+          ),
+        )}
+      </div>
+    </article>
   );
 }
 

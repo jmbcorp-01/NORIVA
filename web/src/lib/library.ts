@@ -103,3 +103,12 @@ export async function readNumbers(readerId: string, seriesId: string): Promise<S
     .where(and(eq(readingProgress.readerId, readerId), eq(readingProgress.seriesId, seriesId), sql`${readingProgress.maxPanel} >= ${readingProgress.panelCount}`));
   return new Set(rows.map((r) => r.number));
 }
+
+/** 이 회차에서 가장 멀리 본 위치 (웹소설 이어 읽기: 문단 번호) */
+export async function episodeProgress(readerId: string, episodeId: string): Promise<{ max: number; count: number } | null> {
+  const [r] = await db
+    .select({ max: readingProgress.maxPanel, count: readingProgress.panelCount })
+    .from(readingProgress)
+    .where(and(eq(readingProgress.readerId, readerId), eq(readingProgress.episodeId, episodeId)));
+  return r ?? null;
+}

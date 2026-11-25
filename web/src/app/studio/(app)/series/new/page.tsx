@@ -45,6 +45,24 @@ export default async function NewSeriesPage({
         </Notice>
       ) : null}
       <form action={createSeries} className="space-y-7">
+        <fieldset>
+          <legend className="mb-2 text-[12px] font-medium text-ink-soft">형식</legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {[
+              ["webtoon", "웹툰", "기획 → 스토리 → 인물 → 고증 → 화풍 → 인물 시트, 회차마다 플롯 → 콘티 → 작화 → 말풍선 → 검수"],
+              ["novel", "웹소설", "기획 → 스토리 → 인물 → 고증, 회차마다 플롯 → 집필 → 퇴고·교정. 그림 단계가 없어 회차당 비용이 훨씬 적어요"],
+            ].map(([v, label, desc]) => (
+              <label key={v} className="cursor-pointer">
+                <input type="radio" name="format" value={v} defaultChecked={v === "webtoon"} className="peer sr-only" />
+                <Card className="h-full px-3.5 py-3 transition-colors peer-checked:border-indigo peer-checked:bg-indigo-soft peer-focus-visible:outline-2 peer-focus-visible:outline-indigo">
+                  <span className="text-[14px] font-medium">{label}</span>
+                  <p className="mt-1 text-[12px] text-ink-soft">{desc}</p>
+                </Card>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
         <div className="grid gap-5 md:grid-cols-2">
           <label>
             <Label hint="비워 두면 기획안에서 정해요">가제 (한국어)</Label>
@@ -63,9 +81,9 @@ export default async function NewSeriesPage({
             </Select>
           </label>
           <label>
-            <Label>연령 등급</Label>
+            <Label hint="19세 작품은 만들지 않아요 (docs/07)">연령 등급</Label>
             <Select name="ageRating" defaultValue="15">
-              {Object.entries(AGE_RATING).map(([k, v]) => (
+              {Object.entries(AGE_RATING).filter(([k]) => k !== "18").map(([k, v]) => (
                 <option key={k} value={k}>
                   {v}
                 </option>

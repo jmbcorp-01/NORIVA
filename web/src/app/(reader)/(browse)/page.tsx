@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Cover } from "@/components/reader/cover";
 import { ContinueRow } from "@/components/reader/continue-row";
-import { Badge, Chip, SectionHead, Shelf, btn, seriesBadge } from "@/components/reader/parts";
+import { Badge, Chip, FormatTabs, SectionHead, Shelf, btn, seriesBadge } from "@/components/reader/parts";
 import { Logo } from "@/components/logo";
 import { DAY_LABEL, DICT, genreLabel, getLocale, ROOT_CATEGORY, todayKey } from "@/lib/i18n";
 import { continueReading } from "@/lib/library";
@@ -10,12 +10,13 @@ import { currentReader } from "@/lib/reader-auth";
 
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
+export default async function Home({ searchParams }: { searchParams: Promise<{ f?: string }> }) {
   const locale = await getLocale();
   const t = DICT[locale];
-  const all = await listSeries(locale);
+  const format = (await searchParams).f === "novel" ? "novel" : "webtoon";
+  const everything = await listSeries(locale);
 
-  if (all.length === 0) {
+  if (everything.length === 0) {
     return (
       <section className="flex min-h-[70dvh] flex-col items-center justify-center px-4 text-center">
         <Logo size={44} />
@@ -25,6 +26,16 @@ export default async function Home() {
     );
   }
 
+  // 웹툰 | 웹소설: 고른 형식의 작품만 보여요. 이어 보기는 형식과 상관없이 다 보여요.
+  const all = everything.filter((s) => s.format === format);
+  if (all.length === 0) {
+    return (
+      <div className="px-4 pt-4">
+        <FormatTabs base="/" current={format} t={t} />
+        <p className="py-24 text-center text-[14px] text-ink-faint">{format === "novel" ? t.noNovelYet : t.noSeries}</p>
+      </div>
+    );
+  }
   const reader = await currentReader();
   const [resume, ranking] = await Promise.all([reader ? continueReading(reader.id, locale, 8) : Promise.resolve([]), weeklyRanking(all, 5)]);
   // 대표 배너: 실제 작품을 먼저, 그다음 샘플
@@ -37,7 +48,10 @@ export default async function Home() {
 
   return (
     <div className="px-4 md:px-4">
-      <section aria-label={t.newThisWeek} className="pt-4">
+      <div className="pt-4">
+        <FormatTabs base="/" current={format} t={t} />
+      </div>
+      <section aria-label={t.newThisWeek} className="pt-3">
         <ul className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 md:mx-0 md:px-0">
           {heroes.map((h, i) => (
             <li key={h.id} className="w-full flex-none snap-center md:w-[calc(50%-6px)]">
@@ -71,7 +85,7 @@ export default async function Home() {
 
       {todayRow.length ? (
         <section className="pt-8" aria-labelledby="today">
-          <SectionHead id="today" title={t.todayUpdates} aside={DAY_LABEL[locale][today]} href={`/explore?day=${today}`} />
+          <SectionHead id="today" title={t.todayUpdates} aside={DAY_LABEL[locale][today]} href={`/explore?day=${today}${format === "novel" ? "&f=novel" : ""}`} />
           <Shelf items={todayRow} locale={locale} t={t} badge={(s) => (s.isDummy ? "sample" : "up")} />
         </section>
       ) : null}
@@ -85,7 +99,7 @@ export default async function Home() {
 
       <div className="md:grid md:grid-cols-2 md:gap-10">
         <section className="pt-8" aria-labelledby="rank">
-          <SectionHead id="rank" title={t.ranking} aside={t.seeAll} href="/explore?tab=popular" />
+          <SectionHead id="rank" title={t.ranking} aside={t.seeAll} href={`/explore?tab=popular${format === "novel" ? "&f=novel" : ""}`} />
           <ol>
             {ranking.map((s, i) => {
               const b = seriesBadge(s);

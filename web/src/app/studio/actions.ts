@@ -18,9 +18,11 @@ import {
 } from "@/lib/studio";
 import { ALL_STAGES, IMAGE_MODELS, restGate, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
+import { addCredit, deleteCredit, seriesCreditsOf, updateCredit, type CreditInput } from "@/lib/credits-store";
 import { enqueueJob, notifyWorker } from "@/lib/queue";
 import { putPrivate } from "@/lib/private-media";
 import { putPublic } from "@/lib/public-media";
+import { saleDefaults } from "@/lib/novel-text";
 import { replacePanel } from "@/lib/hand-edit";
 import { setVerdict, type Verdict } from "@/lib/judge";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
@@ -28,6 +30,11 @@ import { totpSecret } from "@/lib/studio-2fa";
 import { setScoutAuto } from "@/lib/scout-auto";
 import { verifyTotp } from "@/lib/totp";
 import type { GuidelineBody } from "@/db/schema";
+
+const seriesSale = (format: "webtoon" | "novel") => {
+  const d = saleDefaults(format);
+  return { freeEpisodes: d.freeEpisodes, waitFreeExclude: d.waitFreeExclude, earlyPrice: d.earlyPrice };
+};
 
 const lines = (v: FormDataEntryValue | null) =>
   String(v ?? "")
@@ -232,17 +239,20 @@ export async function createSeries(formData: FormData) {
     const genre = z.string().min(1).parse(formData.get("genre"));
     const sourceIds = formData.getAll("sourceIds").map(String).filter(Boolean);
     if (sourceIds.length === 0) throw new StudioError("뿌리가 될 소재를 하나 이상 골라 주세요 (R-1)");
+    const format = z.enum(["webtoon", "novel"]).parse(formData.get("format") ?? "webtoon");
     const brief = {
       tone: String(formData.get("tone") ?? ""),
-      ageRating: z.enum(["all", "12", "15", "18"]).parse(formData.get("ageRating") ?? "15"),
+      // 19세 작품은 만들지 않아요 (docs/07 1절)
+      ageRating: z.enum(["all", "12", "15"]).parse(formData.get("ageRating") ?? "15"),
       audience: String(formData.get("audience") ?? ""),
       memo: String(formData.get("memo") ?? ""),
     };
     const [row] = await db
       .insert(schema.series)
-      .values({ title, titleEn, genre, brief, slug: `${slugify(titleEn || title)}-${Date.now().toString(36).slice(-4)}` })
+      .values({ title, titleEn, genre, brief, format, ...seriesSale(format), slug: `${slugify(titleEn || title)}-${Date.now().toString(36).slice(-4)}` })
       .returning({ id: schema.series.id });
     seriesId = row.id;
+    await seriesCreditsOf(seriesId, owner.email); // 크레딧 필수 항목 기본값 (docs/07 4절)
     await db.insert(schema.seriesSources).values(sourceIds.map((sourceId) => ({ seriesId, sourceId, role: "engine" })));
     await startStage({ seriesId, episodeId: null, stage: "concept", actor: owner.email, instruction: brief.memo });
   } catch (e) {
@@ -254,16 +264,20 @@ export async function createSeries(formData: FormData) {
 export async function createEpisode(formData: FormData) {
   await requireOwner();
   const seriesId = String(formData.get("seriesId"));
-  const [{ n }] = await db
-    .select({ n: max(schema.episodes.number) })
+  const [{ n, price }] = await db
+    .select({ n: max(schema.episodes.number), price: max(schema.episodes.priceCoins) })
     .from(schema.episodes)
     .where(eq(schema.episodes.seriesId, seriesId));
   const number = (n ?? 0) + 1;
+  // 회차 값: 이미 정한 값이 있으면 그대로, 첫 회차면 형식 기본값 (웹툰 3코인, 웹소설 1코인)
+  const [sr] = await db.select({ format: schema.series.format }).from(schema.series).where(eq(schema.series.id, seriesId));
+  const priceCoins = price ?? saleDefaults(sr?.format ?? "webtoon").priceCoins;
   const [ep] = await db
     .insert(schema.episodes)
     .values({
       seriesId,
       number,
+      priceCoins,
       title: String(formData.get("title") ?? "").trim(),
       logline: String(formData.get("logline") ?? "").trim(),
     })
@@ -940,6 +954,39 @@ export async function saveSeriesPublic(formData: FormData) {
   redirect(`${path}?saved=1`);
 }
 
+/** 표지 올리기: 웹소설처럼 작화 그림이 없는 작품도 표지를 쓸 수 있게, 대표가 만든 표지 그림을 올려요 (3:4 권장). */
+export async function uploadCover(formData: FormData) {
+  const owner = await requireOwner();
+  const id = String(formData.get("seriesId"));
+  const path = `/studio/series/${id}`;
+  try {
+    const f = formData.get("file");
+    if (!(f instanceof File) || f.size === 0) throw new StudioError("올릴 표지 그림을 골라 주세요");
+    const ext = REF_TYPES[f.type];
+    if (!ext) throw new StudioError("PNG, JPG, WEBP 그림만 올릴 수 있어요");
+    if (f.size > 8 * 1024 * 1024) throw new StudioError("표지는 8MB까지 올릴 수 있어요");
+    const [s] = await db.select({ coverUrl: schema.series.coverUrl }).from(schema.series).where(eq(schema.series.id, id));
+    if (!s) throw new StudioError("작품을 찾을 수 없어요");
+    const key = `series/${id}/cover/${crypto.randomUUID()}.${ext}`;
+    await putPublic(key, new Uint8Array(await f.arrayBuffer()), f.type);
+    await db.update(schema.series).set({ coverUrl: key, updatedAt: new Date() }).where(eq(schema.series.id, id));
+    const credit = String(formData.get("note") ?? "").trim().slice(0, 200);
+    await db.insert(schema.decisionLedger).values({
+      seriesId: id,
+      actor: owner.email,
+      action: "cover_upload",
+      before: { coverUrl: s.coverUrl },
+      after: { coverUrl: key },
+      note: `표지를 올린 그림으로 바꿨어요${credit ? `: ${credit}` : ""}`,
+    });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  revalidatePath("/");
+  redirect(`${path}?saved=1`);
+}
+
 export async function publishEpisodeAction(formData: FormData) {
   const owner = await requireOwner();
   const path = String(formData.get("back"));
@@ -1092,4 +1139,50 @@ export async function dismissCandidate(formData: FormData) {
     .where(and(eq(schema.sourceCandidates.id, id), eq(schema.sourceCandidates.status, "pending")));
   revalidatePath("/studio/scout");
   redirect("/studio/scout");
+}
+
+/* ─── 작품 크레딧 (docs/07 4절) ─── */
+
+function creditFrom(formData: FormData): CreditInput {
+  const n = String(formData.get("fromEpisode") ?? "").trim();
+  return {
+    role: String(formData.get("role") ?? ""),
+    label: String(formData.get("label") ?? "").trim(),
+    name: String(formData.get("name") ?? "").trim(),
+    kind: z.enum(["company", "human", "ai", "work"]).parse(formData.get("kind") ?? "company"),
+    aiTool: String(formData.get("aiTool") ?? "").trim(),
+    basis: z.enum(["", "contract", "public_domain", "own"]).parse(formData.get("basis") ?? ""),
+    note: String(formData.get("note") ?? "").trim(),
+    fromEpisode: n ? z.coerce.number().int().min(1).parse(n) : null,
+    visible: formData.get("visible") === "on",
+    sort: z.coerce.number().int().parse(formData.get("sort") || 50),
+  };
+}
+
+export async function saveCredit(formData: FormData) {
+  const owner = await requireOwner();
+  const seriesId = String(formData.get("seriesId"));
+  const path = `/studio/series/${seriesId}/credits`;
+  try {
+    const id = String(formData.get("creditId") ?? "");
+    if (id) await updateCredit(id, creditFrom(formData), owner.email);
+    else await addCredit(seriesId, creditFrom(formData), owner.email);
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(`${path}?saved=1`);
+}
+
+export async function removeCredit(formData: FormData) {
+  const owner = await requireOwner();
+  const seriesId = String(formData.get("seriesId"));
+  const path = `/studio/series/${seriesId}/credits`;
+  try {
+    await deleteCredit(String(formData.get("creditId")), owner.email);
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
 }

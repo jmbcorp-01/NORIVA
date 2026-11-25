@@ -107,7 +107,7 @@ def research_text(body: dict[str, Any] | None) -> str:
 
 def run_research(ctx: dict[str, Any], llm: Any, media: Media) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     costs = Costs()
-    system = render_guidelines(ctx["guidelines"])
+    system = render_guidelines(ctx["guidelines"], (ctx.get("series") or {}).get("format") or "webtoon")
     _report(ctx, "시대 고증 정리 중")
     r = llm.json(system, render_task("research", ctx) + RESEARCH_FORMAT, RESEARCH_SCHEMA, effort="high", max_tokens=32000)
     costs.add(r.result.cost_entry())

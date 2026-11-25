@@ -9,8 +9,10 @@ import {
   isSeriesStage,
   nextToEnqueue,
   STAGE_INFO,
-  EXTRA_GUIDELINE_AGENTS,
+  extraGuidelineAgents,
   sheetBlockers,
+  stagesFor,
+  type SeriesFormat,
   UPSTREAM,
   type LatestArtifact,
   type Stage,
@@ -110,6 +112,10 @@ export async function startStage(opts: {
 
   const [s] = await db.select().from(series).where(eq(series.id, seriesId));
   if (!s) throw new StudioError("작품을 찾을 수 없어요");
+  const format = (s.format ?? "webtoon") as SeriesFormat;
+  if (!stagesFor(format).includes(stage)) {
+    throw new StudioError(`${format === "novel" ? "웹소설" : "웹툰"}에는 '${STAGE_INFO[stage].label}' 단계가 없어요`);
+  }
 
   const latest = await latestArtifacts(seriesId, episodeId);
   if (!canStart(stage, asLatest(latest))) {
@@ -133,7 +139,7 @@ export async function startStage(opts: {
 
   const inputIds = UPSTREAM[stage].map((u) => latest[u]!.id);
   const versions = [];
-  for (const agent of [STAGE_INFO[stage].agent, ...(EXTRA_GUIDELINE_AGENTS[stage] ?? [])]) {
+  for (const agent of [STAGE_INFO[stage].agent, ...extraGuidelineAgents(stage, format)]) {
     versions.push(...(await resolveGuidelineVersions(agent, s.genre, seriesId, episodeId)));
   }
   const attempt = (latest[stage]?.attempt ?? 0) + 1;
@@ -178,8 +184,13 @@ export async function startStage(opts: {
 }
 
 /** 앞 단계가 바뀌면 뒤 단계 결과물을 "낡음"으로 표시해요 (03번 4절). 공개된 회차는 건드리지 않아요. */
-async function markDownstreamStale(a: Artifact) {
-  const stages = allDownstream(a.stage as Stage);
+async function seriesFormat(seriesId: string): Promise<SeriesFormat> {
+  const [s] = await db.select({ format: series.format }).from(series).where(eq(series.id, seriesId));
+  return (s?.format ?? "webtoon") as SeriesFormat;
+}
+
+async function markDownstreamStale(a: Artifact, format: SeriesFormat) {
+  const stages = allDownstream(a.stage as Stage, format);
   if (stages.length === 0) return;
   const scope = isSeriesStage(a.stage as Stage)
     ? eq(artifacts.seriesId, a.seriesId)
@@ -204,9 +215,10 @@ async function getArtifact(id: string): Promise<Artifact> {
 }
 
 async function afterApproved(a: Artifact, actor: string) {
-  await markDownstreamStale(a);
+  const format = await seriesFormat(a.seriesId);
+  await markDownstreamStale(a, format);
   const latest = await latestArtifacts(a.seriesId, a.episodeId);
-  for (const next of nextToEnqueue(a.stage as Stage, asLatest(latest))) {
+  for (const next of nextToEnqueue(a.stage as Stage, asLatest(latest), format)) {
     await startStage({ seriesId: a.seriesId, episodeId: a.episodeId, stage: next, actor });
   }
   // 인물까지 승인되면 연재 설정(제목, 소개, 뿌리 노트)의 빈 칸을 AI가 기본값으로 채워요

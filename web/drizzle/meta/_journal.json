@@ -78,6 +78,20 @@
       "when": 1795244097493,
       "tag": "0010_reader_commerce",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795598828049,
+      "tag": "0011_web_novel",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795603628566,
+      "tag": "0012_novel_reader",
+      "breakpoints": true
     }
   ]
 }

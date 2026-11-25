@@ -7,9 +7,11 @@ import { Badge, Button, Card, Empty, Input, Label, Notice, PageHeader, Textarea 
 import { coverCandidates } from "@/lib/studio-publish";
 import { mediaUrl } from "@/lib/media";
 import { latestArtifacts } from "@/lib/studio";
-import { isApproved, SERIES_STAGES, type Stage } from "@/lib/pipeline";
+import { FORMAT_LABEL, isApproved, seriesStagesFor, type SeriesFormat, type Stage } from "@/lib/pipeline";
+import { seriesCreditsOf } from "@/lib/credits-store";
+import { creditBlockers, headlineCredits } from "@/lib/credits";
 import { AGE_RATING, SERIES_STATUS, SOURCE_CATEGORY } from "@/lib/labels";
-import { createEpisode, fillSeriesMeta, saveSeriesPublic } from "../../../actions";
+import { createEpisode, fillSeriesMeta, saveSeriesPublic, uploadCover } from "../../../actions";
 
 const DAYS = [
   ["mon", "월"],
@@ -36,6 +38,9 @@ export default async function SeriesPage({
   if (!/^[0-9a-f-]{36}$/.test(id)) notFound();
   const [s] = await db.select().from(schema.series).where(eq(schema.series.id, id));
   if (!s) notFound();
+  const format = (s.format ?? "webtoon") as SeriesFormat;
+  const credits = await seriesCreditsOf(id);
+  const creditIssues = creditBlockers(credits, format);
   const [latest, roots, episodes, covers] = await Promise.all([
     latestArtifacts(id, null),
     db
@@ -83,6 +88,7 @@ export default async function SeriesPage({
         sub={
           <span className="inline-flex flex-wrap items-center gap-1.5">
             {s.titleEn ? <span className="mr-1">{s.titleEn}</span> : null}
+            <Badge tone={format === "novel" ? "pine" : "neutral"}>{FORMAT_LABEL[format]}</Badge>
             <Badge>{s.genre}</Badge>
             <Badge>{AGE_RATING[s.brief.ageRating]}</Badge>
             <Badge tone="indigo">{SERIES_STATUS[s.status]}</Badge>
@@ -96,6 +102,17 @@ export default async function SeriesPage({
         </Notice>
       ) : null}
 
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink-soft">
+        <span className="font-medium text-ink">크레딧</span>
+        <span>{headlineCredits(credits) || "아직 없어요"}</span>
+        {creditIssues.length ? <span className="text-plum">· 공개 전에 고칠 것 {creditIssues.length}개</span> : null}
+        <Link href={`${`/studio/series/${id}`}/credits`} className="text-indigo underline-offset-4 hover:underline">
+          크레딧 관리
+        </Link>
+        <Link href={`${`/studio/series/${id}`}/history`} className="text-indigo underline-offset-4 hover:underline">
+          제작 이력
+        </Link>
+      </div>
       <div className="mb-8 flex flex-wrap items-center gap-2 text-[13px] text-ink-soft">
         <span className="font-medium text-ink">뿌리</span>
         {roots.map((r) => (
@@ -108,7 +125,7 @@ export default async function SeriesPage({
       <div className="grid gap-10 lg:grid-cols-[1fr_300px]">
         <section>
           <h2 className="mb-3 text-[14px] font-semibold">작품 단계</h2>
-          <StageBoard stages={SERIES_STAGES} latest={latest} seriesId={id} episodeId={null} back={back} />
+          <StageBoard stages={seriesStagesFor(format)} latest={latest} seriesId={id} episodeId={null} back={back} />
         </section>
 
         <section>
@@ -202,7 +219,7 @@ export default async function SeriesPage({
               </div>
             </fieldset>
             <fieldset>
-              <legend className="mb-1.5 text-[12px] font-medium text-ink-soft">표지 {covers.length === 0 ? <span className="font-normal text-ink-faint">· 작화가 끝나면 그림 중에서 고를 수 있어요</span> : null}</legend>
+              <legend className="mb-1.5 text-[12px] font-medium text-ink-soft">표지 {covers.length === 0 ? <span className="font-normal text-ink-faint">{format === "novel" ? "· 아래에서 표지 그림을 올려 주세요" : "· 작화가 끝나면 그림 중에서 고르거나, 아래에서 올릴 수 있어요"}</span> : null}</legend>
               <div className="grid grid-cols-4 gap-1.5">
                 {covers.map((k) => (
                   <label key={k} className="cursor-pointer">
@@ -216,6 +233,14 @@ export default async function SeriesPage({
             <Button type="submit" className="w-full">
               연재 설정 저장
             </Button>
+          </form>
+          <form action={uploadCover} className="mt-3 space-y-2 rounded-[6px] border border-dashed border-line px-3 py-3">
+            <input type="hidden" name="seriesId" value={id} />
+            <p className="text-[12px] font-medium text-ink-soft">표지 올리기</p>
+            <input type="file" name="file" accept="image/png,image/jpeg,image/webp" required className="block w-full text-[12px]" />
+            <Input name="note" placeholder="누가 만들었는지 (예: 외주 디자이너 ○○, 계약 2026-11)" aria-label="표지 출처 메모" className="w-full" />
+            <p className="text-[11.5px] text-ink-faint">세로 3:4 그림이 가장 잘 맞아요. 8MB까지. 올리면 바로 표지가 바뀌고 제작 이력에 남아요. 사람이 만든 표지면 크레딧에 &lsquo;표지&rsquo;도 더해 주세요.</p>
+            <Button type="submit">올리고 표지로 쓰기</Button>
           </form>
         </section>
       </div>

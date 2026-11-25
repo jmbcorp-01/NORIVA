@@ -58,6 +58,8 @@ export const agentKind = pgEnum("agent_kind", [
   "letterer", // 레터링
   "translator_en", // 영어 대사
   "reviewer", // 검수
+  "novelist", // 웹소설 작가 (07번)
+  "copyeditor", // 웹소설 퇴고·교정
 ]);
 
 export type GuidelineRule = { code: string; text: string };
@@ -146,6 +148,8 @@ export const series = pgTable("series", {
   title: text("title").notNull(),
   titleEn: text("title_en").notNull().default(""),
   genre: text("genre").notNull(),
+  // 작품 형식: webtoon | novel (07번). 형식마다 제작 단계가 달라요
+  format: text("format").$type<"webtoon" | "novel">().notNull().default("webtoon"),
   status: seriesStatus("status").notNull().default("planning"),
   brief: jsonb("brief").$type<SeriesBrief>().notNull(),
   logline: text("logline").notNull().default(""),
@@ -162,6 +166,9 @@ export const series = pgTable("series", {
   paid: boolean("paid").notNull().default(false),
   freeEpisodes: integer("free_episodes").notNull().default(3),
   waitFree: boolean("wait_free").notNull().default(true),
+  // 기다무에서 빼는 최신 회차 수 (웹툰 3, 매일 연재 웹소설 10). 선공개 코인 값 (웹툰 5, 웹소설 2)
+  waitFreeExclude: integer("wait_free_exclude").notNull().default(3),
+  earlyPrice: integer("early_price").notNull().default(5),
   // 스튜디오 '더미 채우기'로 만든 IR용 샘플 작품. '더미 모두 삭제'가 이 표시만 보고 지워요
   isDummy: boolean("is_dummy").notNull().default(false),
   ...ts(),
@@ -244,6 +251,24 @@ export const episodeAssets = pgTable(
   (t) => [uniqueIndex("episode_assets_episode_locale").on(t.episodeId, t.locale)],
 );
 
+/** 웹소설 회차 공개본: 승인된 퇴고본을 문단 목록으로 굳혀 둬요 (07번 2단계). 독자는 이것만 읽어요. */
+export const episodeTexts = pgTable(
+  "episode_texts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    episodeId: uuid("episode_id")
+      .notNull()
+      .references(() => episodes.id, { onDelete: "cascade" }),
+    locale: text("locale").notNull(), // ko | en
+    paragraphs: jsonb("paragraphs").$type<string[]>().notNull(),
+    chars: integer("chars").notNull().default(0),
+    readMinutes: integer("read_minutes").notNull().default(0),
+    sourceArtifactId: uuid("source_artifact_id"),
+    ...ts(),
+  },
+  (t) => [uniqueIndex("episode_texts_episode_locale").on(t.episodeId, t.locale)],
+);
+
 /* ─── 제작 파이프라인 (03번) ─── */
 
 export const stage = pgEnum("stage", [
@@ -260,6 +285,9 @@ export const stage = pgEnum("stage", [
   "art", // ⑦ 작화
   "lettering", // ⑧ 말풍선
   "review", // ⑨ 검수
+  // 웹소설 회차 단위 (07번): ⑤ 회차 플롯 → ⑥ 집필 → ⑦ 퇴고·교정
+  "manuscript", // ⑥ 집필
+  "copyedit", // ⑦ 퇴고·교정
   // 작품 밖 작업 (작품 없이 돌아요, jobs.type에만 써요)
   "scout", // 시장 분석 소재 발굴
   "source_fill", // 소재 이름만 보고 나머지 칸 채우기
@@ -416,6 +444,38 @@ export const decisionLedger = pgTable("decision_ledger", {
   note: text("note").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/* ─── 작품 크레딧 (07번 4절): 글, 그림, 원작, 저작권자, AI 제작 표시 등 ─── */
+
+export const seriesCredits = pgTable(
+  "series_credits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    seriesId: uuid("series_id")
+      .notNull()
+      .references(() => series.id, { onDelete: "cascade" }),
+    // story | art | rights | ai | original | person | style | adapt | storyboard | color | letter | cover | copyedit | reference | translate | custom
+    role: text("role").notNull(),
+    // 직접 입력한 역할 이름 (role이 custom일 때). 다른 역할은 비워 두면 기본 이름을 써요
+    label: text("label").notNull().default(""),
+    // 독자에게 보이는 이름 (사람이면 실명이나 필명, 원작이면 '제목 (원저작자)')
+    name: text("name").notNull(),
+    // company | human | ai | work
+    kind: text("kind").notNull().default("company"),
+    // AI 제작 표시에 적는 도구 (예: 글 Claude, 그림 이미지 생성 AI)
+    aiTool: text("ai_tool").notNull().default(""),
+    // 원작 이용 근거: contract | public_domain | own (원작일 때 필수)
+    basis: text("basis").notNull().default(""),
+    // 근거 메모 (계약 날짜, 원전 출처 등). 독자에게 보이지 않아요
+    note: text("note").notNull().default(""),
+    // 이 회차부터 적용 (비우면 작품 전체)
+    fromEpisode: integer("from_episode"),
+    visible: boolean("visible").notNull().default(true),
+    sort: integer("sort").notNull().default(0),
+    ...ts(),
+  },
+  (t) => [index("series_credits_series").on(t.seriesId, t.sort)],
+);
 
 export const bannedTerms = pgTable("banned_terms", {
   id: uuid("id").primaryKey().defaultRandom(),

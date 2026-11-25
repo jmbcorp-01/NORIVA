@@ -11,7 +11,8 @@ import { accessMap, readerRights, wallet } from "@/lib/commerce";
 import { DAY_LABEL, DICT, genreLabel, getLocale, ROOT_CATEGORY, type Dict } from "@/lib/i18n";
 import { isBookmarked, lastReadIn, readNumbers } from "@/lib/library";
 import { mediaUrl } from "@/lib/media";
-import { bookmarkCount, episodeThumbs, getSeries } from "@/lib/reader";
+import { bookmarkCount, episodeThumbs, getSeries, readerCredits } from "@/lib/reader";
+import { creditsForEpisode, headlineCredits, roleLabel } from "@/lib/credits";
 import { currentReader } from "@/lib/reader-auth";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export default async function SeriesPage({ params, searchParams }: { params: Pro
   const s = await getSeries(slug, locale);
   if (!s) notFound();
   const reader = await currentReader();
-  const [saved, saves, thumbs, rights, last, readSet, coins] = await Promise.all([
+  const [saved, saves, thumbs, rights, last, readSet, coins, credits] = await Promise.all([
     reader ? isBookmarked(reader.id, s.id) : false,
     bookmarkCount(s.id),
     episodeThumbs(s.id, locale),
@@ -37,7 +38,11 @@ export default async function SeriesPage({ params, searchParams }: { params: Pro
     reader ? lastReadIn(reader.id, s.id) : null,
     reader ? readNumbers(reader.id, s.id) : new Set<number>(),
     reader ? wallet(reader.id) : null,
+    readerCredits(s.id),
   ]);
+  const novel = s.format === "novel";
+  const headline = headlineCredits(credits, locale);
+  const fullCredits = creditsForEpisode(credits, null);
   const access = accessMap(s.sale, s.episodes, rights);
   const latest = s.episodes[s.episodes.length - 1];
   const resumeAt = last ? (last.finished ? Math.min(last.number + 1, latest.number) : last.number) : 1;
@@ -75,13 +80,14 @@ export default async function SeriesPage({ params, searchParams }: { params: Pro
           <div>
             <p className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink-soft">
               {s.sale.isDummy ? <Badge kind="sample" t={t} /> : null}
+              {novel ? <span className="rounded-[3px] border border-indigo px-1.5 text-[11px] font-semibold text-indigo">{t.formatNovel}</span> : null}
               {genreLabel(s.genre, locale)}
               {days ? ` · ${t.updates(days)}` : ""}
             </p>
             <h1 className="mt-1 font-serif text-[30px] font-semibold leading-tight md:text-[36px]">{s.title}</h1>
             {s.altTitle ? <p className="mt-0.5 text-[13px] text-ink-faint">{s.altTitle}</p> : null}
             <p className="mt-1.5 text-[13px] text-ink-soft">
-              {t.byStudio}
+              {headline || t.byStudio}
               {saves ? ` · ${t.saves(saves)}` : ""}
             </p>
             {s.logline ? <p className="mt-3 text-[14.5px] leading-relaxed text-ink-soft">{s.logline}</p> : null}
@@ -118,7 +124,7 @@ export default async function SeriesPage({ params, searchParams }: { params: Pro
                 <IconClock size={22} />
                 <div className="flex-1">
                   <p className="text-[13.5px] font-bold">{ready ? t.waitFreeReady : t.waitFreeWaiting(formatCountdown(rights!.waitFreeReadyAt!))}</p>
-                  <p className="mt-0.5 text-[12px] opacity-80">{t.waitFreeRule}</p>
+                  <p className="mt-0.5 text-[12px] opacity-80">{t.waitFreeRule(s.sale.waitFreeExclude)}</p>
                 </div>
               </div>
             ) : null}
@@ -169,7 +175,12 @@ export default async function SeriesPage({ params, searchParams }: { params: Pro
                     {t.episodes(e.number)}
                     {e.title ? ` · ${e.title}` : ""}
                   </span>
-                  {e.publishAt ? <span className="mt-0.5 block text-[11.5px] text-ink-faint">{dateFmt.format(e.publishAt)}</span> : null}
+                  {e.publishAt ? (
+                    <span className="mt-0.5 block text-[11.5px] text-ink-faint">
+                      {dateFmt.format(e.publishAt)}
+                      {e.readMinutes ? ` · ${t.readMin(e.readMinutes)}` : ""}
+                    </span>
+                  ) : null}
                 </span>
                 <EpisodeTag a={a} t={t} read={isRead} />
               </>
@@ -196,6 +207,27 @@ export default async function SeriesPage({ params, searchParams }: { params: Pro
         </ol>
       </section>
 
+      {fullCredits.length ? (
+        <section className="px-4 pt-8" aria-labelledby="credits">
+          <h2 id="credits" className="text-[13px] font-semibold text-ink-soft">
+            {t.credits}
+          </h2>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[12.5px]">
+            {fullCredits.map((c, i) => (
+              <div key={c.id ?? i} className="contents">
+                <dt className="text-ink-faint">{roleLabel(c, locale)}</dt>
+                <dd className="text-ink-soft">
+                  {c.name}
+                  {c.aiTool ? ` (${c.aiTool})` : ""}
+                  {c.fromEpisode ? ` · ${t.episodes(c.fromEpisode)}~` : ""}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-2 text-[11.5px] text-ink-faint">{novel ? t.aiMadeNovel : t.aiNote}</p>
+        </section>
+      ) : null}
+
       {openEp && openAccess?.kind === "locked" ? (
         <UnlockSheet
           t={t}
@@ -206,6 +238,7 @@ export default async function SeriesPage({ params, searchParams }: { params: Pro
           coins={coins?.total ?? null}
           loggedIn={Boolean(reader)}
           closeHref={`/series/${s.slug}${sort === "old" ? "?sort=old" : ""}`}
+          waitFreeExclude={s.sale.waitFreeExclude}
           error={sp.error}
         />
       ) : null}
