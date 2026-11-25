@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { joinStyles, toJoin } from "@/lib/publish";
+import { EffectLayer } from "@/components/reader/effect-layer";
 
 export type Bubble = {
   speaker: string;
@@ -16,6 +17,7 @@ export type LetteredPanel = {
   height: string;
   gap_before: string;
   join?: { overlap?: number; margin?: number };
+  effect?: string;
   bubbles: Bubble[];
   sfx: { text: { ko: string; en: string }; x: number; y: number; size: number; angle: number } | null;
 };
@@ -53,6 +55,7 @@ export function LetteredStrip({ panels }: { panels: LetteredPanel[] }) {
               ) : (
                 <div className="aspect-[3/4] w-full bg-line" />
               )}
+              <EffectLayer kind={p.effect} seed={p.index} />
               {p.bubbles.map((b, j) => (
                 <BubbleLayer key={j} b={b} text={b.text[lang] || b.text.ko} />
               ))}

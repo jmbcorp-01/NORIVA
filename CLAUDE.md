@@ -52,3 +52,4 @@
 ## 3. 시험 실행
 - 작업기: `cd worker && TEST_DATABASE_URL=postgres://... .venv/bin/python -m pytest -q`
 - 웹: `cd web && npx tsc --noEmit -p . && npx vitest run`
+- 독자 흐름 전체(로그인 → 무료 회차 → 코인 회차 열기 → 관심 작품 → 서재): 시험 DB로 `READER_DEV_LOGIN=1 npx next dev -p 3100`을 띄우고 `cd web && DATABASE_URL=postgres://... node e2e/reader-flow.mjs`

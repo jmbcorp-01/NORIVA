@@ -53,6 +53,33 @@ SPEC_SCHEMA = _obj(
     }
 )
 
+_FACE_STOP = {
+    "a", "an", "and", "with", "of", "the", "in", "on", "her", "his", "their", "wears", "wearing", "year", "years", "old", "short", "long",
+}
+FACE_SIMILAR = 0.55  # 외모 문구 낱말이 이만큼 겹치면 얼굴이 비슷하게 그려질 가능성이 커요
+
+
+def _face_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", (text or "").lower()) if len(w) > 2 and w not in _FACE_STOP}
+
+
+def face_warnings(chars: list[dict[str, Any]], others: list[dict[str, Any]]) -> list[str]:
+    """다른 작품 주요 인물과 외모 문구가 많이 겹치면 알려요 (계산만 해서 돈이 들지 않아요)."""
+    out = []
+    for c in chars:
+        if c.get("kind", "person") != "person" or c.get("role") == "minor":
+            continue
+        mine = _face_words(c.get("appearance", ""))
+        if not mine:
+            continue
+        for o in others:
+            theirs = _face_words(o.get("appearance", ""))
+            if theirs and len(mine & theirs) / len(mine | theirs) >= FACE_SIMILAR:
+                out.append(f"{c.get('name', c['id'])}의 외모 명세가 「{o['series']}」 {o['name']}와 많이 겹쳐요. 얼굴이 비슷하게 그려질 수 있어요.")
+                break
+    return out
+
+
 SPEC_TASK = """
 ## 출력 형식 (JSON)
 승인된 인물 문서에 나오는 인물(동물·요괴 포함)마다 작화가 모든 회차에 그대로 쓸 고정 명세를 만든다. 많아야 12명, 주인공부터.
@@ -559,6 +586,12 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         only = []
         _report(ctx, "인물 외모 명세 고정하는 중")
         task = render_task("characters", ctx).replace("# 과제: ③ 인물", "# 과제: ④+ 인물 시트 — 외모 명세 고정") + SPEC_TASK
+        if ctx.get("other_faces"):
+            task += (
+                "\n\n## 다른 작품의 주요 인물 (얼굴이 겹치지 않게)\n"
+                "NORIVA의 작품마다 인물 얼굴이 달라 보여야 한다. 아래 인물과 같은 나이·성별이면 눈 모양, 눈썹, 코, 입, 턱선, 표식 중 적어도 세 가지를 다르게 쓴다.\n"
+                + "\n".join(f"- 「{f['series']}」 {f['name']}: {f['appearance']}" for f in ctx["other_faces"])
+            )
         if instruction:
             task += f"\n\n## 대표의 추가 지시 (가장 우선)\n{instruction}"
         r = llm.json(system, task, SPEC_SCHEMA, effort="medium", max_tokens=32000)
@@ -1004,6 +1037,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         "clean_masters": clean_keys,
         "clean_from": master_keys,
         "spec_fixes": spec_fixes,
+        "face_warnings": face_warnings(final, ctx.get("other_faces") or []),
         "retry_spent_usd": round(budget.spent, 2),
         "clean_research": research_body.get("era"),
         "summary": {"characters": len(final), "passed": sum(1 for c in final if c.get("passed")),

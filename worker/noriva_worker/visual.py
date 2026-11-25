@@ -157,6 +157,8 @@ PLAN_SCHEMA = _obj(
                     "gap_before": {"type": "string", "enum": ["none", "normal", "long"]},
                     # 이 컷과 다음 컷이 여백 없이 한 장의 긴 세로 그림으로 이어져요 (같은 장면 안에서만)
                     "joins_next": _BOOL,
+                    # 효과 레이어: 그림 모델이 그리면 'AI 그림' 티가 나는 집중선·속도선·번쩍임은 뷰어가 직접 얹어요
+                    "effect": {"type": "string", "enum": ["none", "focus", "speed", "flash"]},
                     "description": _STR,
                     "character_ids": _arr(_STR),
                     "dialogue": _arr(_obj({"speaker": _STR, "text": _STR})),
@@ -180,6 +182,8 @@ PLAN_TASK = """# 과제: ⑦ 작화 준비 — 승인된 콘티를 컷 목록으
 - 이웃한 컷끼리 샷 크기와 각도를 바꿔 리듬을 만든다(같은 샷 3번 연속 금지, S-12~S-16).
 - character_ids: 그 컷에 실제로 보이는 인물만.
 - dialogue: 콘티의 한국어 대사를 고치지 말고 그대로. speaker는 인물 id, 내레이션은 "narration".
+- effect: 연출 효과 레이어. 충격·놀람·결심의 클로즈업은 focus(집중선), 빠른 움직임·추격은 speed(속도선), 번쩍임·깨달음·초자연 현상은 flash, 그 밖에는 none.
+  한 화에 열 컷 안팎만 쓴다. 효과는 뷰어가 그림 위에 따로 얹으므로 description에 집중선·속도선을 쓰지 않는다.
 - sfx: 한국어 효과음, 없으면 빈 문자열. avoid: 이 컷에 보이면 안 되는 것(영어, 검사에서만 쓴다), 없으면 빈 문자열.
 - characters: 등장하는 인물마다 짧은 id(영문 소문자)와 이름, kind(사람 person, 동물 animal, 용·요괴 같은 존재 creature), 모든 컷에 똑같이 쓸 영어 외모 명세(나이, 얼굴, 머리, 옷, 고정 소품). 동물도 그 컷에 보이면 character_ids에 넣는다.
 - style_prompt: 화풍 카드를 영어 한 단락으로(선, 채색, 명암, 팔레트, 질감). 특정 작가 이름은 쓰지 않는다.
@@ -446,6 +450,7 @@ def _panel_prompt(
         (f"Exactly {len(humans)} visible person(s)." if humans else "No people in this panel.")
         + (" Also visible: " + ", ".join(c["name"] for c in others) + "." if others else ""),
         f"Style: {style}",
+        "Clean artwork only: motion lines, focus lines and flashes are added later as a separate layer." if panel.get("effect") in ("focus", "speed", "flash") else "",
         "Signs, papers and talismans are blank or carry only simple abstract red marks."
         " No text, letters, speech bubbles, signature or watermark anywhere.",
         (
@@ -618,6 +623,29 @@ def strips(panels: list[dict[str, Any]]) -> list[list[int]]:
     return [g for g in out if len(g) > 1]
 
 
+def judge_text(examples: list[dict[str, Any]], n: int = 12) -> str:
+    """대표가 판정한 컷을 검사 지시의 사례로 바꿔요. 특히 검사기는 합격시켰는데 대표가 'AI 같다'고 한 컷이 중요해요."""
+    rows = []
+    missed = [e for e in examples if e.get("owner_verdict") == "ai" and e.get("passed")]
+    rest = [e for e in examples if e not in missed and e.get("owner_verdict") in ("ai", "good")]
+    for e in (missed + rest)[:n]:
+        verdict = "AI 같다(불합격이어야 함)" if e["owner_verdict"] == "ai" else "좋다(합격)"
+        note = (e.get("owner_note") or "").strip()
+        rows.append(
+            f"- 대표 판정: {verdict} · 검사기 점수 {e.get('score', '-')}점"
+            + (" (검사기는 합격시킴)" if e["owner_verdict"] == "ai" and e.get("passed") else "")
+            + f" · 컷: {(e.get('description') or '')[:160]}"
+            + (f" · 대표 메모: {note[:200]}" if note else "")
+        )
+    if not rows:
+        return ""
+    return (
+        "\n## 대표 판정 사례 (검사 기준을 대표 눈에 맞춘다)\n"
+        "대표가 직접 본 컷과 그 판정이다. 대표가 'AI 같다'고 한 이유(메모)와 같은 문제가 이 그림에 보이면 AI 계열 결함(주요 이상)으로 적고, "
+        "검사기가 합격시켰지만 대표가 떨어뜨린 사례와 비슷하면 점수를 더 엄하게 매긴다.\n" + "\n".join(rows) + "\n"
+    )
+
+
 def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media, s: ArtSettings) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     costs = Costs()
     system = render_guidelines(ctx["guidelines"])
@@ -785,6 +813,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     key_base = f"series/{ctx['series']['id']}/ep{ep:03d}/art/{artifact_id}"
 
     names = {c["id"]: c["name"] for c in chars.values()}
+    judge_block = judge_text(ctx.get("judge_examples") or [])
 
     def check(
         panel: dict[str, Any], cast: list[dict[str, Any]], data: bytes, local: list[dict[str, Any]],
@@ -808,7 +837,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             system,
             CHECK_TASK.format(
                 panel=json.dumps({k2: panel.get(k2, "") for k2 in ("shot", "camera", "depth", "description", "character_ids", "avoid")}, ensure_ascii=False),
-                scene=scene_block,
+                scene=scene_block + judge_block,
                 cast=json.dumps([{"id": c["id"], "kind": kind_of(c), "appearance": c["appearance"], "never": c.get("never") or []} for c in cast], ensure_ascii=False) or "(없음)",
                 sheet_order=", ".join(f"{i + 2}번째 그림 = {c['name']}" for i, c in enumerate(sheet_cast)) or "(시트 없음)",
                 style=style,
@@ -1245,6 +1274,7 @@ def run_lettering(ctx: dict[str, Any], llm: JSONModel, media: Media, s: ArtSetti
             "bubbles": [],
             "sfx": None,
             **({"join": p["join"]} if p.get("join") else {}),
+            **({"effect": p["effect"]} if p.get("effect") in ("focus", "speed", "flash") else {}),
         }
         # 이어지는 컷: 위쪽 띠는 앞 컷 아래에 겹쳐 보이고, 아래 컷이 이어지면 아래쪽 띠가 가려져요. 말풍선은 그 밖에 둬요.
         top = (p["join"]["overlap"] * 100 + 2) if p.get("join") else 3

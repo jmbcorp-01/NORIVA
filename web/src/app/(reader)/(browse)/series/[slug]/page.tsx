@@ -71,7 +71,7 @@ export default async function SeriesPage({ params, searchParams }: { params: Pro
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0)_45%,var(--paper)_98%)]" />
         </div>
         <div className="relative -mt-16 px-4 md:mt-0 md:grid md:grid-cols-[260px_1fr] md:gap-8 md:px-0 lg:grid-cols-[300px_1fr]">
-          <Cover src={s.cover} title={s.title} eager className="hidden md:block" />
+          <Cover src={s.cover} title={s.title} eager titled className="hidden md:block" />
           <div>
             <p className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink-soft">
               {s.sale.isDummy ? <Badge kind="sample" t={t} /> : null}

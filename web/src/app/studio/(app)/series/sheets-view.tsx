@@ -47,6 +47,8 @@ type SheetsBody = {
   redrawn?: string[];
   rule_suggestions?: string[];
   master_warnings?: { item: string; note: string; characters: string[] }[];
+  /** 다른 작품 주요 인물과 외모 명세가 많이 겹치는 인물 */
+  face_warnings?: string[];
   clean_masters?: string[];
   found_photos?: { prop: string; image: string; title: string; page: string; license: string; artist: string }[];
   photo_notes?: { index: number; real_photo: boolean; props: string[]; note: string }[];
@@ -160,6 +162,16 @@ export function SheetsView({
         <p className="mt-2 text-[12px] text-plum">
           화풍 마스터에 금지 소품이 있어서 해당 인물은 마스터 없이 그렸어요: {body.master_warnings.map((w) => `${w.item}${w.characters.length ? ` (${w.characters.join(", ")})` : ""}`).join(" · ")}
         </p>
+      ) : null}
+      {body.face_warnings?.length ? (
+        <div className="mt-2 rounded-[5px] border border-plum/40 px-3 py-2 text-[12px]">
+          <p className="font-medium text-plum">다른 작품 인물과 얼굴이 비슷할 수 있어요. 외모 명세를 고쳐 다시 만들면 작품마다 다른 얼굴이 돼요.</p>
+          <ul className="mt-1 space-y-0.5 text-ink-soft">
+            {body.face_warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </div>
       ) : null}
       <p className="mt-1 text-[12px] text-ink-faint">
         승인하면 ⑦ 작화가 모든 회차에서 이 시트와 외모 명세를 그대로 써요. 칼·옷·머리 모양이 시대에 맞는지, 세 방향이 같은 사람인지 크게 보며 확인하세요.

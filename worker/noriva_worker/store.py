@@ -390,6 +390,33 @@ class Store:
             for p in reversed(prev):
                 inputs.append((f"{p['number']}화 대본 (이전 회차)", body_text(p["body"])[:6000]))
 
+        # ④+ 인물 시트: 다른 작품의 주요 인물 외모를 함께 줘서 작품끼리 얼굴이 겹치지 않게 해요
+        other_faces: list[dict[str, Any]] = []
+        if job["type"] == "sheets":
+            rows = c.execute(
+                """select distinct on (a.series_id) s.title, a.body from artifacts a join series s on s.id = a.series_id
+                   where a.stage = 'sheets' and a.status in ('approved','edited') and a.series_id <> %s
+                   order by a.series_id, a.created_at desc limit 20""",
+                (job["series_id"],),
+            ).fetchall()
+            for r in rows:
+                for ch in (r["body"] or {}).get("characters") or []:
+                    if ch.get("kind", "person") == "person" and ch.get("role", "main") in ("main", "supporting") and ch.get("appearance"):
+                        other_faces.append({"series": r["title"], "name": ch.get("name", ""), "appearance": ch["appearance"]})
+            other_faces = other_faces[:24]
+
+        # ⑦ 작화 검사기 눈 맞추기: 대표가 작화 결과에서 '좋아요'·'AI 같아요'로 판정한 컷 (모든 작품, 최근 것부터)
+        judge_examples: list[dict[str, Any]] = []
+        if job["type"] == "art":
+            judge_examples = [
+                r["p"]
+                for r in c.execute(
+                    """select p from artifacts a, jsonb_array_elements(case when jsonb_typeof(a.body->'panels') = 'array'
+                       then a.body->'panels' else '[]'::jsonb end) p
+                       where a.stage = 'art' and p ? 'owner_verdict' order by a.updated_at desc limit 30"""
+                ).fetchall()
+            ]
+
         versions = c.execute(
             """select g.scope, v.version, v.body from guideline_versions v join guidelines g on g.id = v.guideline_id
                where v.id = any(%s::uuid[])""",
@@ -433,6 +460,8 @@ class Store:
             "artifact_id": str(artifact["id"]),
             "attempt": artifact["attempt"],
             "banned_terms": banned,
+            "other_faces": other_faces,
+            "judge_examples": judge_examples,
         }
 
 

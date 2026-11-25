@@ -14,6 +14,7 @@ type LetteredPanel = {
   image: string;
   gap_before?: string;
   join?: { overlap?: number; margin?: number };
+  effect?: string;
   bubbles: LetteredBubble[];
   sfx: { text: { ko: string; en: string }; x: number; y: number; size: number; angle: number } | null;
 };
@@ -59,6 +60,7 @@ export function toPublishedPanels(body: Record<string, unknown>, locale: Locale)
       image: p.image,
       gapBefore: join ? "none" : (GAPS as readonly string[]).includes(p.gap_before ?? "") ? (p.gap_before as PublishedPanel["gapBefore"]) : "normal",
       ...(join ? { join } : {}),
+      ...(p.effect === "focus" || p.effect === "speed" || p.effect === "flash" ? { effect: p.effect } : {}),
       bubbles,
       sfx: p.sfx && sfxText ? { text: sfxText, x: p.sfx.x, y: p.sfx.y, size: p.sfx.size, angle: p.sfx.angle } : null,
     };

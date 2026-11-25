@@ -60,3 +60,15 @@ describe("이어지는 긴 세로 컷", () => {
     expect(joinStyles(undefined).figure).toBeUndefined();
   });
 });
+
+describe("효과 레이어 공개본", () => {
+  it("아는 효과만 옮겨요", async () => {
+    const { toPublishedPanels } = await import("./publish");
+    const out = toPublishedPanels(
+      { kind: "lettered", panels: [{ index: 1, image: "a", effect: "focus", bubbles: [], sfx: null }, { index: 2, image: "b", effect: "glitter", bubbles: [], sfx: null }] },
+      "ko",
+    );
+    expect(out[0].effect).toBe("focus");
+    expect(out[1].effect).toBeUndefined();
+  });
+});

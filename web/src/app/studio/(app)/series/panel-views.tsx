@@ -1,6 +1,7 @@
 import { Badge, Button, Input } from "@/components/ui";
 import { IMAGE_MODELS, imageModelLabel, restGate } from "@/lib/pipeline";
-import { artNextStep, redrawPanels } from "../../actions";
+import { artNextStep, judgePanel, redrawPanels, uploadPanelImage } from "../../actions";
+import { agreement } from "@/lib/judge";
 import { LetteredStrip, type LetteredPanel } from "./lettered-strip";
 import { ZoomImage } from "@/components/zoom-image";
 
@@ -23,6 +24,10 @@ type ArtPanel = {
   scene?: number;
   scene_ref?: boolean;
   color_matched?: boolean;
+  hand_edited?: boolean;
+  owner_verdict?: "good" | "ai";
+  owner_note?: string;
+  effect?: string;
   /** 이어지는 긴 세로 컷: 위 컷 아래 끝을 이어받아 그린 컷 */
   join?: { prev: number; overlap: number; margin: number };
   join_failed?: string;
@@ -102,6 +107,7 @@ export function ArtView({
         {body.redrawn?.length ? <span> · 이번에 다시 그린 컷 {body.redrawn.join(", ")}</span> : null}
         {body.join_added?.length ? <span> (이어진 아래 컷 {body.join_added.join(", ")} 포함)</span> : null}
       </p>
+      <JudgeTally panels={body.panels} />
       {body.strips?.length ? (
         <p className="mt-1 text-[12px] text-ink-soft">
           이어지는 긴 세로 컷 {body.strips.map((g) => `${g[0]}~${g[g.length - 1]}컷`).join(", ")}: 아래 컷이 위 컷 아래 끝을 이어받아 그려지고, 독자 화면에서 여백 없이 한 장처럼 보여요.
@@ -210,6 +216,8 @@ export function ArtView({
                     {p.scene_ref ? " · 앞 컷 이어 그림" : ""}
                     {p.color_matched ? " · 색 맞춤" : ""}
                     {p.join ? ` · ${p.join.prev}컷과 이어 그림` : ""}
+                    {p.hand_edited ? " · 손으로 고친 그림" : ""}
+                    {p.effect && p.effect !== "none" ? ` · 효과 ${({ focus: "집중선", speed: "속도선", flash: "번쩍임" } as Record<string, string>)[p.effect] ?? p.effect}` : ""}
                     {body.step_waiting?.includes(p.index) ? " · 확인 기다림" : ""}
                   </span>
                   {typeof p.score === "number" ? <Badge tone={p.passed ? "pine" : "plum"}>{p.score}점</Badge> : null}
@@ -233,6 +241,47 @@ export function ArtView({
                       </li>
                     ))}
                   </ul>
+                ) : null}
+                {p.image ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[12px]">
+                    <span className="text-ink-faint">대표 판정</span>
+                    {(["good", "ai"] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="submit"
+                        formAction={judgePanel}
+                        name="judge"
+                        value={`${p.index}:${p.owner_verdict === v ? "clear" : v}`}
+                        aria-pressed={p.owner_verdict === v}
+                        className={`min-h-[32px] rounded-full border px-2.5 ${p.owner_verdict === v ? (v === "ai" ? "border-plum bg-plum text-paper" : "border-pine bg-pine text-paper") : "border-line-strong text-ink-soft"}`}
+                      >
+                        {v === "good" ? "좋아요" : "AI 같아요"}
+                      </button>
+                    ))}
+                    <input
+                      name={`judge_note_${p.index}`}
+                      defaultValue={p.owner_note ?? ""}
+                      placeholder="왜 그런지 (예: 피부가 플라스틱 같음)"
+                      className="min-h-[32px] min-w-[160px] flex-1 rounded-[4px] border border-line bg-paper-raised px-2"
+                    />
+                  </div>
+                ) : null}
+                {canRedraw && p.image ? (
+                  <details className="mt-2 text-[12px]">
+                    <summary className="cursor-pointer text-ink-soft">손으로 고치기 (핵심 컷)</summary>
+                    <p className="mt-1 text-ink-faint">
+                      그림을 내려받아 그림 도구에서 고친 뒤 올리면 이 컷 그림이 바뀌어요. 원래 그림은 남고, 바꾼 기록은 제작 원장에 남아요.
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <a href={mediaUrl(p.image)} download={`panel-${p.index}.png`} className="text-indigo underline-offset-2 hover:underline">
+                        그림 내려받기
+                      </a>
+                      <input type="file" name={`file_${p.index}`} accept="image/png,image/jpeg,image/webp" className="max-w-[220px] text-[12px]" />
+                      <Button type="submit" formAction={uploadPanelImage} name="index" value={String(p.index)}>
+                        고친 그림 올리기
+                      </Button>
+                    </div>
+                  </details>
                 ) : null}
                 {canRedraw ? (
                   <label className="mt-2 inline-flex min-h-[44px] cursor-pointer items-center gap-2 text-[13px] text-indigo">
@@ -283,7 +332,7 @@ export function LetteredView({ body }: { body: { panels: LetteredPanel[] } }) {
               ))}
             </tbody>
           </table>
-          <p className="mt-2 text-[11px] text-ink-faint">영어를 고치려면 아래 “직접 고치기”에서 해당 줄의 en 값을 바꿔 저장하세요.</p>
+          <p className="mt-2 text-[11px] text-ink-faint">영어를 고치려면 아래 “직접 고치기”에서 그 말풍선의 영어 칸을 바꿔 저장하세요.</p>
         </details>
       ) : null}
     </div>
@@ -345,6 +394,25 @@ function TestGate({ body, pending, tests, compared, hidden }: { body: ArtBody; p
         </form>
       </div>
     </div>
+  );
+}
+
+/** 대표 판정과 자동 검사의 일치도. 판정이 쌓일수록 검사기가 대표 눈에 맞춰져요. */
+function JudgeTally({ panels }: { panels: ArtPanel[] }) {
+  const a = agreement(panels);
+  if (!a.judged) {
+    return (
+      <p className="mt-1 text-[12px] text-ink-faint">
+        컷마다 &lsquo;좋아요&rsquo;·&lsquo;AI 같아요&rsquo;를 눌러 두면 다음 작화부터 자동 검사가 대표님 판단을 사례로 배워요.
+      </p>
+    );
+  }
+  return (
+    <p className="mt-1 text-[12px] text-ink-soft">
+      대표 판정 {a.judged}컷 중 자동 검사와 {a.agree}컷 일치 ({a.pct}%)
+      {a.missed.length ? <span className="text-plum"> · 검사가 놓친 컷 {a.missed.join(", ")}</span> : null}
+      {a.strict.length ? <span> · 검사가 너무 엄했던 컷 {a.strict.join(", ")}</span> : null}
+    </p>
   );
 }
 

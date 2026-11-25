@@ -1208,3 +1208,38 @@ def test_step_scenes_draw_one_panel_at_a_time(store, tmp_path):
     _, nxt = _run(store, tools, sid, eid, "art", inputs, payload={"panels": [4], "base_artifact_id": str(art_id)}, attempt=2)
     assert nxt["pending"] == [] and nxt["step_waiting"] == [4] and nxt["step_scenes"] == [2]
     assert len(images.prompts) == n + 1  # 4컷 한 장만 그림
+
+
+def test_face_warnings_flag_copied_looks_across_series():
+    from noriva_worker.sheets import face_warnings
+
+    others = [{"series": "달빛 혼례", "name": "연화", "appearance": "woman, 19, oval face, large round double-lidded eyes, small nose, full red lips, long black hair"}]
+    same = {"id": "a", "name": "하나", "kind": "person", "role": "main",
+            "appearance": "woman, 18, oval face, large round double-lidded eyes, small nose, full red lips, long black hair, white jeogori"}
+    other = {"id": "b", "name": "수로", "kind": "person", "role": "main",
+             "appearance": "man, 34, square jaw, narrow monolid eyes, thick straight brows, scar on left cheek, cropped gray hair"}
+    minor = dict(same, id="c", role="minor")
+    w = face_warnings([same, other, minor], others)
+    assert len(w) == 1 and "하나" in w[0] and "달빛 혼례" in w[0]
+
+
+def test_owner_verdicts_tune_the_checker(store, tmp_path):
+    """대표가 'AI 같아요'로 표시한 컷(검사기는 합격시킨 컷)이 다음 작화 검사 지시에 사례로 들어가요."""
+    from noriva_worker.visual import judge_text
+
+    t = judge_text([{"owner_verdict": "good", "score": 85, "passed": True, "description": "wide shot"},
+                    {"owner_verdict": "ai", "score": 88, "passed": True, "description": "close-up", "owner_note": "피부가 플라스틱 같음"}])
+    assert t.index("피부가 플라스틱 같음") < t.index("wide shot")  # 검사기가 놓친 사례를 먼저
+    assert "검사기는 합격시킴" in t
+    assert judge_text([]) == ""
+
+    c = store.conn
+    sid, eid = _series(c)
+    _approved(c, sid, eid, "art", {"kind": "art", "panels": [{"index": 1, "description": "old close-up", "score": 90, "passed": True,
+                                                             "owner_verdict": "ai", "owner_note": "눈이 번들거림"}]})
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=0, zoom_check=False))
+    _run(store, tools, sid, eid, "art", [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})])
+    checks = [t for props, t, _ in model.calls if "people_count" in props]
+    assert checks and all("눈이 번들거림" in t for t in checks)
