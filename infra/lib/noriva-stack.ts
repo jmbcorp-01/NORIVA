@@ -285,6 +285,7 @@ export class NorivaStack extends Stack {
 
     // 매주 월요일 오전 9시(서울)에 소재 발굴(시장 리포트)을 대기열에 넣어요.
     // 꺼져 있던 작업 서버는 위 경보가 3분 안에 켜고, 작업 서버가 jobs 행을 만들어 실행해요.
+    // 단, 대표가 '소재 발굴' 화면에서 자동 실행을 켰을 때만 조사해요 (기본 꺼짐, studio_settings.scout_auto).
     new scheduler.Schedule(this, "WeeklyScout", {
       description: "NORIVA 주간 시장 리포트와 소재 후보",
       schedule: scheduler.ScheduleExpression.cron({ minute: "0", hour: "9", weekDay: "MON", timeZone: TimeZone.ASIA_SEOUL }),
