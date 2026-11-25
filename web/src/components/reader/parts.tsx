@@ -42,7 +42,10 @@ export function SeriesCard({ s, locale, t, badge, eager = false }: { s: ReaderSe
         {b ? <Badge kind={b} t={t} className="absolute left-1.5 top-1.5" /> : null}
       </div>
       <p className="mt-1.5 line-clamp-2 text-[13.5px] font-semibold leading-snug">{s.title}</p>
-      <p className="mt-0.5 truncate text-[11.5px] text-ink-faint">{genreLabel(s.genre, locale)}</p>
+      <p className="mt-0.5 truncate text-[11.5px] text-ink-faint">
+        {s.format === "novel" ? <span className="mr-1 font-semibold text-indigo">{t.formatNovel}</span> : null}
+        {genreLabel(s.genre, locale)}
+      </p>
     </Link>
   );
 }
@@ -89,6 +92,31 @@ export function SectionHead({ id, title, aside, href }: { id?: string; title: st
         )
       ) : null}
     </div>
+  );
+}
+
+/** 홈·탐색 맨 위 웹툰 | 웹소설 전환. 고른 형식만 아래에 보여요 */
+export function FormatTabs({ base, current, t, keep = {} }: { base: string; current: "webtoon" | "novel"; t: Dict; keep?: Record<string, string | undefined> }) {
+  const href = (f: "webtoon" | "novel") => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(keep)) if (v) q.set(k, v);
+    if (f === "novel") q.set("f", "novel");
+    const s = q.toString();
+    return s ? `${base}?${s}` : base;
+  };
+  return (
+    <nav aria-label={`${t.tabWebtoon} / ${t.tabNovel}`} className="flex gap-5 text-[17px]">
+      {(["webtoon", "novel"] as const).map((f) => (
+        <Link
+          key={f}
+          href={href(f)}
+          aria-current={current === f ? "page" : undefined}
+          className={`pb-1 ${current === f ? "font-bold text-ink shadow-[inset_0_-2px_0_var(--ink)]" : "text-ink-faint hover:text-ink"}`}
+        >
+          {f === "novel" ? t.tabNovel : t.tabWebtoon}
+        </Link>
+      ))}
+    </nav>
   );
 }
 

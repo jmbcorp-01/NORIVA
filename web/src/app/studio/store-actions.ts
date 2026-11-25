@@ -83,12 +83,27 @@ export async function updateSeriesSale(fd: FormData) {
   await requireOwner();
   const id = z.string().uuid().parse(fd.get("id"));
   const v = z
-    .object({ paid: z.boolean(), freeEpisodes: z.coerce.number().int().min(0).max(999), waitFree: z.boolean(), priceCoins: z.coerce.number().int().min(0).max(100) })
-    .parse({ paid: fd.get("paid") === "on", freeEpisodes: fd.get("freeEpisodes"), waitFree: fd.get("waitFree") === "on", priceCoins: fd.get("priceCoins") });
+    .object({
+      paid: z.boolean(),
+      freeEpisodes: z.coerce.number().int().min(0).max(999),
+      waitFree: z.boolean(),
+      priceCoins: z.coerce.number().int().min(0).max(100),
+      earlyPrice: z.coerce.number().int().min(0).max(100),
+      waitFreeExclude: z.coerce.number().int().min(0).max(100),
+    })
+    .parse({
+      paid: fd.get("paid") === "on",
+      freeEpisodes: fd.get("freeEpisodes"),
+      waitFree: fd.get("waitFree") === "on",
+      priceCoins: fd.get("priceCoins"),
+      earlyPrice: fd.get("earlyPrice") ?? 5,
+      waitFreeExclude: fd.get("waitFreeExclude") ?? 3,
+    });
   await db.transaction(async (tx) => {
-    await tx.update(schema.series).set({ paid: v.paid, freeEpisodes: v.freeEpisodes, waitFree: v.waitFree, updatedAt: new Date() }).where(eq(schema.series.id, id));
+    await tx.update(schema.series).set({ paid: v.paid, freeEpisodes: v.freeEpisodes, waitFree: v.waitFree, earlyPrice: v.earlyPrice, waitFreeExclude: v.waitFreeExclude, updatedAt: new Date() }).where(eq(schema.series.id, id));
     await tx.update(schema.episodes).set({ priceCoins: v.priceCoins }).where(eq(schema.episodes.seriesId, id));
   });
+  // 그림 보호는 웹툰만 (웹소설 공개본은 글이라 서버가 잠금을 확인한 뒤에만 보내요)
   if (v.paid) await protectSeriesPanels(id);
   done();
 }

@@ -4,7 +4,7 @@ import type { ReaderSeries } from "./reader";
 
 const base: ReaderSeries = {
   id: "x", slug: "x", title: "x", genre: "fantasy", logline: "", rootNote: "", cover: "", days: [], status: "ongoing",
-  episodeCount: 1, latestAt: null, roots: [], altTitle: "", paid: false, waitFree: false, isDummy: false, latestNumber: 1,
+  episodeCount: 1, latestAt: null, roots: [], altTitle: "", paid: false, waitFree: false, isDummy: false, latestNumber: 1, format: "webtoon",
 };
 const mk = (o: Partial<ReaderSeries>): ReaderSeries => ({ ...base, ...o });
 

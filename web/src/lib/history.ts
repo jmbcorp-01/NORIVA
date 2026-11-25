@@ -31,6 +31,7 @@ const ACTION_LABEL: Record<string, string> = {
   credit_add: "크레딧 추가",
   credit_edit: "크레딧 수정",
   credit_delete: "크레딧 삭제",
+  cover_upload: "표지 올림",
 };
 export const actionLabel = (a: string) => ACTION_LABEL[a] ?? a;
 const stageLabel = (s: string | null) => (s && s in STAGE_INFO ? `${STAGE_INFO[s as Stage].no} ${STAGE_INFO[s as Stage].label}` : "");

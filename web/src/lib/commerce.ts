@@ -46,7 +46,7 @@ export async function readerRights(readerId: string, seriesId: string): Promise<
 }
 
 type SaleRow = { id: string; number: number; priceCoins: number; earlyAccess: boolean };
-type SeriesRow = { id: string; paid: boolean; freeEpisodes: number; waitFree: boolean; isDummy: boolean };
+type SeriesRow = { id: string; paid: boolean; freeEpisodes: number; waitFree: boolean; isDummy: boolean; waitFreeExclude: number; earlyPrice: number };
 
 /** 작품의 회차마다 볼 수 있는지 계산해요. 로그인하지 않았으면 rights 없이 계산해요. */
 export function accessMap(s: SeriesRow, eps: SaleRow[], rights: ReaderRights | null): Map<number, Access> {
@@ -56,7 +56,15 @@ export function accessMap(s: SeriesRow, eps: SaleRow[], rights: ReaderRights | n
 
 async function loadSeriesForSale(slug: string) {
   const [s] = await db
-    .select({ id: series.id, paid: series.paid, freeEpisodes: series.freeEpisodes, waitFree: series.waitFree, isDummy: series.isDummy })
+    .select({
+      id: series.id,
+      paid: series.paid,
+      freeEpisodes: series.freeEpisodes,
+      waitFree: series.waitFree,
+      isDummy: series.isDummy,
+      waitFreeExclude: series.waitFreeExclude,
+      earlyPrice: series.earlyPrice,
+    })
     .from(series)
     .where(eq(series.slug, slug));
   if (!s) return null;

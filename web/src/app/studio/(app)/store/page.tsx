@@ -20,6 +20,9 @@ export default async function Store({ searchParams }: { searchParams: Promise<{ 
         paid: series.paid,
         freeEpisodes: series.freeEpisodes,
         waitFree: series.waitFree,
+        waitFreeExclude: series.waitFreeExclude,
+        earlyPrice: series.earlyPrice,
+        format: series.format,
         isDummy: series.isDummy,
         price: sql<number>`coalesce(max(${episodes.priceCoins}), 3)::int`,
         count: sql<number>`count(${episodes.id})::int`,
@@ -86,7 +89,7 @@ export default async function Store({ searchParams }: { searchParams: Promise<{ 
       </div>
 
       <h2 className="mb-3 mt-10 text-[16px] font-semibold">작품별 판매 설정</h2>
-      <p className="mb-3 text-[12.5px] text-ink-faint">유료를 끄면 모든 회차가 무료예요 (오픈 베타). 선공개 회차는 5코인 이상이고 기다무로 열 수 없어요.</p>
+      <p className="mb-3 text-[12.5px] text-ink-faint">유료를 끄면 모든 회차가 무료예요 (오픈 베타). 선공개 회차는 기다무로 열 수 없어요. 웹소설 기본값은 무료 10화, 1화 1코인, 선공개 2코인, 최신 10화 기다무 제외예요.</p>
       <div className="space-y-2">
         {seriesRows.map((s) => (
           <Card key={s.id} className="p-4">
@@ -94,7 +97,7 @@ export default async function Store({ searchParams }: { searchParams: Promise<{ 
               <input type="hidden" name="id" value={s.id} />
               <div className="min-w-[180px] flex-1">
                 <p className="text-[14px] font-semibold">
-                  {s.title} {s.isDummy ? <Badge tone="plum">샘플</Badge> : null}
+                  {s.title} {s.format === "novel" ? <Badge tone="indigo">웹소설</Badge> : null} {s.isDummy ? <Badge tone="plum">샘플</Badge> : null}
                 </p>
                 <p className="text-[12px] text-ink-faint">회차 {s.count}개</p>
               </div>
@@ -109,8 +112,16 @@ export default async function Store({ searchParams }: { searchParams: Promise<{ 
                 <Label>1화 코인</Label>
                 <Input type="number" name="priceCoins" min={0} max={100} defaultValue={s.price} />
               </label>
+              <label className="w-[100px]">
+                <Label>선공개 코인</Label>
+                <Input type="number" name="earlyPrice" min={0} max={100} defaultValue={s.earlyPrice} />
+              </label>
               <label className="flex items-center gap-1.5 text-[13px]">
                 <input type="checkbox" name="waitFree" defaultChecked={s.waitFree} /> 기다무
+              </label>
+              <label className="w-[130px]">
+                <Label>기다무 빼는 최신 회차</Label>
+                <Input type="number" name="waitFreeExclude" min={0} max={100} defaultValue={s.waitFreeExclude} />
               </label>
               <Button variant="primary" disabled={s.isDummy}>
                 저장

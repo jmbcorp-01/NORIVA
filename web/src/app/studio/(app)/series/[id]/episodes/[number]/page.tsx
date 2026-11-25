@@ -117,14 +117,12 @@ function PublishCard({
         <span className="font-serif text-[15px] font-semibold">⑩ 연재</span>
         {live ? (
           <Badge tone="pine">{status === "scheduled" ? `예약 · ${when}` : `공개 중 · ${when}`}</Badge>
-        ) : ready && novel ? (
-          <Badge tone="indigo">검수 끝 · 공개 준비 완료</Badge>
         ) : ready ? (
           <Badge tone="indigo">공개할 수 있어요</Badge>
         ) : (
           <span className="text-[12px] text-ink-faint">{novel ? "⑦ 퇴고·교정을 승인하면 검수가 끝나요" : "말풍선과 검수가 승인되면 공개할 수 있어요"}</span>
         )}
-        {ready && !novel ? (
+        {ready ? (
           <form action={publishEpisodeAction} className="ml-auto flex flex-wrap items-center gap-2">
             <input type="hidden" name="episodeId" value={episodeId} />
             <input type="hidden" name="back" value={back} />
@@ -148,12 +146,11 @@ function PublishCard({
           </form>
         ) : null}
       </div>
-      {ready && novel ? (
-        <p className="mt-2 text-[12px] text-ink-faint">독자 앱의 웹소설 화면(2단계)이 열리면 여기서 공개 예약을 할 수 있어요.</p>
-      ) : null}
-      {ready && !novel ? (
+      {ready ? (
         <p id="publish-hint" className="mt-2 text-[12px] text-ink-faint">
-          시각을 비우면 지금 공개해요. 한국어와 영어가 같은 시각에 공개돼요.
+          {novel
+            ? "시각을 비우면 지금 공개해요. 승인한 퇴고본이 그대로 독자 화면에 올라가요. 지금은 한국어만 공개돼요 (영어판은 3단계)."
+            : "시각을 비우면 지금 공개해요. 한국어와 영어가 같은 시각에 공개돼요."}
         </p>
       ) : null}
       <form action={saveEpisodeInfo} className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">

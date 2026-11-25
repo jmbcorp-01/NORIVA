@@ -12,7 +12,8 @@ export const EARLY_ACCESS_PRICE = 5;
 export const WAIT_FREE_EXCLUDE_LATEST = 3;
 export const WAIT_FREE_HOURS = 24;
 
-export type SeriesSale = { paid: boolean; freeEpisodes: number; waitFree: boolean; isDummy: boolean };
+/** waitFreeExclude·earlyPrice는 작품마다 달라요 (웹툰 3·5, 웹소설 10·2). 비우면 웹툰 기준이에요. */
+export type SeriesSale = { paid: boolean; freeEpisodes: number; waitFree: boolean; isDummy: boolean; waitFreeExclude?: number; earlyPrice?: number };
 export type EpisodeSale = { number: number; priceCoins: number; earlyAccess: boolean };
 export type ReaderRights = {
   owned: Set<number>; // 이 작품에서 연 회차 번호
@@ -30,11 +31,11 @@ export function episodeAccess(s: SeriesSale, ep: EpisodeSale, latestRegular: num
   if (s.isDummy || !s.paid || ep.number <= s.freeEpisodes) return { kind: "free" };
   if (rights?.owned.has(ep.number)) return { kind: "owned" };
   if (rights?.passActive && !ep.earlyAccess) return { kind: "pass" };
-  const price = ep.earlyAccess ? Math.max(ep.priceCoins, EARLY_ACCESS_PRICE) : ep.priceCoins;
+  const price = ep.earlyAccess ? Math.max(ep.priceCoins, s.earlyPrice ?? EARLY_ACCESS_PRICE) : ep.priceCoins;
   let waitFree: "ready" | "waiting" | "excluded" | "off" = "off";
   let waitFreeAt: Date | null = null;
   if (s.waitFree) {
-    if (ep.earlyAccess || ep.number > latestRegular - WAIT_FREE_EXCLUDE_LATEST) waitFree = "excluded";
+    if (ep.earlyAccess || ep.number > latestRegular - (s.waitFreeExclude ?? WAIT_FREE_EXCLUDE_LATEST)) waitFree = "excluded";
     else if (!rights?.waitFreeReadyAt || rights.waitFreeReadyAt <= now) waitFree = "ready";
     else {
       waitFree = "waiting";

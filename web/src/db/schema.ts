@@ -166,6 +166,9 @@ export const series = pgTable("series", {
   paid: boolean("paid").notNull().default(false),
   freeEpisodes: integer("free_episodes").notNull().default(3),
   waitFree: boolean("wait_free").notNull().default(true),
+  // 기다무에서 빼는 최신 회차 수 (웹툰 3, 매일 연재 웹소설 10). 선공개 코인 값 (웹툰 5, 웹소설 2)
+  waitFreeExclude: integer("wait_free_exclude").notNull().default(3),
+  earlyPrice: integer("early_price").notNull().default(5),
   // 스튜디오 '더미 채우기'로 만든 IR용 샘플 작품. '더미 모두 삭제'가 이 표시만 보고 지워요
   isDummy: boolean("is_dummy").notNull().default(false),
   ...ts(),
@@ -246,6 +249,24 @@ export const episodeAssets = pgTable(
     ...ts(),
   },
   (t) => [uniqueIndex("episode_assets_episode_locale").on(t.episodeId, t.locale)],
+);
+
+/** 웹소설 회차 공개본: 승인된 퇴고본을 문단 목록으로 굳혀 둬요 (07번 2단계). 독자는 이것만 읽어요. */
+export const episodeTexts = pgTable(
+  "episode_texts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    episodeId: uuid("episode_id")
+      .notNull()
+      .references(() => episodes.id, { onDelete: "cascade" }),
+    locale: text("locale").notNull(), // ko | en
+    paragraphs: jsonb("paragraphs").$type<string[]>().notNull(),
+    chars: integer("chars").notNull().default(0),
+    readMinutes: integer("read_minutes").notNull().default(0),
+    sourceArtifactId: uuid("source_artifact_id"),
+    ...ts(),
+  },
+  (t) => [uniqueIndex("episode_texts_episode_locale").on(t.episodeId, t.locale)],
 );
 
 /* ─── 제작 파이프라인 (03번) ─── */

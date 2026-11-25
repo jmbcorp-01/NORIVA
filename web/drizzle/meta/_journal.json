@@ -85,6 +85,13 @@
       "when": 1795598828049,
       "tag": "0011_web_novel",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795603628566,
+      "tag": "0012_novel_reader",
+      "breakpoints": true
     }
   ]
 }

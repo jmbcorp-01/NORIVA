@@ -21,12 +21,13 @@ export function UnlockSheet(p: {
   loggedIn: boolean;
   closeHref: string;
   error?: string;
+  waitFreeExclude?: number;
 }) {
   const { t, access: a } = p;
   const canWait = a.waitFree === "ready";
   const enough = p.coins !== null && p.coins >= a.price;
   const waitSub =
-    a.waitFree === "ready" ? t.optWaitReady : a.waitFree === "waiting" && a.waitFreeAt ? t.optWaitWaiting(formatCountdown(a.waitFreeAt)) : t.optWaitExcluded;
+    a.waitFree === "ready" ? t.optWaitReady : a.waitFree === "waiting" && a.waitFreeAt ? t.optWaitWaiting(formatCountdown(a.waitFreeAt)) : t.optWaitExcluded(p.waitFreeExclude ?? 3);
   const opt = "flex items-center gap-3 rounded-[8px] border p-3.5";
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center md:items-center" role="dialog" aria-modal="true" aria-labelledby="unlock-title">

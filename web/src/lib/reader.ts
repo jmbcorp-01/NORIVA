@@ -2,8 +2,9 @@ import "server-only";
 import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Locale } from "./publish";
+import type { Credit } from "./credits";
 
-const { series, episodes, episodeAssets, seriesSources, sources, viewEvents, bookmarks } = schema;
+const { series, episodes, episodeAssets, episodeTexts, seriesSources, sources, viewEvents, bookmarks, seriesCredits } = schema;
 
 /** 독자에게 보이는 회차: 공개됐거나 예약 시각이 지난 회차 */
 const visibleEpisode = and(inArray(episodes.status, ["published", "scheduled"]), lte(episodes.publishAt, sql`now()`));
@@ -27,6 +28,7 @@ export type ReaderSeries = {
   waitFree: boolean;
   isDummy: boolean;
   latestNumber: number;
+  format: "webtoon" | "novel";
 };
 
 function pick(ko: string, en: string, locale: Locale) {
@@ -69,6 +71,7 @@ export async function listSeries(locale: Locale): Promise<ReaderSeries[]> {
     waitFree: s.waitFree,
     isDummy: s.isDummy,
     latestNumber,
+    format: s.format,
   }));
 }
 
@@ -127,6 +130,18 @@ export async function getSeries(slug: string, locale: Locale) {
       .where(eq(seriesSources.seriesId, s.id)),
   ]);
   if (eps.length === 0) return null; // 공개된 회차가 없으면 독자에게 보이지 않아요
+  // 웹소설: 회차마다 읽는 시간 (한국어 공개본 기준)
+  const minutes =
+    s.format === "novel"
+      ? new Map(
+          (
+            await db
+              .select({ id: episodeTexts.episodeId, m: episodeTexts.readMinutes })
+              .from(episodeTexts)
+              .where(and(inArray(episodeTexts.episodeId, eps.map((e) => e.id)), eq(episodeTexts.locale, "ko")))
+          ).map((r) => [r.id, r.m]),
+        )
+      : new Map<string, number>();
   return {
     id: s.id,
     slug: s.slug,
@@ -140,7 +155,8 @@ export async function getSeries(slug: string, locale: Locale) {
     days: s.scheduleDays,
     status: s.status,
     roots,
-    sale: { id: s.id, paid: s.paid, freeEpisodes: s.freeEpisodes, waitFree: s.waitFree, isDummy: s.isDummy },
+    format: s.format,
+    sale: { id: s.id, paid: s.paid, freeEpisodes: s.freeEpisodes, waitFree: s.waitFree, isDummy: s.isDummy, waitFreeExclude: s.waitFreeExclude, earlyPrice: s.earlyPrice },
     episodes: eps.map((e) => ({
       id: e.id,
       number: e.number,
@@ -148,6 +164,7 @@ export async function getSeries(slug: string, locale: Locale) {
       publishAt: e.publishAt,
       priceCoins: e.priceCoins,
       earlyAccess: e.earlyAccess,
+      readMinutes: minutes.get(e.id) ?? 0,
     })),
   };
 }
@@ -157,6 +174,17 @@ export async function getEpisode(slug: string, number: number, locale: Locale) {
   if (!s) return null;
   const idx = s.episodes.findIndex((e) => e.number === number);
   if (idx < 0) return null;
+  const nav = { series: s, episode: s.episodes[idx], prev: s.episodes[idx - 1]?.number ?? null, next: s.episodes[idx + 1]?.number ?? null };
+  if (s.format === "novel") {
+    // 웹소설은 한국어부터 공개해요. 고른 언어 공개본이 없으면 한국어로 보여주고 알려요.
+    const rows = await db
+      .select({ locale: episodeTexts.locale, paragraphs: episodeTexts.paragraphs, readMinutes: episodeTexts.readMinutes })
+      .from(episodeTexts)
+      .where(and(eq(episodeTexts.episodeId, s.episodes[idx].id), inArray(episodeTexts.locale, [locale, "ko"])));
+    const row = rows.find((r) => r.locale === locale) ?? rows.find((r) => r.locale === "ko");
+    if (!row) return null;
+    return { ...nav, kind: "novel" as const, paragraphs: row.paragraphs, readMinutes: row.readMinutes, textLocale: row.locale as Locale, panels: [] };
+  }
   const [row] = await db
     .select({ panels: episodeAssets.panels, locale: episodeAssets.locale })
     .from(episodeAssets)
@@ -164,13 +192,17 @@ export async function getEpisode(slug: string, number: number, locale: Locale) {
     .innerJoin(series, eq(series.id, episodes.seriesId))
     .where(and(eq(series.slug, slug), eq(episodes.number, number), eq(episodeAssets.locale, locale)));
   if (!row) return null;
-  return {
-    series: s,
-    episode: s.episodes[idx],
-    panels: row.panels,
-    prev: s.episodes[idx - 1]?.number ?? null,
-    next: s.episodes[idx + 1]?.number ?? null,
-  };
+  return { ...nav, kind: "webtoon" as const, panels: row.panels };
+}
+
+/** 독자에게 보이는 크레딧 (숨김 표시한 것은 빼요). 기본값을 새로 넣지 않고 읽기만 해요. */
+export async function readerCredits(seriesId: string): Promise<Credit[]> {
+  const rows = await db
+    .select()
+    .from(seriesCredits)
+    .where(and(eq(seriesCredits.seriesId, seriesId), eq(seriesCredits.visible, true)))
+    .orderBy(asc(seriesCredits.sort));
+  return rows.map((r) => ({ ...r, label: r.label ?? "", aiTool: r.aiTool ?? "", basis: r.basis ?? "", note: "" }));
 }
 
 /** 회차 목록 작은 그림: 공개본 첫 컷 */

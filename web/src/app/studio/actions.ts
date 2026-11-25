@@ -22,12 +22,18 @@ import { addCredit, deleteCredit, seriesCreditsOf, updateCredit, type CreditInpu
 import { enqueueJob, notifyWorker } from "@/lib/queue";
 import { putPrivate } from "@/lib/private-media";
 import { putPublic } from "@/lib/public-media";
+import { saleDefaults } from "@/lib/novel-text";
 import { replacePanel } from "@/lib/hand-edit";
 import { setVerdict, type Verdict } from "@/lib/judge";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { totpSecret } from "@/lib/studio-2fa";
 import { verifyTotp } from "@/lib/totp";
 import type { GuidelineBody } from "@/db/schema";
+
+const seriesSale = (format: "webtoon" | "novel") => {
+  const d = saleDefaults(format);
+  return { freeEpisodes: d.freeEpisodes, waitFreeExclude: d.waitFreeExclude, earlyPrice: d.earlyPrice };
+};
 
 const lines = (v: FormDataEntryValue | null) =>
   String(v ?? "")
@@ -242,7 +248,7 @@ export async function createSeries(formData: FormData) {
     };
     const [row] = await db
       .insert(schema.series)
-      .values({ title, titleEn, genre, brief, format, slug: `${slugify(titleEn || title)}-${Date.now().toString(36).slice(-4)}` })
+      .values({ title, titleEn, genre, brief, format, ...seriesSale(format), slug: `${slugify(titleEn || title)}-${Date.now().toString(36).slice(-4)}` })
       .returning({ id: schema.series.id });
     seriesId = row.id;
     await seriesCreditsOf(seriesId, owner.email); // 크레딧 필수 항목 기본값 (docs/07 4절)
@@ -257,16 +263,20 @@ export async function createSeries(formData: FormData) {
 export async function createEpisode(formData: FormData) {
   await requireOwner();
   const seriesId = String(formData.get("seriesId"));
-  const [{ n }] = await db
-    .select({ n: max(schema.episodes.number) })
+  const [{ n, price }] = await db
+    .select({ n: max(schema.episodes.number), price: max(schema.episodes.priceCoins) })
     .from(schema.episodes)
     .where(eq(schema.episodes.seriesId, seriesId));
   const number = (n ?? 0) + 1;
+  // 회차 값: 이미 정한 값이 있으면 그대로, 첫 회차면 형식 기본값 (웹툰 3코인, 웹소설 1코인)
+  const [sr] = await db.select({ format: schema.series.format }).from(schema.series).where(eq(schema.series.id, seriesId));
+  const priceCoins = price ?? saleDefaults(sr?.format ?? "webtoon").priceCoins;
   const [ep] = await db
     .insert(schema.episodes)
     .values({
       seriesId,
       number,
+      priceCoins,
       title: String(formData.get("title") ?? "").trim(),
       logline: String(formData.get("logline") ?? "").trim(),
     })
@@ -938,6 +948,39 @@ export async function saveSeriesPublic(formData: FormData) {
       updatedAt: new Date(),
     })
     .where(eq(schema.series.id, id));
+  revalidatePath(path);
+  revalidatePath("/");
+  redirect(`${path}?saved=1`);
+}
+
+/** 표지 올리기: 웹소설처럼 작화 그림이 없는 작품도 표지를 쓸 수 있게, 대표가 만든 표지 그림을 올려요 (3:4 권장). */
+export async function uploadCover(formData: FormData) {
+  const owner = await requireOwner();
+  const id = String(formData.get("seriesId"));
+  const path = `/studio/series/${id}`;
+  try {
+    const f = formData.get("file");
+    if (!(f instanceof File) || f.size === 0) throw new StudioError("올릴 표지 그림을 골라 주세요");
+    const ext = REF_TYPES[f.type];
+    if (!ext) throw new StudioError("PNG, JPG, WEBP 그림만 올릴 수 있어요");
+    if (f.size > 8 * 1024 * 1024) throw new StudioError("표지는 8MB까지 올릴 수 있어요");
+    const [s] = await db.select({ coverUrl: schema.series.coverUrl }).from(schema.series).where(eq(schema.series.id, id));
+    if (!s) throw new StudioError("작품을 찾을 수 없어요");
+    const key = `series/${id}/cover/${crypto.randomUUID()}.${ext}`;
+    await putPublic(key, new Uint8Array(await f.arrayBuffer()), f.type);
+    await db.update(schema.series).set({ coverUrl: key, updatedAt: new Date() }).where(eq(schema.series.id, id));
+    const credit = String(formData.get("note") ?? "").trim().slice(0, 200);
+    await db.insert(schema.decisionLedger).values({
+      seriesId: id,
+      actor: owner.email,
+      action: "cover_upload",
+      before: { coverUrl: s.coverUrl },
+      after: { coverUrl: key },
+      note: `표지를 올린 그림으로 바꿨어요${credit ? `: ${credit}` : ""}`,
+    });
+  } catch (e) {
+    back(path, e);
+  }
   revalidatePath(path);
   revalidatePath("/");
   redirect(`${path}?saved=1`);

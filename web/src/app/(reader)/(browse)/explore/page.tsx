@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Chip, LinkTabs, PageTitle, SeriesGrid } from "@/components/reader/parts";
+import { Chip, FormatTabs, LinkTabs, PageTitle, SeriesGrid } from "@/components/reader/parts";
 import { SearchBox } from "@/components/reader/search-box";
 import { DAY_KEYS, DAY_LABEL, DICT, genreLabel, getLocale, ROOT_CATEGORY, todayKey } from "@/lib/i18n";
 import { listSeries, weeklyRanking } from "@/lib/reader";
@@ -10,13 +10,14 @@ export const metadata: Metadata = { title: "Explore" };
 const TABS = ["day", "popular", "new", "done"] as const;
 type Tab = (typeof TABS)[number];
 
-export default async function Explore({ searchParams }: { searchParams: Promise<{ genre?: string; root?: string; tab?: string; day?: string }> }) {
+export default async function Explore({ searchParams }: { searchParams: Promise<{ genre?: string; root?: string; tab?: string; day?: string; f?: string }> }) {
   const locale = await getLocale();
   const t = DICT[locale];
   const sp = await searchParams;
   const tab: Tab = TABS.includes(sp.tab as Tab) ? (sp.tab as Tab) : "day";
   const day = DAY_KEYS.includes(sp.day as (typeof DAY_KEYS)[number]) ? sp.day! : todayKey();
-  const all = await listSeries(locale);
+  const format = sp.f === "novel" ? "novel" : "webtoon";
+  const all = (await listSeries(locale)).filter((s) => s.format === format);
   const genres = [...new Set(all.map((s) => s.genre))];
   const roots = [...new Set(all.flatMap((s) => s.roots.map((r) => r.category)))];
   const filtered = all.filter((s) => (!sp.genre || s.genre === sp.genre) && (!sp.root || s.roots.some((r) => r.category === sp.root)));
@@ -27,9 +28,9 @@ export default async function Explore({ searchParams }: { searchParams: Promise<
   else if (tab === "new") items = [...filtered].sort((a, b) => (b.latestAt?.getTime() ?? 0) - (a.latestAt?.getTime() ?? 0));
   else items = filtered.filter((s) => s.status === "completed");
 
-  const href = (p: Partial<{ genre: string; root: string; tab: string; day: string }>) => {
+  const href = (p: Partial<{ genre: string; root: string; tab: string; day: string; f: string }>) => {
     const q = new URLSearchParams();
-    const v = { genre: sp.genre, root: sp.root, tab: tab === "day" ? undefined : tab, day: sp.day, ...p };
+    const v = { f: format === "novel" ? "novel" : undefined, genre: sp.genre, root: sp.root, tab: tab === "day" ? undefined : tab, day: sp.day, ...p };
     for (const [k, x] of Object.entries(v)) if (x) q.set(k, x);
     const s = q.toString();
     return s ? `/explore?${s}` : "/explore";
@@ -38,6 +39,9 @@ export default async function Explore({ searchParams }: { searchParams: Promise<
   return (
     <div className="px-4 pt-5">
       <PageTitle>{t.explore}</PageTitle>
+      <div className="mt-3">
+        <FormatTabs base="/explore" current={format} t={t} keep={{ tab: tab === "day" ? undefined : tab, day: sp.day }} />
+      </div>
       <div className="mt-3 lg:hidden">
         <SearchBox t={t} />
       </div>
