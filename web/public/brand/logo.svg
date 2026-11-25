@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 64" role="img" aria-label="NORIVA 노리바">
+  <rect x="4" y="4" width="56" height="56" rx="7" fill="#8E3A2F"/>
+  <rect x="9" y="9" width="46" height="46" rx="3" fill="none" stroke="#F4EFE4" stroke-width="1.4" opacity=".55"/>
+  <clipPath id="nv-c"><rect x="17.9" y="17" width="28.2" height="30"/></clipPath><g stroke="#F4EFE4" stroke-width="4.2" stroke-linecap="butt" fill="none" clip-path="url(#nv-c)">
+    <path d="M20 47V17"/><path d="M44 47V17"/><path d="M19 16L45 48"/>
+  </g>
+  <g stroke="#F4EFE4" stroke-width="1.6" opacity=".8"><path d="M14 25h8M14 39h8M42 25h8M42 39h8"/></g>
+  <text x="76" y="40" font-family="'Noto Serif KR','Nanum Myeongjo',Georgia,serif" font-size="27" font-weight="600" letter-spacing="6" fill="#23211E">NORIVA</text>
+  <text x="77" y="56" font-family="'Noto Serif KR','Nanum Myeongjo',serif" font-size="10.5" letter-spacing="5" fill="#7A746A">옛이야기 웹툰</text>
+</svg>

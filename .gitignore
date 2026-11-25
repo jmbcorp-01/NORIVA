@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 .env
 production/runs/
+.pytest_cache/
+# 로컬 그림 저장 폴더 (작업 실행기 → 스튜디오 /media)
+.media/

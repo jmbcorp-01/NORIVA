@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+/*
+ * NORIVA 톤앤매너 (docs/06-brand.md)
+ * 한지 바탕 + 먹색 글자 + 아주 적은 낙관 빨강. 화면은 물러서고 작품 표지와 그림이 앞에 나와요.
+ */
+:root {
+  --paper: #f6f2ea; /* 한지 */
+  --paper-raised: #fbf9f4; /* 한지 위 종이 카드 */
+  --paper-sunk: #eee8dc; /* 눌린 면 */
+  --ink: #24221f; /* 먹 */
+  --ink-soft: #5c574f; /* 묽은 먹 */
+  --ink-faint: #6b665c; /* 흐린 먹 (한지 바탕 대비 4.5:1 이상, 작은 글자 기준) */
+  --line: #ddd5c6; /* 닥종이 결 */
+  --line-strong: #c9bfac;
+  --seal: #8e3a2f; /* 낙관 빨강: 로고와 가장 중요한 동작 하나에만 */
+  --seal-soft: #f1e2dc;
+  --indigo: #2f4858; /* 쪽빛: 링크와 선택 */
+  --indigo-soft: #e2e8ea;
+  --pine: #4d6a48; /* 송록: 승인 */
+  --pine-soft: #e3eadc;
+  --ochre: #9a6b1f; /* 황토: 검토 대기 */
+  --ochre-soft: #f3e9d2;
+  --plum: #7b3f4f; /* 자주: 낡음·반려 */
+  --plum-soft: #f1e1e4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1a1917; /* 밤 먹빛 */
+    --paper-raised: #23211e;
+    --paper-sunk: #151412;
+    --ink: #ece6da;
+    --ink-soft: #b8b0a2;
+    --ink-faint: #969082;
+    --line: #36332e;
+    --line-strong: #4a463f;
+    --seal: #c0594a;
+    --seal-soft: #3a2420;
+    --indigo: #8fb0c2;
+    --indigo-soft: #23303a;
+    --pine: #9dbb93;
+    --pine-soft: #26301f;
+    --ochre: #d6ac5e;
+    --ochre-soft: #3a3020;
+    --plum: #d495a4;
+    --plum-soft: #3a2429;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #1a1917;
+  --paper-raised: #23211e;
+  --paper-sunk: #151412;
+  --ink: #ece6da;
+  --ink-soft: #b8b0a2;
+  --ink-faint: #969082;
+  --line: #36332e;
+  --line-strong: #4a463f;
+  --seal: #c0594a;
+  --seal-soft: #3a2420;
+  --indigo: #8fb0c2;
+  --indigo-soft: #23303a;
+  --pine: #9dbb93;
+  --pine-soft: #26301f;
+  --ochre: #d6ac5e;
+  --ochre-soft: #3a3020;
+  --plum: #d495a4;
+  --plum-soft: #3a2429;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-paper-sunk: var(--paper-sunk);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-seal: var(--seal);
+  --color-seal-soft: var(--seal-soft);
+  --color-indigo: var(--indigo);
+  --color-indigo-soft: var(--indigo-soft);
+  --color-pine: var(--pine);
+  --color-pine-soft: var(--pine-soft);
+  --color-ochre: var(--ochre);
+  --color-ochre-soft: var(--ochre-soft);
+  --color-plum: var(--plum);
+  --color-plum-soft: var(--plum-soft);
+  --font-sans: var(--font-pretendard), "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-serif: var(--font-serif-kr), "Nanum Myeongjo", Georgia, serif;
+  --radius-card: 6px;
+}
+
+html {
+  background: var(--paper);
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss06";
+  -webkit-font-smoothing: antialiased;
+  word-break: keep-all; /* 한국어는 어절 단위로 줄바꿈 */
+}
+
+::selection {
+  background: var(--indigo-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--indigo);
+  outline-offset: 2px;
+}
+
+/* 아주 옅은 한지 결. 화면이 평평한 디지털 면처럼 보이지 않게 */
+.hanji {
+  background-image: radial-gradient(color-mix(in oklab, var(--ink) 4%, transparent) 0.6px, transparent 0.6px);
+  background-size: 5px 5px;
+}
