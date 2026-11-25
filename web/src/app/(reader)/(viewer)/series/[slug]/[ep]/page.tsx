@@ -8,6 +8,7 @@ import { LangToggle } from "@/components/reader/lang-toggle";
 import { ProgressTracker } from "@/components/reader/progress-tracker";
 import { DICT, getLocale } from "@/lib/i18n";
 import { panelSrc } from "@/lib/panel-media";
+import { joinStyles } from "@/lib/publish";
 import { getEpisode, reactions, recordView } from "@/lib/reader";
 import { canRead } from "@/lib/commerce";
 import { currentReader } from "@/lib/reader-auth";
@@ -156,10 +157,13 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
 }
 
 function Panel({ p, first, n }: { p: PublishedPanel; first: boolean; n: number }) {
+  // 이어지는 긴 세로 컷은 앞 컷 아래 끝에 겹쳐 여백 없이 한 장처럼 보여요
+  const join = first ? undefined : p.join;
+  const js = joinStyles(join);
   return (
-    <figure data-panel={n} className={`relative ${first ? "" : GAP[p.gapBefore]}`}>
+    <figure data-panel={n} className={`relative ${first || join ? "" : GAP[p.gapBefore]}`} style={js.figure}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={panelSrc(p.image)} alt="" className="block w-full" loading={first ? "eager" : "lazy"} />
+      <img src={panelSrc(p.image)} alt="" className="block w-full" style={js.img} loading={first ? "eager" : "lazy"} />
       {p.bubbles.map((b, i) => (
         <BubbleView key={i} b={b} />
       ))}

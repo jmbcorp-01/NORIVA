@@ -421,3 +421,75 @@ def contact_sheet(items: list[tuple[int, bytes]], cols: int = 3, cell: int = 340
     out = io.BytesIO()
     sheet.save(out, "JPEG", quality=85)
     return out.getvalue()
+
+
+# ── 이어지는 긴 세로 컷 (콘티에서 정한 묶음) ─────────────────────────────────
+
+JOIN_BAND = 0.25  # 새 그림 위쪽 이만큼을 앞 컷 아래 끝으로 채워 넘겨요. 뷰어에서 이 부분이 앞 컷에 겹쳐요
+SEAM_MAX_DRIFT = 26.0  # 이어받은 띠가 앞 컷과 이보다 많이 달라지면 이음새가 보여요 (회색 0~255 평균 차이)
+
+
+def _aspect_wh(aspect: str) -> tuple[int, int]:
+    try:
+        a, b = (int(x) for x in aspect.split(":"))
+        return (a, b) if a > 0 and b > 0 else (3, 4)
+    except Exception:
+        return (3, 4)
+
+
+def continue_canvas(prev: bytes, aspect: str, band: float = JOIN_BAND, width: int = 1024) -> tuple[bytes, float, float] | None:
+    """앞 컷 아래 끝을 위쪽에 붙이고 나머지는 흰 바탕인 그림판을 만들어요. 그림 모델이 이 아래로 이어 그려요.
+
+    돌려주는 값: (그림판 PNG, 새 그림 높이 대비 겹치는 비율, 앞 컷 높이 대비 겹치는 비율). 앞 컷을 못 읽으면 None."""
+    from PIL import Image
+
+    try:
+        src = Image.open(io.BytesIO(prev)).convert("RGB")
+    except Exception:
+        return None
+    aw, ah = _aspect_wh(aspect)
+    w = width
+    h = int(round(w * ah / aw))
+    sw, sh = src.size
+    scaled = src.resize((w, max(1, int(round(sh * w / sw)))))
+    bh = min(int(h * band), scaled.size[1])
+    if bh < 8:
+        return None
+    canvas = Image.new("RGB", (w, h), (255, 255, 255))
+    canvas.paste(scaled.crop((0, scaled.size[1] - bh, w, scaled.size[1])), (0, 0))
+    out = io.BytesIO()
+    canvas.save(out, "PNG")
+    return out.getvalue(), bh / h, bh / scaled.size[1]
+
+
+def seam_check(result: bytes, canvas: bytes, overlap: float) -> list[str]:
+    """이어 그린 그림이 앞 컷 아래 끝을 그대로 이어받았는지, 아래를 비워 두지 않았는지 계산으로 봐요 (돈이 들지 않아요)."""
+    from PIL import Image, ImageChops, ImageStat
+
+    try:
+        a = Image.open(io.BytesIO(result)).convert("L")
+        b = Image.open(io.BytesIO(canvas)).convert("L")
+    except Exception:
+        return []
+    a = a.resize(b.size)
+    w, h = b.size
+    bh = max(1, int(h * overlap))
+    out = []
+    drift = ImageStat.Stat(ImageChops.difference(a.crop((0, 0, w, bh)), b.crop((0, 0, w, bh)))).mean[0]
+    if drift > SEAM_MAX_DRIFT:
+        out.append(f"위쪽 이어받은 부분이 앞 컷과 달라 이음새가 보여요 (차이 {drift:.0f})")
+    rest = ImageStat.Stat(a.crop((0, bh, w, h)))
+    if rest.stddev[0] < 4 and rest.mean[0] > 235:
+        out.append("이어 그릴 아래쪽이 비어 있어요")
+    return out
+
+
+def hw_ratio(data: bytes) -> float | None:
+    """그림의 세로/가로 비율."""
+    from PIL import Image
+
+    try:
+        w, h = Image.open(io.BytesIO(data)).size
+    except Exception:
+        return None
+    return h / w if w else None

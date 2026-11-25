@@ -16,7 +16,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .images import IMAGE_MODELS, ImageGen, NoImageError, comic_page_bands, contact_sheet, crop_region, match_colors, thumbnail, trim_border
+from .images import (
+    IMAGE_MODELS, ImageGen, NoImageError, comic_page_bands, contact_sheet, continue_canvas, crop_region, hw_ratio, match_colors,
+    seam_check, thumbnail, trim_border,
+)
 from .llm import JSONResult
 from .media import Media
 from .prompts import render_guidelines
@@ -38,6 +41,7 @@ class ArtSettings:
     zoom_check: bool = True  # 합격한 후보는 얼굴·글자·손을 원본 크기로 잘라 한 번 더 봐요
     color_match: float = 0.5  # 같은 장면 앞 컷과 색이 조금 어긋나면 이만큼 맞춰요 (0이면 끔)
     review_rounds: int = 2  # 검수를 몇 번 채점해 흔들림을 줄일지 (차이가 5점 넘으면 한 번 더)
+    join_strips: bool = True  # 콘티에서 이어지는 컷으로 묶은 컷은 앞 컷 아래 끝을 이어받아 한 장처럼 그려요
 
 
 class StageInputError(Exception):
@@ -151,6 +155,8 @@ PLAN_SCHEMA = _obj(
                     "depth": _STR,
                     "height": {"type": "string", "enum": ["short", "normal", "long"]},
                     "gap_before": {"type": "string", "enum": ["none", "normal", "long"]},
+                    # 이 컷과 다음 컷이 여백 없이 한 장의 긴 세로 그림으로 이어져요 (같은 장면 안에서만)
+                    "joins_next": _BOOL,
                     "description": _STR,
                     "character_ids": _arr(_STR),
                     "dialogue": _arr(_obj({"speaker": _STR, "text": _STR})),
@@ -187,6 +193,12 @@ PLAN_TASK = """# 과제: ⑦ 작화 준비 — 승인된 콘티를 컷 목록으
   outfits: 이 장면에서 인물마다 입은 옷·머리·고정 소품(장면 중간에 옷이 바뀌지 않는다), props_state: 장면 안에서 상태가 바뀌는 소품과 그 순서(예: salt ring intact → swept away in panel 28).
 - panels.scene: 그 컷이 속한 장면 id. continuity: 바로 앞 컷에서 이어지는 것을 영어 한 문장으로(인물의 위치·시선·동작의 다음 순간, 소품의 지금 상태, 빛의 변화). 장면 첫 컷은 장면이 바뀐 것을 쓴다.
 - description에는 연속성표와 모순되는 내용을 쓰지 않는다(촛불이 꺼진 뒤 컷에 촛불이 켜져 있거나, 왼쪽에 있던 인물이 이유 없이 오른쪽에 있으면 안 된다).
+
+## 이어지는 긴 세로 컷 (joins_next)
+웹툰은 한 장면을 여백 없이 세로로 길게 이어 그려 시선을 아래로 끌고 가기도 한다(하늘에서 인물로 내려오는 카메라, 떨어지는 사람이나 물건, 높은 건물·긴 계단·폭포, 위의 인물과 아래의 인물을 한 공간에 잇기).
+- 콘티가 이어지는 컷(이어 그림, 한 장으로 연결)으로 표시한 컷은 joins_next를 true로 한다. 표시가 없으면 위 경우에만 스스로 정하고, 그 밖에는 false.
+- joins_next가 true인 컷과 다음 컷은 같은 장면이고, 다음 컷 gap_before는 "none"이다. 다음 컷 description은 앞 컷 아래 끝에서 그대로 이어지는 아래쪽 공간을 쓴다(카메라가 아래로 내려가며 보는 것).
+- 한 묶음은 많아야 3컷. 대사가 많은 대화 컷, 장면이 바뀌는 곳에는 쓰지 않는다. 한 화에 많아야 서너 묶음.
 """
 
 CHECK_SCHEMA = _obj(
@@ -380,6 +392,7 @@ def _panel_prompt(
     part_refs: list[dict[str, Any]] | None = None,
     scene: str = "",
     anchor_ref: int = 0,
+    join_ref: int = 0,
 ) -> str:
     sheet_offset = n_masters
     if isinstance(sheet_cast, bool):  # 예전 호출: 모든 인물에 시트가 있으면 True
@@ -401,6 +414,14 @@ def _panel_prompt(
             "as described here; do not copy its composition."
         )
         if anchor_ref
+        else "",
+        (
+            f"Reference image {join_ref} is the canvas to paint on: this panel is the lower part of one tall, continuous vertical webtoon "
+            "strip. The top part of that canvas is the bottom edge of the previous panel and the rest is blank white. Return the whole "
+            "canvas: keep its top part exactly as it is, and continue the same artwork seamlessly downward to fill the blank area, as the "
+            "camera moves down through the same space. No border, gutter, line or color break between the top part and the new area."
+        )
+        if join_ref
         else "",
         ("Characters: " + " | ".join(
             # 금지 목록은 검사에서만 써요. 그림 지시에 금지 단어를 넣으면 오히려 그 모양을 떠올려요.
@@ -561,6 +582,42 @@ def scene_groups(panels: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return [groups[k] for k in order]
 
 
+MAX_STRIP = 3  # 이어지는 컷 한 묶음의 최대 컷 수
+
+
+def strip_links(panels: list[dict[str, Any]]) -> dict[int, int]:
+    """이어지는 긴 세로 컷: {컷 번호: 위에 이어 붙는 앞 컷 번호}. 같은 장면의 바로 다음 컷끼리만, 한 묶음에 MAX_STRIP컷까지."""
+    links: dict[int, int] = {}
+    run = 1
+    for a, b in zip(panels, panels[1:]):
+        ok = (
+            bool(a.get("joins_next"))
+            and isinstance(a.get("scene"), int)
+            and a.get("scene") == b.get("scene")
+            and b["index"] == a["index"] + 1
+            and run < MAX_STRIP
+        )
+        if ok:
+            links[b["index"]] = a["index"]
+            run += 1
+        else:
+            run = 1
+    return links
+
+
+def strips(panels: list[dict[str, Any]]) -> list[list[int]]:
+    """이어지는 컷 묶음 목록 (컷 번호)."""
+    links = strip_links(panels)
+    out: list[list[int]] = []
+    for p in panels:
+        i = p["index"]
+        if i in links and out and out[-1][-1] == links[i]:
+            out[-1].append(i)
+        elif any(v == i for v in links.values()):
+            out.append([i])
+    return [g for g in out if len(g) > 1]
+
+
 def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media, s: ArtSettings) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     costs = Costs()
     system = render_guidelines(ctx["guidelines"])
@@ -641,11 +698,29 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             p.pop("variants", None)
 
     # 처음 작화는 시험 컷만 그려요. 대표가 보고 '나머지 그리기'를 누르면 나머지를 그려요.
+    links = strip_links(plan["panels"]) if s.join_strips else {}
     if not redraw and s.test_panels > 0 and not payload.get("full"):
         redraw = choose_test_panels(plan["panels"], s.test_panels)
+        # 이어지는 컷 묶음의 아래 컷이 뽑히면 묶음 첫 컷으로 바꿔요 (앞 컷 없이 아래만 먼저 그리면 나중에 이어지지 않아요)
+        def head(i: int) -> int:
+            while i in links:
+                i = links[i]
+            return i
+        redraw = sorted({head(i) for i in redraw})
         test_run = True
     else:
         test_run = False
+    # 묶음의 위 컷을 다시 그리면 그 아래 이어진 컷도 함께 다시 그려요. 아니면 이음새가 어긋나요.
+    join_added: list[int] = []
+    if redraw and not test_run and not compare and links:
+        nxt = {v: k for k, v in links.items()}
+        for i in sorted(redraw):
+            j = nxt.get(i)
+            while j is not None:
+                if j not in redraw and j not in join_added:
+                    join_added.append(j)
+                j = nxt.get(j)
+        redraw = sorted(set(redraw) | set(join_added))
 
     # ④에서 대표가 고른 화풍: 영어 화풍 문구와 화풍 마스터 그림
     style_body = (ctx.get("input_bodies") or {}).get("style") or {}
@@ -714,6 +789,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     def check(
         panel: dict[str, Any], cast: list[dict[str, Any]], data: bytes, local: list[dict[str, Any]],
         sheet_cast: list[dict[str, Any]] | None = None, sheets: list[bytes] | None = None, anchor: bytes | None = None,
+        join: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         sheet_cast = sheet_cast or []
         scene = scene_text(plan, panel)
@@ -722,6 +798,11 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             scene_block = (
                 "\n## 장면 연속성표 (같은 장면의 모든 컷이 따라야 한다)\n" + (scene or "(없음)")
                 + "\n## 바로 앞 컷에서 이어지는 것\n" + (panel.get("continuity") or "(없음)") + "\n"
+            )
+        if join:
+            scene_block += (
+                f"\n## 이어지는 긴 세로 컷\n이 그림의 위쪽 {round(join['overlap'] * 100)}%는 바로 앞 컷의 아래 끝을 그대로 이어받은 부분이고, 독자 화면에서 앞 컷과 겹쳐 한 장으로 보인다. "
+                "그 부분은 결함이 아니다. 그 아래가 같은 공간으로 끊김 없이 이어지지 않거나, 경계에 선·띠·색 차이가 보이면 code J-1, 주요(major)로 적어라.\n"
             )
         r = llm.json(
             system,
@@ -758,6 +839,9 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         # 기계 검사 (돈이 들지 않아요): 한 장에 컷이 여러 개 들어간 만화책 페이지 모양
         for note in comic_page_bands(data):
             defects.append({"code": "P-1", "severity": "critical", "note": note})
+        if join:  # 이음새 기계 검사 (돈이 들지 않아요)
+            for note in seam_check(data, join["canvas"], join["overlap"]):
+                defects.append({"code": "J-1", "severity": "critical" if "비어" in note else "major", "note": note})
         res = {"score": max(0, min(100, int(d["score"]))), "defects": defects}
         # 확대 검사: 줄인 그림으로는 작은 가짜 글자, 시트와 다른 얼굴, 손가락을 놓쳐요 (1화 시험: 가짜 부적 글자가 88점 합격).
         # 이미 떨어진 그림은 다시 그릴 테니 확대 검사를 하지 않아요 (돈 아끼기).
@@ -792,8 +876,15 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                     res = {"score": max(0, res["score"] - penalty), "defects": defects + extra}
         return res
 
-    def draw(panel: dict[str, Any], anchor: bytes | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def draw(panel: dict[str, Any], anchor: bytes | None = None, join_src: bytes | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
+        # 지난 그림의 후처리 표시는 새 그림에 넘기지 않아요
+        panel = {k: v for k, v in panel.items() if k not in ("join", "join_failed", "raw_image", "color_matched")}
+        aspect = ASPECT.get(panel.get("height") or "normal", "3:4")
+        # 이어지는 컷: 앞 컷 아래 끝을 위에 붙인 그림판을 넘겨 그 아래로 이어 그려요. 앞 컷 참고 자리를 이 그림판이 대신해요.
+        canvas = continue_canvas(join_src, aspect) if (join_src is not None and not compare) else None
+        if canvas:
+            anchor = None
         cast = [chars[cid] for cid in panel["character_ids"] if cid in chars]
         # 인물 시트는 컷에 나오는 인물(동물 포함) 모두, 많아야 MAX_SHEETS장. 시트가 없는 인물만 빠져요.
         sheet_cast: list[dict[str, Any]] = []
@@ -812,12 +903,16 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             for p in locked_objects
             if ids & set(p.get("owners") or [])
         ][:MAX_PART_REFS]
-        refs = use_masters + sheets + [p["data"] for p in part_refs] + ([anchor] if anchor else [])
+        if canvas:
+            use_masters = use_masters[: max(1, MAX_REFS - len(sheets) - 1)]
+        refs = use_masters + sheets + [p["data"] for p in part_refs] + ([anchor] if anchor else []) + ([canvas[0]] if canvas else [])
         prompt = _panel_prompt(
             style, panel, cast, sheet_cast, instruction if redraw and not test_run else "", len(use_masters), base, part_refs,
-            scene=scene_text(plan, panel), anchor_ref=len(refs) if anchor else 0,
+            scene=scene_text(plan, panel), anchor_ref=len(refs) if anchor else 0, join_ref=len(refs) if canvas else 0,
         )
-        aspect = ASPECT.get(panel.get("height") or "normal", "3:4")
+        join = {"canvas": canvas[0], "overlap": canvas[1]} if canvas else None
+        # 이어 그린 그림은 테두리 자르기를 하지 않아요 (위쪽 이어받은 띠의 크기가 바뀌면 이음새가 어긋나요)
+        tidy = (lambda b: b) if canvas else trim_border
         seed0 = panel["index"] * 100 + 10 * (ctx.get("attempt") or 1)
 
         if compare:
@@ -851,7 +946,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             if old is None:
                 break
             n_old = k
-            cands.append({"image": old_key, "reused": True, **check(panel, cast, old, local, sheet_cast, sheets, anchor)})
+            cands.append({"image": old_key, "reused": True, **check(panel, cast, old, local, sheet_cast, sheets, anchor, join)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break
         for k in range(s.candidates):
@@ -864,9 +959,9 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                 blocked = str(e)
                 break
             local.append(img.cost_entry())
-            data = trim_border(img.data)
+            data = tidy(img.data)
             key = media.put(f"{key_base}/{panel['index']:03d}-{k + 1 + n_old}.png", data)
-            cands.append({"image": key, **check(panel, cast, data, local, sheet_cast, sheets, anchor)})
+            cands.append({"image": key, **check(panel, cast, data, local, sheet_cast, sheets, anchor, join)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break  # 합격 후보가 나오면 더 그리지 않아요
             if len(cands) >= 2 and _same_critical(cands[-1], cands[-2]):
@@ -884,6 +979,13 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         extra: dict[str, Any] = {}
         # 후처리: 같은 장면 앞 컷과 색 분위기가 조금 어긋나면 살짝 맞춰요 (04번 5.2). 큰 차이는 연출일 수 있어 두고,
         # 원본은 raw_image로 남겨요. 떨어진 그림은 손대지 않아요.
+        if canvas and passed:
+            # 뷰어가 이 컷 위쪽(이어받은 띠)을 앞 컷 아래에 겹쳐 여백 없이 한 장처럼 보여 줘요
+            ratio = hw_ratio(media.get(image_key) or b"") or 1.0
+            extra = {"join": {"prev": panel["index"] - 1, "overlap": round(canvas[1], 4), "prev_overlap": round(canvas[2], 4),
+                              "margin": round(canvas[1] * ratio * 100, 3)}}
+        elif canvas:
+            extra = {"join_failed": "이어 그린 그림이 검사를 통과하지 못해 앞 컷과 겹치지 않고 따로 보여요. 이 컷을 다시 그려 주세요."}
         if anchor and passed and s.color_match > 0:
             raw = media.get(image_key)
             matched = match_colors(raw, anchor, s.color_match) if raw else None
@@ -912,6 +1014,24 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     if payload.get("keep_adopted"):
         todo = []  # 고른 모델의 시험 컷 그림만 옮기고 새로 그리지 않아요
 
+    # 한 장씩 확인 장면: 대표가 고른 장면은 아직 안 그린 컷을 한 번에 한 장만 그려요.
+    # 대표가 보고 '다음 컷'을 누르면 다음 한 장을 그려요. 다른 장면은 그대로 자동으로 그려요.
+    step_scenes = sorted({int(x) for x in (payload["step_scenes"] if "step_scenes" in payload else prev.get("step_scenes") or [])
+                          if isinstance(x, int) or str(x).isdigit()})
+    step_waiting: list[int] = []
+    if step_scenes and not test_run and not compare:
+        kept: list[dict[str, Any]] = []
+        started: set[int] = set()
+        for p in todo:
+            sc = p.get("scene")
+            if sc in step_scenes and not p.get("image"):
+                if sc in started:
+                    continue  # 이 장면은 이번에 한 장만
+                started.add(sc)
+                step_waiting.append(p["index"])
+            kept.append(p)
+        todo = kept
+
     # 같은 장면의 앞 컷(합격한 그림)을 다음 컷의 참고 그림으로 넣어 장소·빛·옷·위치를 이어 그려요.
     # 떨어진 그림은 참고로 넘기지 않아요 (CLAUDE.md 1-5).
     passed_by_index: dict[int, dict[str, Any]] = {
@@ -928,6 +1048,15 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             return None
         return media.get(max(prev_panels, key=lambda p: p["index"])["image"])
 
+    def join_for(panel: dict[str, Any]) -> bytes | None:
+        """이어지는 컷이면 바로 위 컷(합격한 그림)을 돌려줘요. 위 컷이 떨어졌으면 따로 그려요 (틀린 그림을 이어받지 않아요)."""
+        j = links.get(panel["index"])
+        if j is None:
+            return None
+        with lock:
+            up = passed_by_index.get(j)
+        return media.get(up["image"]) if up else None
+
     def draw_saved(panel: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """끝난 컷은 바로 저장해요. 다시 시작한 작업은 저장된 컷을 그대로 쓰고 남은 컷만 그려요."""
         key = f"{ck_base}/panel-{panel['index']:03d}.json"
@@ -935,7 +1064,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         if done and (done.get("out", {}).get("image") or done.get("out", {}).get("blocked")):
             out, local = done["out"], done.get("costs") or []
         else:
-            out, local = draw(panel, anchor_for(panel))
+            out, local = draw(panel, anchor_for(panel), join_for(panel))
             _save_json(media, key, {"out": out, "costs": local})
         if out.get("image") and out.get("passed"):
             with lock:
@@ -979,6 +1108,10 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         "flagged": flagged,
         "rhythm_warnings": rhythm_warnings(panels),
         "redrawn": [] if test_run or payload.get("keep_adopted") else redraw,
+        "join_added": join_added,
+        "strips": strips(panels) if s.join_strips else [],
+        "step_scenes": step_scenes,
+        "step_waiting": step_waiting,
         "pending": pending,
         "blocked": blocked,
         "test_panels": redraw if test_run else (prev.get("test_panels") or []),
@@ -1096,6 +1229,8 @@ def run_lettering(ctx: dict[str, Any], llm: JSONModel, media: Media, s: ArtSetti
         sfx_en = {x["panel"]: x["en"] for x in r.data["sfx"]}
         glossary = r.data["glossary"]
 
+    covered_below = {q["join"]["prev"]: q["join"].get("prev_overlap", 0) for q in panels if q.get("join")}
+
     def place(p: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
         dialogue = p.get("dialogue") or []
@@ -1103,13 +1238,17 @@ def run_lettering(ctx: dict[str, Any], llm: JSONModel, media: Media, s: ArtSetti
             "index": p["index"],
             "image": p["image"],
             "height": p.get("height", "normal"),
-            "gap_before": p.get("gap_before", "normal"),
+            "gap_before": "none" if p.get("join") else p.get("gap_before", "normal"),
             "description": p.get("description", ""),
             "score": p.get("score"),
             "defects": p.get("defects", []),
             "bubbles": [],
             "sfx": None,
+            **({"join": p["join"]} if p.get("join") else {}),
         }
+        # 이어지는 컷: 위쪽 띠는 앞 컷 아래에 겹쳐 보이고, 아래 컷이 이어지면 아래쪽 띠가 가려져요. 말풍선은 그 밖에 둬요.
+        top = (p["join"]["overlap"] * 100 + 2) if p.get("join") else 3
+        bottom = 97 - (covered_below.get(p["index"], 0) * 100)
         if not dialogue and not p.get("sfx"):
             return out, local
         image = media.get(p["image"])
@@ -1128,12 +1267,14 @@ def run_lettering(ctx: dict[str, Any], llm: JSONModel, media: Media, s: ArtSetti
         placed = {b["line"]: b for b in r.data["bubbles"] if 0 <= b["line"] < len(dialogue)}
         for li, d in enumerate(dialogue):
             b = placed.get(li) or {"shape": "speech", "x": 6, "y": 4 + 14 * li, "w": 50, "h": 12, "has_tail": False, "tail_x": 0, "tail_y": 0}
+            bh = _clip(b["h"], 5, 60)
+            by = _clip(b["y"], top, max(top, bottom - bh))
             out["bubbles"].append(
                 {
                     "speaker": d["speaker"],
                     "shape": "narration" if d["speaker"] == "narration" else b["shape"],
                     "text": {"ko": d["text"], "en": en.get(f"{p['index']}-{li}", "")},
-                    "box": {"x": _clip(b["x"], 3, 97), "y": _clip(b["y"], 3, 97), "w": _clip(b["w"], 8, 94), "h": _clip(b["h"], 5, 60)},
+                    "box": {"x": _clip(b["x"], 3, 97), "y": by, "w": _clip(b["w"], 8, 94), "h": bh},
                     "tail": {"x": _clip(b["tail_x"]), "y": _clip(b["tail_y"])} if b["has_tail"] else None,
                 }
             )

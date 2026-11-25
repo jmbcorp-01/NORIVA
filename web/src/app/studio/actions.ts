@@ -342,6 +342,15 @@ export async function artNextStep(formData: FormData) {
     if (mode === "rest") {
       panels = nums("pending");
       if (!panels.length) throw new StudioError("남은 컷이 없어요");
+      // 한 장씩 확인할 장면: 고른 장면은 한 컷씩 그리고 멈춰요 (고른 것이 없으면 모두 자동으로)
+      if (formData.get("step_choice")) {
+        extra = {
+          step_scenes: formData
+            .getAll("step_scenes")
+            .map(Number)
+            .filter((n) => Number.isInteger(n) && n > 0),
+        };
+      }
       // 시험 컷이 하나도 합격하지 못했으면 나머지도 같은 이유로 떨어져요. 돈을 쓰기 전에 막아요.
       const [base] = await db
         .select({ body: schema.artifacts.body })

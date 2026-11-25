@@ -221,6 +221,8 @@ export type PublishedPanel = {
   index: number;
   image: string; // 미디어 키
   gapBefore: "none" | "normal" | "long";
+  /** 이어지는 긴 세로 컷: 이 컷 위쪽 overlap(높이 비율)만큼이 앞 컷 아래에 겹쳐요. margin은 겹치는 길이(가로 폭 대비 %) */
+  join?: { overlap: number; margin: number };
   bubbles: PublishedBubble[];
   sfx: { text: string; x: number; y: number; size: number; angle: number } | null;
 };

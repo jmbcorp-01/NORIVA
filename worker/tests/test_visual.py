@@ -87,6 +87,11 @@ class FakeModel:
                 for p in data["panels"]:
                     p["scene"] = 1
                     p["continuity"] = "Scene opens."
+                if getattr(self, "joins", False):
+                    data["panels"][0]["joins_next"] = True
+                if getattr(self, "four", False):
+                    data["panels"] += [dict(p, scene=2, description=p["description"] + " (yard)") for p in data["panels"]]
+                    data["scenes"].append(dict(data["scenes"][0], id=2, place="shrine yard"))
         elif "candidates" in props and "scenes" in props:
             data = {
                 "candidates": [{"name": f"후보{i}", "medium": ["cel", "ink", "bogus"][i - 1], "card": f"카드 {i}", "style_prompt": f"style {i}"} for i in range(1, 4)],
@@ -1118,3 +1123,88 @@ def test_owner_drawings_are_followed_by_style_sheets_and_art(store, tmp_path):
     _, art = _run(store, tools, sid, eid, "art", [_approved(c, sid, eid, "storyboard", {"markdown": "| 1 |"}), style_id])
     assert images.prompts[0][1] == 2  # 인물 시트: 대표 그림 + 마스터
     assert images.prompts[1][1] == 2 and "Reference image(s) 1-2" in images.prompts[1][0]  # 인물 없는 1컷: 대표 그림 + 마스터
+
+
+def test_strip_links_stay_inside_one_scene_and_three_panels():
+    from noriva_worker.visual import strip_links, strips
+
+    ps = [{"index": i, "scene": 1 if i <= 5 else 2, "joins_next": True} for i in range(1, 8)]
+    ps[6]["joins_next"] = False
+    links = strip_links(ps)
+    # 1-2-3 (3컷까지), 4-5, 장면이 바뀌는 5→6은 잇지 않음, 6-7
+    assert links == {2: 1, 3: 2, 5: 4, 7: 6}
+    assert strips(ps) == [[1, 2, 3], [4, 5], [6, 7]]
+
+
+def test_continue_canvas_and_seam_check():
+    from noriva_worker.images import continue_canvas, seam_check
+
+    prev = _noisy(5, size=(200, 260))
+    canvas, overlap, prev_overlap = continue_canvas(prev, "3:4", width=200)
+    assert 0.2 < overlap < 0.3 and 0 < prev_overlap < 0.35
+    # 위 띠를 그대로 두고 아래를 채운 그림: 이음새 결함 없음
+    filled = Image.open(io.BytesIO(canvas)).convert("RGB")
+    lower = Image.open(io.BytesIO(_noisy(6, size=(200, 267)))).convert("RGB")
+    band = int(filled.size[1] * overlap)
+    filled.paste(lower.crop((0, band, 200, filled.size[1])), (0, band))
+    buf = io.BytesIO()
+    filled.save(buf, "PNG")
+    assert seam_check(buf.getvalue(), canvas, overlap) == []
+    # 아래를 비워 둔 그림, 위 띠가 바뀐 그림은 걸러요
+    assert any("비어" in n for n in seam_check(canvas, canvas, overlap))
+    assert any("이음새" in n for n in seam_check(_noisy(7, size=(200, 267)), canvas, overlap))
+
+
+def test_joined_panels_continue_the_panel_above_and_letter_outside_overlap(store, tmp_path):
+    """콘티에서 이어지는 컷으로 묶으면 아래 컷은 위 컷 아래 끝을 이어받아 그리고, 뷰어에서 겹쳐 한 장처럼 보여요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.with_scenes, model.joins, model.always_pass = True, True, True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=1, parallel=1, test_panels=0, zoom_check=False))
+    inputs = [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})]
+    art_id, art = _run(store, tools, sid, eid, "art", inputs)
+    p1, p2 = art["panels"]
+    assert art["strips"] == [[1, 2]]
+    assert "join" not in p1 and p2["join"]["prev"] == 1 and p2["join"]["margin"] > 0
+    assert not p2["scene_ref"]  # 앞 컷 참고 자리를 이어 그릴 그림판이 대신해요
+    assert "canvas to paint on" in images.prompts[-1][0] and "canvas to paint on" not in images.prompts[-2][0]
+    assert any("이어지는 긴 세로 컷" in t for props, t, _ in model.calls if "people_count" in props)
+
+    # 말풍선: 이어진 컷은 여백 없이, 겹치는 띠에는 말풍선을 두지 않아요
+    c.execute("update artifacts set status='approved' where id=%s", (art_id,))
+    _, let = _run(store, tools, sid, eid, "lettering", [art_id])
+    l1, l2 = let["panels"]
+    assert l2["gap_before"] == "none" and l2["join"]["prev"] == 1
+    assert l2["bubbles"][0]["box"]["y"] >= p2["join"]["overlap"] * 100
+    b = l1["bubbles"][0]["box"]
+    assert b["y"] + b["h"] <= 100 - p2["join"]["prev_overlap"] * 100
+
+    # 위 컷만 다시 그리라고 해도 이어진 아래 컷을 같이 다시 그려요
+    c.execute("update artifacts set status='pending_review' where id=%s", (art_id,))
+    _, again = _run(store, tools, sid, eid, "art", inputs, payload={"panels": [1], "base_artifact_id": str(art_id)}, attempt=2)
+    assert again["redrawn"] == [1, 2] and again["join_added"] == [2]
+
+
+def test_step_scenes_draw_one_panel_at_a_time(store, tmp_path):
+    """한 장씩 확인 장면은 한 번에 한 컷만 그리고, 나머지 장면은 자동으로 다 그려요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.with_scenes, model.four, model.always_pass = True, True, True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=1, parallel=2, test_panels=0, zoom_check=False))
+    inputs = [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})]
+    art_id, art = _run(store, tools, sid, eid, "art", inputs, payload={"step_scenes": [2]})
+    assert [p["index"] for p in art["panels"] if p.get("image")] == [1, 2, 3]
+    assert art["pending"] == [4] and art["step_waiting"] == [3] and art["step_scenes"] == [2]
+
+    # '다음 컷': 남은 컷을 넘겨도 그 장면은 한 장만, 한 장씩 확인 설정은 이어져요
+    c.execute("update artifacts set status='pending_review' where id=%s", (art_id,))
+    n = len(images.prompts)
+    _, nxt = _run(store, tools, sid, eid, "art", inputs, payload={"panels": [4], "base_artifact_id": str(art_id)}, attempt=2)
+    assert nxt["pending"] == [] and nxt["step_waiting"] == [4] and nxt["step_scenes"] == [2]
+    assert len(images.prompts) == n + 1  # 4컷 한 장만 그림

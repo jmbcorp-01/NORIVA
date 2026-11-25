@@ -38,3 +38,25 @@ describe("toPublishedPanels", () => {
     expect(() => toPublishedPanels({ kind: "art", panels: [] }, "ko")).toThrow(PublishError);
   });
 });
+
+describe("이어지는 긴 세로 컷", () => {
+  it("겹침 정보가 맞으면 여백 없이 잇고, 이상하면 따로 보여요", async () => {
+    const { toPublishedPanels, joinStyles } = await import("./publish");
+    const body = {
+      kind: "lettered",
+      panels: [
+        { index: 1, image: "a.png", gap_before: "long", bubbles: [], sfx: null },
+        { index: 2, image: "b.png", gap_before: "normal", join: { prev: 1, overlap: 0.25, margin: 33.3 }, bubbles: [], sfx: null },
+        { index: 3, image: "c.png", gap_before: "none", join: { overlap: 0.9, margin: 200 }, bubbles: [], sfx: null },
+      ],
+    };
+    const out = toPublishedPanels(body, "ko");
+    expect(out[1].gapBefore).toBe("none");
+    expect(out[1].join).toEqual({ overlap: 0.25, margin: 33.3 });
+    expect(out[2].join).toBeUndefined();
+    const js = joinStyles(out[1].join);
+    expect(js.figure).toEqual({ marginTop: "-33.3%" });
+    expect(js.img?.maskImage).toContain("#000 25%");
+    expect(joinStyles(undefined).figure).toBeUndefined();
+  });
+});
