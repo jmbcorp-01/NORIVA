@@ -143,6 +143,10 @@ def claim_from_message(store: Store, raw: str, worker_id: str) -> dict | None:
     if msg.get("jobId"):
         return store.claim_by_id(msg["jobId"], worker_id)
     if msg.get("kind") == "scout":
+        # 자동 실행은 대표가 켰을 때만 돌아요. 꺼져 있으면 돈을 쓰지 않고 메시지만 버려요.
+        if not store.scout_auto_enabled():
+            log.info("소재 발굴 자동 실행이 꺼져 있어 건너뛰어요")
+            return None
         # 예약이 두 번 오거나 재전송돼도 한 주에 한 번만 돌아요
         job = store.create_scout(msg.get("trigger") or "weekly", msg.get("focus") or "", skip_if_recent_days=5)
         if job is None:

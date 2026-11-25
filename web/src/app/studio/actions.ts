@@ -27,6 +27,7 @@ import { replacePanel } from "@/lib/hand-edit";
 import { setVerdict, type Verdict } from "@/lib/judge";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { totpSecret } from "@/lib/studio-2fa";
+import { setScoutAuto } from "@/lib/scout-auto";
 import { verifyTotp } from "@/lib/totp";
 import type { GuidelineBody } from "@/db/schema";
 
@@ -1120,6 +1121,14 @@ export async function adoptCandidate(formData: FormData) {
 }
 
 /** 넘긴 이유는 다음 조사에 전달돼서 비슷한 후보가 덜 나와요. */
+/** 소재 발굴 자동 실행 켜기/끄기. 끄면 매주 예약이 와도 조사하지 않아요 (직접 실행은 그대로). */
+export async function toggleScoutAuto(formData: FormData) {
+  await requireOwner();
+  await setScoutAuto(String(formData.get("on")) === "1");
+  revalidatePath("/studio/scout");
+  redirect("/studio/scout");
+}
+
 export async function dismissCandidate(formData: FormData) {
   await requireOwner();
   const id = String(formData.get("id"));

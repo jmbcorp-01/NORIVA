@@ -158,12 +158,35 @@ def test_scout_job_saves_report_candidates_and_cost(store):
     assert float(cost["s"]) > 0.04
 
 
+def set_scout_auto(store, on: bool):
+    if on:
+        store.conn.execute(
+            "insert into studio_settings (key, value) values ('scout_auto', 'on') on conflict (key) do update set value = 'on'"
+        )
+    else:
+        store.conn.execute("delete from studio_settings where key = 'scout_auto'")
+
+
+def test_weekly_message_skipped_when_auto_off(store):
+    store.conn.execute("delete from scout_runs where trigger='weekly'")
+    set_scout_auto(store, False)
+    assert claim_from_message(store, '{"kind":"scout","trigger":"weekly"}', "w1") is None
+    assert store.conn.execute("select 1 from scout_runs where trigger='weekly'").fetchone() is None
+    # 직접 실행(웹이 넣은 jobId)은 토글과 상관없이 돌아요
+    job = store.create_scout("manual", "")
+    assert claim_from_message(store, '{"jobId":"%s"}' % job["id"], "w1")["status"] == "running"
+    store.conn.execute("delete from scout_runs where job_id=%s", (job["id"],))
+    store.conn.execute("delete from jobs where id=%s", (job["id"],))
+
+
 def test_weekly_message_runs_once(store):
     store.conn.execute("delete from scout_runs where trigger='weekly'")
+    set_scout_auto(store, True)
     first = claim_from_message(store, '{"kind":"scout","trigger":"weekly"}', "w1")
     assert first and first["status"] == "running"
     assert claim_from_message(store, '{"kind":"scout","trigger":"weekly"}', "w1") is None
     store.conn.execute("delete from scout_runs where trigger='weekly'")
+    set_scout_auto(store, False)
 
 
 def test_source_fill_only_fills_empty_fields(store):

@@ -167,6 +167,11 @@ class Store:
 
     # ── 소재 발굴 ──
 
+    def scout_auto_enabled(self) -> bool:
+        """소재 발굴 자동 실행이 켜져 있는지. 대표가 '소재 발굴' 화면에서 켜야만 켜져요 (기본 꺼짐)."""
+        row = self.conn.execute("select value from studio_settings where key = 'scout_auto'").fetchone()
+        return bool(row) and row["value"] == "on"
+
     def create_scout(self, trigger: str, focus: str = "", skip_if_recent_days: int = 0) -> dict[str, Any] | None:
         """소재 발굴 작업과 실행 기록을 만들어요. 최근에 이미 돌았으면(주간 예약 중복) 만들지 않아요."""
         with self.conn.transaction():
