@@ -1054,3 +1054,28 @@ def test_review_rescored_when_runs_disagree():
     body, costs = run_review(ctx, model, ArtSettings())
     assert body["score_runs"] == [91, 81, 91] and body["total"] == 91  # 세 번째 채점 후 가운데 값
     assert len(costs) == 3
+
+
+def test_storyboard_self_check_always_checks_script_coverage():
+    """콘티는 지침과 상관없이 '대본 대사가 모두 들어갔는지, 컷이 이어지는지'를 늘 점검하고, 어기면 한 번 고쳐 써요."""
+    from noriva_worker.textcheck import write_checked
+
+    class W:
+        def __init__(self):
+            self.tasks, self.json_tasks = [], []
+
+        def write(self, system, task):
+            self.tasks.append(task)
+            return LLMResult(text=f"콘티 {len(self.tasks)}", model="claude-opus-5-5", usage={}, cost_usd=0.0)
+
+        def json(self, system, task, schema, images=None, effort=None, max_tokens=0):
+            self.json_tasks.append(task)
+            ok = len(self.json_tasks) > 1
+            return JSONResult(data={"items": [{"code": "SB-1", "ok": ok, "severity": "minor", "note": "3장면 대사 빠짐"}], "summary": ""}, result=_r())
+
+    w = W()
+    ctx = {"guidelines": [], "inputs": [("⑤ 회차 플롯(대본)", "하나: 이게 왜 안 녹아?")]}
+    body, costs = write_checked("storyboard", ctx, w, "sys", "과제")
+    assert "SB-1" in w.json_tasks[0] and "이게 왜 안 녹아?" in w.json_tasks[0]  # 대본과 대조해요
+    assert body["checks"]["revised"] and body["markdown"] == "콘티 2"  # minor로 와도 major로 보고 고쳐 써요
+    assert "3장면 대사 빠짐" in w.tasks[1]
