@@ -18,6 +18,7 @@ import {
 } from "@/lib/studio";
 import { ALL_STAGES, IMAGE_MODELS, restGate, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
+import { addCredit, deleteCredit, seriesCreditsOf, updateCredit, type CreditInput } from "@/lib/credits-store";
 import { enqueueJob, notifyWorker } from "@/lib/queue";
 import { putPrivate } from "@/lib/private-media";
 import { putPublic } from "@/lib/public-media";
@@ -231,17 +232,20 @@ export async function createSeries(formData: FormData) {
     const genre = z.string().min(1).parse(formData.get("genre"));
     const sourceIds = formData.getAll("sourceIds").map(String).filter(Boolean);
     if (sourceIds.length === 0) throw new StudioError("뿌리가 될 소재를 하나 이상 골라 주세요 (R-1)");
+    const format = z.enum(["webtoon", "novel"]).parse(formData.get("format") ?? "webtoon");
     const brief = {
       tone: String(formData.get("tone") ?? ""),
-      ageRating: z.enum(["all", "12", "15", "18"]).parse(formData.get("ageRating") ?? "15"),
+      // 19세 작품은 만들지 않아요 (docs/07 1절)
+      ageRating: z.enum(["all", "12", "15"]).parse(formData.get("ageRating") ?? "15"),
       audience: String(formData.get("audience") ?? ""),
       memo: String(formData.get("memo") ?? ""),
     };
     const [row] = await db
       .insert(schema.series)
-      .values({ title, titleEn, genre, brief, slug: `${slugify(titleEn || title)}-${Date.now().toString(36).slice(-4)}` })
+      .values({ title, titleEn, genre, brief, format, slug: `${slugify(titleEn || title)}-${Date.now().toString(36).slice(-4)}` })
       .returning({ id: schema.series.id });
     seriesId = row.id;
+    await seriesCreditsOf(seriesId, owner.email); // 크레딧 필수 항목 기본값 (docs/07 4절)
     await db.insert(schema.seriesSources).values(sourceIds.map((sourceId) => ({ seriesId, sourceId, role: "engine" })));
     await startStage({ seriesId, episodeId: null, stage: "concept", actor: owner.email, instruction: brief.memo });
   } catch (e) {
@@ -1083,4 +1087,50 @@ export async function dismissCandidate(formData: FormData) {
     .where(and(eq(schema.sourceCandidates.id, id), eq(schema.sourceCandidates.status, "pending")));
   revalidatePath("/studio/scout");
   redirect("/studio/scout");
+}
+
+/* ─── 작품 크레딧 (docs/07 4절) ─── */
+
+function creditFrom(formData: FormData): CreditInput {
+  const n = String(formData.get("fromEpisode") ?? "").trim();
+  return {
+    role: String(formData.get("role") ?? ""),
+    label: String(formData.get("label") ?? "").trim(),
+    name: String(formData.get("name") ?? "").trim(),
+    kind: z.enum(["company", "human", "ai", "work"]).parse(formData.get("kind") ?? "company"),
+    aiTool: String(formData.get("aiTool") ?? "").trim(),
+    basis: z.enum(["", "contract", "public_domain", "own"]).parse(formData.get("basis") ?? ""),
+    note: String(formData.get("note") ?? "").trim(),
+    fromEpisode: n ? z.coerce.number().int().min(1).parse(n) : null,
+    visible: formData.get("visible") === "on",
+    sort: z.coerce.number().int().parse(formData.get("sort") || 50),
+  };
+}
+
+export async function saveCredit(formData: FormData) {
+  const owner = await requireOwner();
+  const seriesId = String(formData.get("seriesId"));
+  const path = `/studio/series/${seriesId}/credits`;
+  try {
+    const id = String(formData.get("creditId") ?? "");
+    if (id) await updateCredit(id, creditFrom(formData), owner.email);
+    else await addCredit(seriesId, creditFrom(formData), owner.email);
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(`${path}?saved=1`);
+}
+
+export async function removeCredit(formData: FormData) {
+  const owner = await requireOwner();
+  const seriesId = String(formData.get("seriesId"));
+  const path = `/studio/series/${seriesId}/credits`;
+  try {
+    await deleteCredit(String(formData.get("creditId")), owner.email);
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
 }

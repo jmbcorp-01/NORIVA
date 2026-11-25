@@ -12,7 +12,13 @@ export type Stage =
   | "storyboard"
   | "art"
   | "lettering"
-  | "review";
+  | "review"
+  | "manuscript"
+  | "copyedit";
+
+/** 작품 형식 (07번). 형식마다 제작 단계가 달라요 */
+export type SeriesFormat = "webtoon" | "novel";
+export const FORMAT_LABEL: Record<SeriesFormat, string> = { webtoon: "웹툰", novel: "웹소설" };
 
 export type ArtifactStatus =
   | "generating"
@@ -25,7 +31,25 @@ export type ArtifactStatus =
 
 export const SERIES_STAGES: Stage[] = ["concept", "story", "characters", "research", "style", "sheets"];
 export const EPISODE_STAGES: Stage[] = ["plot", "storyboard", "art", "lettering", "review"];
-export const ALL_STAGES: Stage[] = [...SERIES_STAGES, ...EPISODE_STAGES];
+export const ALL_STAGES: Stage[] = [...SERIES_STAGES, ...EPISODE_STAGES, "manuscript", "copyedit"];
+
+/** 웹소설: 그림 단계 없이 ① ② ③ ③+ 다음 회차마다 ⑤ 회차 플롯 → ⑥ 집필 → ⑦ 퇴고·교정 */
+export const NOVEL_SERIES_STAGES: Stage[] = ["concept", "story", "characters", "research"];
+export const NOVEL_EPISODE_STAGES: Stage[] = ["plot", "manuscript", "copyedit"];
+
+export function seriesStagesFor(format: SeriesFormat = "webtoon"): Stage[] {
+  return format === "novel" ? NOVEL_SERIES_STAGES : SERIES_STAGES;
+}
+export function episodeStagesFor(format: SeriesFormat = "webtoon"): Stage[] {
+  return format === "novel" ? NOVEL_EPISODE_STAGES : EPISODE_STAGES;
+}
+export function stagesFor(format: SeriesFormat = "webtoon"): Stage[] {
+  return [...seriesStagesFor(format), ...episodeStagesFor(format)];
+}
+/** 회차를 공개하기 전에 승인돼 있어야 하는 마지막 단계 */
+export function finalStageFor(format: SeriesFormat = "webtoon"): Stage {
+  return format === "novel" ? "copyedit" : "review";
+}
 
 export const STAGE_INFO: Record<Stage, { no: string; label: string; agent: string; desc: string }> = {
   concept: { no: "①", label: "장르·소재", agent: "planner", desc: "뿌리를 연결한 기획안 3개" },
@@ -39,6 +63,8 @@ export const STAGE_INFO: Record<Stage, { no: string; label: string; agent: strin
   art: { no: "⑦", label: "작화", agent: "artist", desc: "컷 그림, 자동 결함 검사" },
   lettering: { no: "⑧", label: "말풍선", agent: "letterer", desc: "한국어·영어 말풍선과 효과음" },
   review: { no: "⑨", label: "검수", agent: "reviewer", desc: "고정 채점표, 최종 승인" },
+  manuscript: { no: "⑥", label: "집필", agent: "novelist", desc: "회차 본문 (공백 포함 5,000~5,500자)" },
+  copyedit: { no: "⑦", label: "퇴고·교정", agent: "copyeditor", desc: "맞춤법·문체·분량·반복·설정·금지 소재 검사, 고친 곳 비교" },
 };
 
 /** 단계 카드의 도움말: AI가 하는 일, 대표가 볼 것, 승인 기준 (docs/03-agent-pipeline.md 2절) */
@@ -98,6 +124,16 @@ export const STAGE_HELP: Record<Stage, { ai: string; look: string; approve: stri
     look: "실제 독자 화면처럼 한국어·영어로 한 번씩 읽어 보세요.",
     approve: "최종 승인하면 회차를 공개 예약할 수 있어요. 반려하면 어느 단계로 돌려보낼지 고를 수 있어요.",
   },
+  manuscript: {
+    ai: "승인한 회차 플롯, 인물, 고증 자료와 지난 회 끝부분을 읽고 웹소설 본문을 써요. 지침으로 스스로 점검하고, 분량이 4,500~6,500자를 벗어나면 한 번 고쳐 써요.",
+    look: "첫 문단이 바로 궁금한지, 지난 회와 이어지는지, 마지막 문단이 다음 화를 누르게 하는지 보세요.",
+    approve: "승인하면 ⑦ 퇴고·교정이 자동으로 시작돼요. 직접 고친 문장도 그대로 교정에 들어가요.",
+  },
+  copyedit: {
+    ai: "맞춤법, 문체, 분량, 반복 표현, 앞 회차와의 설정 충돌, 금지 소재를 검사하고 고친 본문을 만들어요. 고친 곳마다 이유를 적어요.",
+    look: "색으로 표시한 고친 곳만 읽어 보세요. 금지 소재 경고가 있으면 반드시 확인하세요.",
+    approve: "승인이 이 회차의 최종 검수예요. 마음에 들지 않으면 지시를 적어 다시 교정하거나 ⑥ 집필로 돌아가세요.",
+  },
 };
 
 /** 작품 밖에서 도는 작업 (작업 큐 표시용) */
@@ -117,6 +153,14 @@ export const EXTRA_GUIDELINE_AGENTS: Partial<Record<Stage, string[]>> = {
   lettering: ["translator_en"],
 };
 
+/** 형식까지 따진 추가 지침. 웹소설은 글 단계마다 '웹소설 작가' 지침을 함께 읽어서 컷·말풍선 대신 문장으로 써요. */
+export function extraGuidelineAgents(stage: Stage, format: SeriesFormat = "webtoon"): string[] {
+  const base = EXTRA_GUIDELINE_AGENTS[stage] ?? [];
+  if (format !== "novel") return base;
+  if (["concept", "story", "characters", "plot", "copyedit"].includes(stage)) return [...base, "novelist"];
+  return base;
+}
+
 /** 각 단계가 입력으로 쓰는 앞 단계 (승인된 결과물이 있어야 시작 가능) */
 export const UPSTREAM: Record<Stage, Stage[]> = {
   concept: [],
@@ -130,22 +174,24 @@ export const UPSTREAM: Record<Stage, Stage[]> = {
   art: ["storyboard", "style", "characters", "sheets", "research"],
   lettering: ["art", "plot"],
   review: ["lettering"],
+  manuscript: ["plot", "characters", "research"],
+  copyedit: ["manuscript"],
 };
 
 export function isSeriesStage(stage: Stage): boolean {
   return SERIES_STAGES.includes(stage);
 }
 
-/** 이 단계를 입력으로 쓰는 단계들 (직접) */
-export function directDownstream(stage: Stage): Stage[] {
-  return ALL_STAGES.filter((s) => UPSTREAM[s].includes(stage));
+/** 이 단계를 입력으로 쓰는 단계들 (직접). 그 형식에서 쓰는 단계만 */
+export function directDownstream(stage: Stage, format: SeriesFormat = "webtoon"): Stage[] {
+  return stagesFor(format).filter((s) => UPSTREAM[s].includes(stage));
 }
 
 /** 이 단계가 바뀌면 낡음 표시해야 하는 모든 뒤 단계 (간접 포함, 파이프라인 순서) */
-export function allDownstream(stage: Stage): Stage[] {
+export function allDownstream(stage: Stage, format: SeriesFormat = "webtoon"): Stage[] {
   const out = new Set<Stage>();
   const walk = (s: Stage) => {
-    for (const d of directDownstream(s)) {
+    for (const d of directDownstream(s, format)) {
       if (!out.has(d)) {
         out.add(d);
         walk(d);
@@ -153,7 +199,7 @@ export function allDownstream(stage: Stage): Stage[] {
     }
   };
   walk(stage);
-  return ALL_STAGES.filter((s) => out.has(s));
+  return stagesFor(format).filter((s) => out.has(s));
 }
 
 /** 입력 결과물들의 지문. 순서와 상관없이 같은 입력이면 같은 값 */
@@ -214,9 +260,10 @@ export function canApprove(a?: LatestArtifact): boolean {
 export function nextToEnqueue(
   approvedStage: Stage,
   latest: Partial<Record<Stage, LatestArtifact>>,
+  format: SeriesFormat = "webtoon",
 ): Stage[] {
-  const scope = isSeriesStage(approvedStage) ? SERIES_STAGES : EPISODE_STAGES;
-  return directDownstream(approvedStage).filter(
+  const scope = isSeriesStage(approvedStage) ? seriesStagesFor(format) : episodeStagesFor(format);
+  return directDownstream(approvedStage, format).filter(
     (d) =>
       scope.includes(d) &&
       !latest[d] &&

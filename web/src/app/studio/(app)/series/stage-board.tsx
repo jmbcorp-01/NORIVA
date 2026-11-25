@@ -14,6 +14,7 @@ import { ArtView, isArtBody, isLetteredBody, LetteredView } from "./panel-views"
 import { ImageModelPicker, isStyleBody, StyleRefs, StyleScout, StyleView } from "./style-view";
 import { HistoryRefs, isSheetsBody, SheetsView } from "./sheets-view";
 import { isResearchBody, ResearchView } from "./research-view";
+import { CopyeditView, isCopyeditBody, isManuscriptBody, StatsLine } from "./novel-view";
 
 type Props = {
   stages: Stage[];
@@ -139,7 +140,9 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                   ) : null}
 
                   {a && a.status !== "generating" && a.status !== "failed" ? (
-                    isSheetsBody(a.body) ? (
+                    isCopyeditBody(a.body) ? (
+                      <CopyeditView body={a.body} />
+                    ) : isSheetsBody(a.body) ? (
                       <SheetsView
                         body={a.body}
                         artifactId={a.id}
@@ -164,6 +167,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                       <LetteredView body={a.body} />
                     ) : (
                       <>
+                        {isManuscriptBody(a.body) ? <StatsLine stats={a.body.stats} fixed={a.body.length_fixed} /> : null}
                         <TextChecks checks={a.body.checks as TextCheck | undefined} />
                         <ArtifactView body={a.body} markdown={markdown} />
                       </>

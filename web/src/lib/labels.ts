@@ -18,6 +18,8 @@ export const AGENT_LABEL: Record<string, string> = {
   letterer: "레터링",
   translator_en: "영어 대사",
   reviewer: "검수",
+  novelist: "웹소설 작가",
+  copyeditor: "퇴고·교정",
 };
 
 export const SCOPE_LABEL: Record<string, string> = {

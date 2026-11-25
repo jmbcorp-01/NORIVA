@@ -5,6 +5,8 @@ import { isApproved, type Stage } from "./pipeline";
 import { LOCALES, PublishError, toPublishedPanels } from "./publish";
 import { latestArtifacts, StudioError } from "./studio";
 import { protectSeriesPanels } from "./panel-media";
+import { creditBlockers } from "./credits";
+import { seriesCreditsOf } from "./credits-store";
 
 const { episodes, episodeAssets, series, decisionLedger, artifacts } = schema;
 
@@ -12,6 +14,11 @@ const { episodes, episodeAssets, series, decisionLedger, artifacts } = schema;
 export async function publishEpisode(episodeId: string, actor: string, publishAt?: Date) {
   const [ep] = await db.select().from(episodes).where(eq(episodes.id, episodeId));
   if (!ep) throw new StudioError("회차를 찾을 수 없어요");
+  const [sr0] = await db.select({ format: series.format }).from(series).where(eq(series.id, ep.seriesId));
+  if (sr0?.format === "novel") throw new StudioError("웹소설 회차 공개는 독자 앱의 웹소설 화면(2단계)과 함께 열려요");
+  // 크레딧 관문 (07번 4절): 필수 항목이 비었거나 원작의 이용 근거가 없으면 공개하지 않아요
+  const blockers = creditBlockers(await seriesCreditsOf(ep.seriesId, actor), "webtoon");
+  if (blockers.length) throw new StudioError(`${blockers.join(". ")}. 작품 화면의 '크레딧'에서 고쳐 주세요`);
   const latest = await latestArtifacts(ep.seriesId, ep.id);
   const as = (st: Stage) => (latest[st] ? { id: latest[st]!.id, stage: st, status: latest[st]!.status } : undefined);
   if (!isApproved(as("review"))) throw new StudioError("검수 단계를 승인해야 공개할 수 있어요");

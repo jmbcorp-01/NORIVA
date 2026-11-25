@@ -58,6 +58,8 @@ export const agentKind = pgEnum("agent_kind", [
   "letterer", // 레터링
   "translator_en", // 영어 대사
   "reviewer", // 검수
+  "novelist", // 웹소설 작가 (07번)
+  "copyeditor", // 웹소설 퇴고·교정
 ]);
 
 export type GuidelineRule = { code: string; text: string };
@@ -146,6 +148,8 @@ export const series = pgTable("series", {
   title: text("title").notNull(),
   titleEn: text("title_en").notNull().default(""),
   genre: text("genre").notNull(),
+  // 작품 형식: webtoon | novel (07번). 형식마다 제작 단계가 달라요
+  format: text("format").$type<"webtoon" | "novel">().notNull().default("webtoon"),
   status: seriesStatus("status").notNull().default("planning"),
   brief: jsonb("brief").$type<SeriesBrief>().notNull(),
   logline: text("logline").notNull().default(""),
@@ -260,6 +264,9 @@ export const stage = pgEnum("stage", [
   "art", // ⑦ 작화
   "lettering", // ⑧ 말풍선
   "review", // ⑨ 검수
+  // 웹소설 회차 단위 (07번): ⑤ 회차 플롯 → ⑥ 집필 → ⑦ 퇴고·교정
+  "manuscript", // ⑥ 집필
+  "copyedit", // ⑦ 퇴고·교정
   // 작품 밖 작업 (작품 없이 돌아요, jobs.type에만 써요)
   "scout", // 시장 분석 소재 발굴
   "source_fill", // 소재 이름만 보고 나머지 칸 채우기
@@ -416,6 +423,38 @@ export const decisionLedger = pgTable("decision_ledger", {
   note: text("note").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/* ─── 작품 크레딧 (07번 4절): 글, 그림, 원작, 저작권자, AI 제작 표시 등 ─── */
+
+export const seriesCredits = pgTable(
+  "series_credits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    seriesId: uuid("series_id")
+      .notNull()
+      .references(() => series.id, { onDelete: "cascade" }),
+    // story | art | rights | ai | original | person | style | adapt | storyboard | color | letter | cover | copyedit | reference | translate | custom
+    role: text("role").notNull(),
+    // 직접 입력한 역할 이름 (role이 custom일 때). 다른 역할은 비워 두면 기본 이름을 써요
+    label: text("label").notNull().default(""),
+    // 독자에게 보이는 이름 (사람이면 실명이나 필명, 원작이면 '제목 (원저작자)')
+    name: text("name").notNull(),
+    // company | human | ai | work
+    kind: text("kind").notNull().default("company"),
+    // AI 제작 표시에 적는 도구 (예: 글 Claude, 그림 이미지 생성 AI)
+    aiTool: text("ai_tool").notNull().default(""),
+    // 원작 이용 근거: contract | public_domain | own (원작일 때 필수)
+    basis: text("basis").notNull().default(""),
+    // 근거 메모 (계약 날짜, 원전 출처 등). 독자에게 보이지 않아요
+    note: text("note").notNull().default(""),
+    // 이 회차부터 적용 (비우면 작품 전체)
+    fromEpisode: integer("from_episode"),
+    visible: boolean("visible").notNull().default(true),
+    sort: integer("sort").notNull().default(0),
+    ...ts(),
+  },
+  (t) => [index("series_credits_series").on(t.seriesId, t.sort)],
+);
 
 export const bannedTerms = pgTable("banned_terms", {
   id: uuid("id").primaryKey().defaultRandom(),

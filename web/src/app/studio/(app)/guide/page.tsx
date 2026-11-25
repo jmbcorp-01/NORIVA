@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Card, LinkButton, PageHeader } from "@/components/ui";
-import { ALL_STAGES, STAGE_HELP, STAGE_INFO, type Stage } from "@/lib/pipeline";
+import { NOVEL_EPISODE_STAGES, STAGE_HELP, STAGE_INFO, stagesFor, type Stage } from "@/lib/pipeline";
 
 // 단계별 대략적인 시간과 비용 (claude-opus-5-5, 그림 Nano Banana Pro 2K 1장 약 $0.15 기준, 2026-11 1화 실측. 실제 금액은 대시보드의 이번 달 제작비에 쌓여요)
 const COST: Record<Stage, string> = {
@@ -16,6 +16,8 @@ const COST: Record<Stage, string> = {
   art: "시험 컷 10~15분 · 약 $3, 전체 30~60분 · 회차당 약 $25~35",
   lettering: "5~10분 · 약 $1",
   review: "3~6분 · 약 $0.5",
+  manuscript: "4~8분 · 예상 약 $1~1.5 (실측 전)",
+  copyedit: "3~6분 · 예상 약 $0.8 (실측 전)",
 };
 
 const GLOSSARY: [string, string][] = [
@@ -33,6 +35,8 @@ const GLOSSARY: [string, string][] = [
   ["작업 큐", "에이전트에게 맡긴 작업 목록. 작업 서버가 순서대로 실행하고, 실패하면 다시 시도할 수 있어요."],
   ["작업 서버", "에이전트가 실제로 도는 서버. 할 일이 없으면 15분 뒤 스스로 꺼지고, 작업을 넣으면 1~2분 안에 켜져요."],
   ["제작 원장", "대표의 선택·수정·승인 기록. 저작권 기여를 증명하는 자료예요."],
+  ["크레딧", "작품마다 글, 그림, 원작, 저작권자, AI 제작 표시를 적는 곳. 필수 항목이 비면 공개할 수 없어요 (docs/07)."],
+  ["제작 이력", "단계마다 어떤 AI가 만들고 대표가 언제 승인·수정했는지 모은 화면. 저작권 등록이나 분쟁 때 증빙으로 내려받아요."],
   ["로그라인", "작품을 한 문장으로 요약한 소개."],
   ["절단", "회차 끝에서 다음 화를 보게 만드는 끊는 장면."],
   ["떡밥 장부", "심어 둔 복선과 회수할 회차를 적어 둔 표."],
@@ -95,11 +99,30 @@ export default function GuidePage() {
           ①~④는 작품마다 한 번, ⑤~⑨는 회차마다 반복해요. 앞 단계를 고치면 뒤 단계 결과에 &lsquo;낡음&rsquo; 표시가 붙어요. 시간과 비용은 대략이에요.
         </p>
         <div className="space-y-2">
-          {ALL_STAGES.map((st) => (
+          {stagesFor("webtoon").map((st) => (
             <Card key={st} className="px-4 py-3">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <span className="font-serif text-[15px] font-semibold">
                   {STAGE_INFO[st].no} {STAGE_INFO[st].label}
+                </span>
+                <span className="text-[12px] text-ink-faint">{STAGE_INFO[st].desc}</span>
+                <span className="ml-auto text-[12px] text-ink-soft">{COST[st]}</span>
+              </div>
+              <dl className="mt-2 grid gap-2 text-[13px] leading-relaxed md:grid-cols-3">
+                <Def term="AI가 하는 일">{STAGE_HELP[st].ai}</Def>
+                <Def term="대표가 볼 것">{STAGE_HELP[st].look}</Def>
+                <Def term="승인">{STAGE_HELP[st].approve}</Def>
+              </dl>
+            </Card>
+          ))}
+          <p className="pt-3 text-[13px] text-ink-soft">
+            웹소설은 ①~③+를 웹툰과 같이 거친 뒤, 회차마다 ⑤ 회차 플롯 → 아래 ⑥ 집필 → ⑦ 퇴고·교정으로 가요. 그림 단계는 없어요 (docs/07).
+          </p>
+          {NOVEL_EPISODE_STAGES.filter((st) => st !== "plot").map((st) => (
+            <Card key={st} className="px-4 py-3">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="font-serif text-[15px] font-semibold">
+                  {STAGE_INFO[st].no} {STAGE_INFO[st].label} <span className="text-[12px] font-normal text-ink-faint">웹소설</span>
                 </span>
                 <span className="text-[12px] text-ink-faint">{STAGE_INFO[st].desc}</span>
                 <span className="ml-auto text-[12px] text-ink-soft">{COST[st]}</span>

@@ -22,6 +22,8 @@ STAGE_LABEL_KO = {
     "art": "작화",
     "lettering": "말풍선",
     "review": "검수",
+    "manuscript": "집필 원고",
+    "copyedit": "퇴고본",
 }
 
 
@@ -390,6 +392,18 @@ class Store:
             for p in reversed(prev):
                 inputs.append((f"{p['number']}화 대본 (이전 회차)", body_text(p["body"])[:6000]))
 
+        # 웹소설 ⑥ 집필·⑦ 퇴고: 지난 회 본문 끝부분을 줘서 이어지게 해요 (퇴고본이 있으면 퇴고본, 없으면 집필 원고)
+        if episode and job["type"] in ("manuscript", "copyedit"):
+            prev = c.execute(
+                """select e.number, a.stage, a.body from artifacts a join episodes e on e.id = a.episode_id
+                   where a.series_id = %s and a.stage in ('copyedit','manuscript') and a.status in ('approved','edited')
+                     and e.number < %s order by e.number desc, (a.stage = 'copyedit') desc, a.created_at desc limit 1""",
+                (job["series_id"], episode["number"]),
+            ).fetchone()
+            if prev:
+                text = body_text(prev["body"])
+                inputs.append((f"{prev['number']}화 본문 끝부분 (지난 회)", text[-3000:]))
+
         # ④+ 인물 시트: 다른 작품의 주요 인물 외모를 함께 줘서 작품끼리 얼굴이 겹치지 않게 해요
         other_faces: list[dict[str, Any]] = []
         if job["type"] == "sheets":
@@ -443,7 +457,7 @@ class Store:
             previous = body_text(prev_row["body"])
 
         banned = []
-        if job["type"] in ("lettering", "review"):
+        if job["type"] in ("lettering", "review", "copyedit"):
             banned = c.execute("select kind, term from banned_terms where active").fetchall()
 
         return {

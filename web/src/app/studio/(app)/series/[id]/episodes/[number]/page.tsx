@@ -6,7 +6,7 @@ import { db, schema } from "@/db";
 import { Badge, Button, Card, Input, PageHeader } from "@/components/ui";
 import { fillEpisodeMeta, publishEpisodeAction, saveEpisodeInfo, setEpisodeBudget } from "../../../../../actions";
 import { DEFAULT_EPISODE_BUDGET, episodeCost, latestArtifacts } from "@/lib/studio";
-import { EPISODE_STAGES, isApproved, SERIES_STAGES, stageStates, STAGE_INFO, type LatestArtifact, type Stage } from "@/lib/pipeline";
+import { episodeStagesFor, isApproved, seriesStagesFor, stageStates, STAGE_INFO, type LatestArtifact, type SeriesFormat, type Stage } from "@/lib/pipeline";
 import { StageBadge } from "@/components/stage-badge";
 import { StageBoard } from "../../../stage-board";
 
@@ -31,7 +31,9 @@ export default async function EpisodePage({
   const budget = s.brief.episodeBudgetUsd ?? DEFAULT_EPISODE_BUDGET;
   const l: Partial<Record<Stage, LatestArtifact>> = {};
   for (const [k, v] of Object.entries(latest)) if (v) l[k as Stage] = { id: v.id, stage: k as Stage, status: v.status };
-  const seriesStates = stageStates(SERIES_STAGES, l);
+  const format = (s.format ?? "webtoon") as SeriesFormat;
+  const seriesStages = seriesStagesFor(format);
+  const seriesStates = stageStates(seriesStages, l);
   const back = `/studio/series/${id}/episodes/${ep.number}`;
   const [metaJob] = await db
     .select({ status: schema.jobs.status, error: schema.jobs.error })
@@ -56,7 +58,7 @@ export default async function EpisodePage({
       <ErrorNotice>{error}</ErrorNotice>
       <div className="mb-6 flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-ink-soft">
         <span className="font-medium text-ink">작품 단계</span>
-        {SERIES_STAGES.map((st) => (
+        {seriesStages.map((st) => (
           <span key={st} className="inline-flex items-center gap-1.5">
             {STAGE_INFO[st].label} <StageBadge state={seriesStates[st]} />
           </span>
@@ -64,23 +66,25 @@ export default async function EpisodePage({
       </div>
       <BudgetBar spent={spent} budget={budget} seriesId={id} back={back} />
       <PublishCard
+        novel={format === "novel"}
         title={ep.title}
         titleEn={ep.titleEn}
         episodeId={ep.id}
         status={ep.status}
         publishAt={ep.publishAt}
-        ready={isApproved(l.review) && isApproved(l.lettering)}
+        ready={format === "novel" ? isApproved(l.copyedit) : isApproved(l.review) && isApproved(l.lettering)}
         back={back}
         seriesId={id}
         metaStatus={metaJob?.status}
         metaError={metaJob?.error ?? null}
       />
-      <StageBoard stages={EPISODE_STAGES} latest={latest} seriesId={id} episodeId={ep.id} back={back} />
+      <StageBoard stages={episodeStagesFor(format)} latest={latest} seriesId={id} episodeId={ep.id} back={back} />
     </>
   );
 }
 
 function PublishCard({
+  novel,
   title,
   titleEn,
   episodeId,
@@ -92,6 +96,7 @@ function PublishCard({
   metaStatus,
   metaError,
 }: {
+  novel: boolean;
   title: string;
   titleEn: string;
   episodeId: string;
@@ -112,12 +117,14 @@ function PublishCard({
         <span className="font-serif text-[15px] font-semibold">⑩ 연재</span>
         {live ? (
           <Badge tone="pine">{status === "scheduled" ? `예약 · ${when}` : `공개 중 · ${when}`}</Badge>
+        ) : ready && novel ? (
+          <Badge tone="indigo">검수 끝 · 공개 준비 완료</Badge>
         ) : ready ? (
           <Badge tone="indigo">공개할 수 있어요</Badge>
         ) : (
-          <span className="text-[12px] text-ink-faint">말풍선과 검수가 승인되면 공개할 수 있어요</span>
+          <span className="text-[12px] text-ink-faint">{novel ? "⑦ 퇴고·교정을 승인하면 검수가 끝나요" : "말풍선과 검수가 승인되면 공개할 수 있어요"}</span>
         )}
-        {ready ? (
+        {ready && !novel ? (
           <form action={publishEpisodeAction} className="ml-auto flex flex-wrap items-center gap-2">
             <input type="hidden" name="episodeId" value={episodeId} />
             <input type="hidden" name="back" value={back} />
@@ -141,7 +148,10 @@ function PublishCard({
           </form>
         ) : null}
       </div>
-      {ready ? (
+      {ready && novel ? (
+        <p className="mt-2 text-[12px] text-ink-faint">독자 앱의 웹소설 화면(2단계)이 열리면 여기서 공개 예약을 할 수 있어요.</p>
+      ) : null}
+      {ready && !novel ? (
         <p id="publish-hint" className="mt-2 text-[12px] text-ink-faint">
           시각을 비우면 지금 공개해요. 한국어와 영어가 같은 시각에 공개돼요.
         </p>
@@ -192,7 +202,7 @@ function BudgetBar({ spent, budget, seriesId, back }: { spent: number; budget: n
           <div className={`h-1.5 rounded-full ${near ? "bg-plum" : "bg-pine"}`} style={{ width: `${pct}%` }} />
         </div>
       ) : null}
-      <p className="mt-1.5 text-[11px] text-ink-faint">상한은 작품의 모든 회차에 같이 적용돼요. 0이면 상한이 없어요. 작화 전체는 보통 $25~35예요.</p>
+      <p className="mt-1.5 text-[11px] text-ink-faint">상한은 작품의 모든 회차에 같이 적용돼요. 0이면 상한이 없어요. 웹툰은 작화 전체가 보통 $25~35, 웹소설은 회차당 $2~3 안팎(예상)이에요.</p>
     </Card>
   );
 }

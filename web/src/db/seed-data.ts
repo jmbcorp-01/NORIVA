@@ -11,7 +11,9 @@ type Agent =
   | "artist"
   | "letterer"
   | "translator_en"
-  | "reviewer";
+  | "reviewer"
+  | "novelist"
+  | "copyeditor";
 
 const ROOT_RULES = [
   { code: "R-1", text: "모든 작품은 소재 라이브러리의 한국 뿌리(설화, 역사, 민속 신앙, 장소, 풍속)를 하나 이상 연결한다." },
@@ -150,6 +152,29 @@ const VISUAL_BANNED = [
   "western cemetery",
 ];
 
+// 웹소설 (docs/07): 분량, 문장, 회차 구조. 컷·말풍선 규칙 대신 따라요
+const NOVEL_RULES = [
+  { code: "N-1", text: "이 작품은 웹소설이다. 컷, 말풍선, 효과음, 그림 지시문 같은 웹툰 규칙(S-3, S-10~S-16, D-3, 컷 수)은 따르지 않고 문장과 장면으로 쓴다." },
+  { code: "N-2", text: "한 회는 공백 포함 5,000~5,500자. 4,500자 미만이나 6,500자 초과는 안 된다." },
+  { code: "N-3", text: "첫 문단에서 바로 질문이나 긴장을 던진다. 날씨·배경 설명이나 지난 회 요약으로 시작하지 않는다." },
+  { code: "N-4", text: "회차 끝은 절단: 폭로, 위기, 대사 한 줄, 등장, 선택 중 하나로 다음 화를 누르게 끝낸다. 같은 유형 3화 연속 금지." },
+  { code: "N-5", text: "모바일로 읽기 좋게 문단은 1~4문장으로 짧게, 대사는 따옴표로 줄을 바꾼다. 한 문단이 화면을 넘지 않게 한다." },
+  { code: "N-6", text: "시점(1인칭/3인칭)과 시제는 작품 안에서 바꾸지 않는다. 바꿀 때는 장면 구분(* * *)을 두고 누구 시점인지 첫 문장에서 밝힌다." },
+  { code: "N-7", text: "보여주기: 감정을 '슬펐다'로 설명하지 않고 행동, 감각, 대사로 보인다. 설명 대사와 정보 나열을 피한다." },
+  { code: "N-8", text: "같은 단어·어미·문장 구조를 가까이에서 반복하지 않는다. '~했다. ~했다. ~했다.' 같은 단조로운 끝맺음을 섞는다." },
+  { code: "N-9", text: "인물 이름, 호칭, 존댓말, 나이, 시간 순서, 세계 규칙은 설정 장부와 앞 회차에 맞춘다." },
+  { code: "N-10", text: "번역투(그것은, 그녀는, ~를 가지고 있다)와 AI 문체(갑자기 모든 것이, 마치 ~인 것처럼 남발)를 쓰지 않는다." },
+];
+
+// 모든 작품 공통 금지 소재 (docs/07 2절). 하나라도 걸리면 공개하지 않아요
+const BANNED_TOPIC_RULES = [
+  { code: "B-1", text: "노골적인 성적 묘사, 성범죄 미화, 미성년자를 성적으로 그리는 내용, 근친은 쓰지 않는다. 19세 등급 작품은 만들지 않는다." },
+  { code: "B-2", text: "마약·자살·범죄 방법을 따라 할 수 있게 쓰거나 미화하지 않는다." },
+  { code: "B-3", text: "특정 집단에 대한 혐오와 차별, 실존 인물·단체를 깎아내리는 내용을 쓰지 않는다." },
+  { code: "B-4", text: "역사를 왜곡하거나 일제 강점기를 미화하지 않는다." },
+  { code: "B-5", text: "특정 작품을 표절하거나 모방하지 않는다. 불법 도박을 홍보하지 않는다." },
+];
+
 const KO_BANNED = [
   "~하는 것 같아 (남발)",
   "그것은 / 그녀는 (번역투)",
@@ -182,8 +207,9 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "S-5", text: STORY_RULES[4].text },
         { code: "P-1", text: "기획안마다 장르의 핵심 재미와 필수 장치(장르 지침)를 어떻게 지키는지 한 줄로 밝힌다." },
         { code: "P-2", text: "회귀, 빙의, 계약 관계, 복수극, 출생의 비밀 같은 한국식 장치는 하나만 골라 그 장치의 주의점까지 지킨다. 출생의 비밀은 시즌에 하나." },
-        { code: "P-3", text: "작품 연령 등급(전체, 12, 15, 19)을 정하고 그 등급에 맞는 수위로 설계한다." },
+        { code: "P-3", text: "작품 연령 등급(전체, 12, 15)을 정하고 그 등급에 맞는 수위로 설계한다. 19세 작품은 만들지 않는다." },
         ...SENSITIVITY_RULES,
+        ...BANNED_TOPIC_RULES,
       ],
       banned: ["구미호 로맨스", "저승차사 재판 구조", "도깨비 신부", "조선 좀비"],
       outputFormat:
@@ -203,6 +229,7 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
         { code: "C-5", text: "악역에게도 한(恨)이나 이유를 준다. 순수한 악은 시즌에 하나까지만." },
         { code: "S-17", text: "가족, 한(恨)과 정(情)처럼 한국 독자가 크게 반응하는 감정선을 시즌 안에 하나 이상 깊게 판다." },
         ...SENSITIVITY_RULES,
+        ...BANNED_TOPIC_RULES,
         { code: "S-18", text: "2화부터는 첫 컷 1~2개로 지난 화의 마지막 장면을 짧게 다시 보여주고 들어간다." },
         CONTINUITY_RULES[6],
         { code: "K-8", text: "스토리 단계에서 설정 장부(인물 나이와 관계, 호칭, 시간표, 세계 규칙, 주요 장소)를 만들고, 회차 대본은 이 장부와 어긋나지 않게 쓴다." },
@@ -353,6 +380,52 @@ export const DEFAULT_GUIDELINES: { agent: Agent; title: string; body: GuidelineB
       ],
       banned: [...KO_BANNED, ...EN_BANNED],
       outputFormat: "항목별 점수와 근거(컷 번호, 규칙 코드), 결함 목록(치명/주요/경미), 수정 지시.",
+      examples: "",
+    },
+  },
+  {
+    agent: "novelist",
+    title: "웹소설 작가 기본 지침",
+    body: {
+      role:
+        "당신은 네이버 시리즈·카카오페이지에서 연재하는 한국 웹소설 작가다. 한국 드라마·영화의 전개 문법으로, 모바일에서 한 번에 읽히는 회차를 쓴다. " +
+        "웹툰 단계용 지침과 겹치면 이 지침을 따른다. 원고는 한국어로 쓴다.",
+      rules: [
+        ...ROOT_RULES.slice(1, 4),
+        ...NOVEL_RULES,
+        STORY_RULES[4],
+        STORY_RULES[5],
+        STORY_RULES[6],
+        STORY_RULES[7],
+        { code: "D-4", text: "대사는 실제 한국어 구어체로, 인물마다 말투가 구분되게 쓴다. 문어체 대사 금지." },
+        ...SENSITIVITY_RULES,
+        ...BANNED_TOPIC_RULES,
+      ],
+      banned: KO_BANNED,
+      outputFormat:
+        "스토리 단계: 시놉시스, 100~150화 큰 흐름(10화 단위 아크), 회차별 한 줄 요약, 떡밥 장부, 설정 장부. 회차 플롯 단계: 전개 설계표(훅, 장면 순서, 절단, 떡밥)와 장면별 요점. 집필 단계: 회차 제목 한 줄 뒤 본문만.",
+      examples: "",
+    },
+  },
+  {
+    agent: "copyeditor",
+    title: "퇴고·교정 기본 지침",
+    body: {
+      role: "당신은 웹소설 전문 교정·교열자다. 작가의 문체와 내용은 지키고, 틀린 것과 읽기 불편한 것만 최소한으로 고친다.",
+      rules: [
+        { code: "E-1", text: "맞춤법, 띄어쓰기, 문장 부호는 국립국어원 표준을 따른다. 대사 속 의도된 구어·사투리는 고치지 않는다." },
+        { code: "E-2", text: "줄거리, 사건 순서, 대사의 뜻은 바꾸지 않는다. 고친 곳마다 이유를 적는다." },
+        NOVEL_RULES[1],
+        NOVEL_RULES[4],
+        NOVEL_RULES[7],
+        NOVEL_RULES[8],
+        NOVEL_RULES[9],
+        ...SENSITIVITY_RULES,
+        ...BANNED_TOPIC_RULES,
+        { code: "E-3", text: "금지 소재(B-1~B-5)나 민감 사항(X-1~X-6)에 걸리는 부분은 고치지 말고 경고로 올려 대표가 판단하게 한다." },
+      ],
+      banned: KO_BANNED,
+      outputFormat: "고친 본문 전체, 고친 곳 목록(원문, 고친 문장, 이유, 종류), 검사 결과.",
       examples: "",
     },
   },

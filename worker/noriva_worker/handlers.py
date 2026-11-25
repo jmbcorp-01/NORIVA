@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from .llm import LLMResult
+from .novel import run_copyedit, run_manuscript
 from .prompts import TEXT_STAGES, render_guidelines, render_task
 from .research import run_research
 from .sheets import run_sheets
@@ -42,8 +43,13 @@ def run_stage(stage: str, ctx: dict[str, Any], tools: Tools) -> tuple[dict[str, 
         return run_style(ctx, tools.writer, tools.images(), tools.media)
     if stage == "sheets":
         return run_sheets(ctx, tools.writer, tools.images(), tools.media)
+    fmt = (ctx.get("series") or {}).get("format") or "webtoon"
+    if stage == "manuscript":
+        return run_manuscript(ctx, tools.writer, render_guidelines(ctx["guidelines"], fmt), render_task(stage, ctx))
+    if stage == "copyedit":
+        return run_copyedit(ctx, tools.writer, render_guidelines(ctx["guidelines"], fmt))
     if stage in TEXT_STAGES:
-        return write_checked(stage, ctx, tools.writer, render_guidelines(ctx["guidelines"]), render_task(stage, ctx))
+        return write_checked(stage, ctx, tools.writer, render_guidelines(ctx["guidelines"], fmt), render_task(stage, ctx))
     if stage == "art":
         return run_art(ctx, tools.writer, tools.images(), tools.media, tools.art)
     if stage == "lettering":

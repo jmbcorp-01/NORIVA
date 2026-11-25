@@ -16,9 +16,11 @@ STAGE_LABEL = {
     "art": "⑦ 작화",
     "lettering": "⑧ 말풍선",
     "review": "⑨ 검수",
+    "manuscript": "⑥ 집필 (웹소설)",
+    "copyedit": "⑦ 퇴고·교정 (웹소설)",
 }
 
-TEXT_STAGES = {"concept", "story", "characters", "style", "plot", "storyboard"}
+TEXT_STAGES = {"concept", "story", "characters", "style", "plot", "storyboard", "manuscript"}
 
 TASKS = {
     "concept": (
@@ -64,7 +66,42 @@ TASKS = {
 }
 
 
-def render_guidelines(versions: list[dict[str, Any]]) -> str:
+# 웹소설 작품(docs/07)에서 과제 문장이 다른 단계. 없는 단계는 TASKS를 그대로 써요.
+NOVEL_TASKS = {
+    "concept": (
+        "대표가 고른 장르, 뿌리 소재, 톤, 메모로 서로 확실히 다른 웹소설 기획안 3개를 써라. 100~150화 장기 연재를 버틸 갈등 구조가 있어야 한다. "
+        "각 기획안은 뿌리 소재를 이야기의 엔진으로 써야 한다. 마지막에 추천안과 이유를 짧게 적어라."
+    ),
+    "story": (
+        "승인된 기획안으로 웹소설의 스토리를 설계하라: 시놉시스, 100~150화 큰 흐름(10화 단위 아크), 회차별 한 줄 요약(최소 30화), "
+        "떡밥 장부(심는 화, 회수 화), 회차별 절단 유형 배치표, 설정 장부(인물 나이와 관계, 호칭, 시간표, 세계 규칙, 주요 장소). 첫 3화 법칙과 고구마 규칙을 지켜라."
+    ),
+    "characters": (
+        "승인된 스토리에 필요한 주인공과 주요 등장인물을 설계하라. 인물마다 결핍, 원하는 것, 말투(예시 대사 3개), 호칭 관계, "
+        "글로 묘사할 때 쓰는 외모 특징과 버릇을 적어라. 마지막에 인물 사이 호칭·존댓말 관계표를 둬라."
+    ),
+    "plot": (
+        "이번 회차의 전개 설계표(첫 문단의 훅, 장면 순서와 장면마다 분량 비중, 절단 유형, 이번에 심고 회수할 떡밥)를 쓰고, "
+        "장면마다 장소·시간, 시점 인물, 일어나는 일, 꼭 들어갈 대사 요점을 적어라. 본문은 쓰지 않는다(⑥ 집필이 쓴다)."
+    ),
+    "manuscript": (
+        "승인된 회차 플롯대로 이번 회차의 웹소설 본문을 써라. 첫 줄은 '# 회차 제목', 그다음 본문만 쓴다. "
+        "공백 포함 5,000~5,500자(줄바꿈 제외). 첫 문단에서 바로 긴장을 던지고, 지난 회 끝과 자연스럽게 이어지며, 마지막 문단은 플롯의 절단으로 끝낸다. "
+        "문단은 1~4문장으로 짧게, 대사는 따옴표로 줄을 바꾼다. 장면 전환은 '* * *'로 표시한다. 설명이나 메모, 인사말은 쓰지 마라."
+    ),
+}
+
+FORMAT_HEADER = {
+    "webtoon": "NORIVA는 한국의 역사, 설화, 민속을 뿌리로 한 세로 스크롤 웹툰을 한국어와 영어로 동시에 연재한다.",
+    "novel": "NORIVA는 한국의 역사, 설화, 민속을 뿌리로 한 웹소설을 한국어로 연재한다. 이 작품은 웹소설이라 컷·말풍선·그림 지시는 쓰지 않는다.",
+}
+
+
+def is_novel(ctx: dict[str, Any]) -> bool:
+    return (ctx.get("series") or {}).get("format") == "novel"
+
+
+def render_guidelines(versions: list[dict[str, Any]], format: str = "webtoon") -> str:
     """전체 < 장르 < 작품 < 회차 순서의 지침 본문들을 시스템 프롬프트 한 덩어리로."""
     parts: list[str] = []
     for v in versions:
@@ -85,8 +122,7 @@ def render_guidelines(versions: list[dict[str, Any]]) -> str:
             lines += ["", "### 예시", body["examples"]]
         parts.append("\n".join(lines))
     header = (
-        "당신은 NORIVA의 제작 에이전트다. NORIVA는 한국의 역사, 설화, 민속을 뿌리로 한 세로 스크롤 웹툰을 "
-        "한국어와 영어로 동시에 연재한다. 아래 지침이 겹치면 뒤에 나온(더 좁은 범위의) 지침을 따른다. "
+        f"당신은 NORIVA의 제작 에이전트다. {FORMAT_HEADER.get(format, FORMAT_HEADER['webtoon'])} 아래 지침이 겹치면 뒤에 나온(더 좁은 범위의) 지침을 따른다. "
         "결과는 대표가 검토하고 직접 고칠 수 있게 마크다운으로만 쓰고, 앞뒤 인사말은 쓰지 마라."
     )
     return header + "\n\n" + "\n\n".join(parts)
@@ -105,10 +141,11 @@ def render_task(stage: str, ctx: dict[str, Any]) -> str:
     brief = s["brief"]
     out = [
         f"# 과제: {STAGE_LABEL[stage]}",
-        TASKS[stage],
+        (NOVEL_TASKS.get(stage) if is_novel(ctx) else None) or TASKS[stage],
         "",
         "## 작품",
         f"- 제목: {s['title']} / {s.get('title_en') or '(영어 제목 미정)'}",
+        f"- 형식: {'웹소설' if s.get('format') == 'novel' else '웹툰'}",
         f"- 장르: {s['genre']}",
         f"- 연령 등급: {brief.get('ageRating', '')}",
         f"- 톤: {brief.get('tone', '')}",
