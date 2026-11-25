@@ -1,3 +1,4 @@
+import { ErrorNotice } from "@/components/error-notice";
 import { asc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { Button, Card, Input, Label, Notice, PageHeader, Select, Textarea } from "@/components/ui";
@@ -37,7 +38,7 @@ export default async function NewSeriesPage({
         title="새 작품 기획"
         sub="장르와 뿌리가 될 소재를 고르면 기획 에이전트가 기획안 3개를 만들어요. 고른 소재가 이야기의 엔진이 돼야 해요 (R-1, R-2)."
       />
-      <Notice>{error}</Notice>
+      <ErrorNotice>{error}</ErrorNotice>
       {pre ? (
         <Notice tone="indigo">
           소재 발굴 후보 &ldquo;{pre.name}&rdquo;의 내용으로 채워 뒀어요. 장르와 메모를 다듬은 뒤 기획안을 만들어 보세요.

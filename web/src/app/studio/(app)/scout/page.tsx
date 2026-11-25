@@ -1,3 +1,4 @@
+import { ErrorNotice } from "@/components/error-notice";
 import Link from "next/link";
 import { desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
@@ -42,7 +43,7 @@ export default async function ScoutPage({
         title="소재 발굴"
         sub="AI가 웹에서 지금의 국내·해외 웹툰 시장을 조사하고, 그 흐름에 맞는 한국 설화·역사·민속 소재를 골라 와요. 대표가 채택한 후보만 소재 라이브러리에 들어가요. 매주 월요일 아침에도 자동으로 한 번 돌아요."
       />
-      <Notice>{error}</Notice>
+      <ErrorNotice>{error}</ErrorNotice>
       {started ? <Notice tone="indigo">조사를 시작했어요. 보통 5~15분 걸려요. 이 화면을 나중에 새로고침하면 결과가 보여요.</Notice> : null}
       {adopted ? (
         <Notice tone="pine">

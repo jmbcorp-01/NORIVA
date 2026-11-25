@@ -1,7 +1,8 @@
+import { ErrorNotice } from "@/components/error-notice";
 import Link from "next/link";
 import { asc } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { Badge, Button, Card, Label, Notice, PageHeader, Select } from "@/components/ui";
+import { Badge, Button, Card, Label, PageHeader, Select } from "@/components/ui";
 import { AGENT_LABEL, GENRES, SCOPE_LABEL } from "@/lib/labels";
 import { createScopedGuideline } from "../../actions";
 
@@ -19,7 +20,7 @@ export default async function GuidelinesPage({ searchParams }: { searchParams: P
         title="지침 관리"
         sub="에이전트마다 따르는 규칙이에요. 전체 < 장르 < 작품 < 회차 순서로 아래 범위가 위를 덮어써요. 저장할 때마다 새 버전이 쌓이고, 모든 결과물에 어느 버전으로 만들었는지 남아요."
       />
-      <Notice>{error}</Notice>
+      <ErrorNotice>{error}</ErrorNotice>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {Object.entries(AGENT_LABEL).map(([agent, label]) => {
           const layers = rows.filter((r) => r.agent === agent);

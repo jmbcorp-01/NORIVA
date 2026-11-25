@@ -1,8 +1,9 @@
+import { ErrorNotice } from "@/components/error-notice";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { Badge, Button, Card, Input, Notice, PageHeader } from "@/components/ui";
+import { Badge, Button, Card, Input, PageHeader } from "@/components/ui";
 import { fillEpisodeMeta, publishEpisodeAction, saveEpisodeInfo, setEpisodeBudget } from "../../../../../actions";
 import { DEFAULT_EPISODE_BUDGET, episodeCost, latestArtifacts } from "@/lib/studio";
 import { EPISODE_STAGES, isApproved, SERIES_STAGES, stageStates, STAGE_INFO, type LatestArtifact, type Stage } from "@/lib/pipeline";
@@ -52,7 +53,7 @@ export default async function EpisodePage({
           </>
         }
       />
-      <Notice>{error}</Notice>
+      <ErrorNotice>{error}</ErrorNotice>
       <div className="mb-6 flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-ink-soft">
         <span className="font-medium text-ink">작품 단계</span>
         {SERIES_STAGES.map((st) => (

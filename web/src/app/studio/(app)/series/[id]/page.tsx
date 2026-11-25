@@ -1,3 +1,4 @@
+import { ErrorNotice } from "@/components/error-notice";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
@@ -88,7 +89,7 @@ export default async function SeriesPage({
           </span>
         }
       />
-      <Notice>{error}</Notice>
+      <ErrorNotice>{error}</ErrorNotice>
       {s.title === "제목 미정" ? (
         <Notice tone="ochre">
           아직 제목이 없어요. 오른쪽 아래 <a href="#settings" className="underline underline-offset-4">연재 설정</a>에서 직접 적거나 &ldquo;승인한 내용으로 AI가 채우기&rdquo;를 눌러 주세요. ③ 인물을 승인하면 AI가 자동으로 한 번 채워요.

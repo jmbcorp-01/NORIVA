@@ -1,3 +1,4 @@
+import { ErrorNotice } from "@/components/error-notice";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -52,7 +53,7 @@ export default async function SourcePage({
           )
         }
       />
-      <Notice>{error}</Notice>
+      <ErrorNotice>{error}</ErrorNotice>
       {saved ? <Notice tone="pine">저장했어요.</Notice> : null}
       {fillBusy ? (
         <Notice tone="indigo">
