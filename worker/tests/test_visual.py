@@ -58,7 +58,16 @@ class FakeModel:
     def json(self, system, task, schema, images=None, effort=None, max_tokens=32000):
         props = schema["properties"]
         self.calls.append((list(props), task, len(images or [])))
-        if "panels" in props:
+        if "panel_fixes" in props:
+            self.story_tasks = getattr(self, "story_tasks", []) + [task]
+            data = {"panel_fixes": [{"index": 2, "problem": "촛불이 앞 컷에서 꺼졌는데 켜져 있음", "description": "Hana stares at salt in the dark, candle out",
+                                     "continuity": "Right after the candle went out; Hana still on the left."}],
+                    "missing_beats": ["장면 1: 하나가 부적을 줍는 장면이 없어요"]} if getattr(self, "with_scenes", False) else {"panel_fixes": [], "missing_beats": []}
+        elif "zoom_defects" in props:
+            self.zooms = getattr(self, "zooms", 0) + 1
+            self.zoom_images = getattr(self, "zoom_images", []) + [len(images or [])]
+            data = {"zoom_defects": [{"code": "AI-06", "severity": "critical", "note": "부적에 가짜 글자"}] if self.zooms == 1 else []}
+        elif "panels" in props:
             data = {
                 "style_prompt": "ink line, muted hanji palette",
                 "characters": [{"id": "hana", "name": "하나", "appearance": "girl, 17, black bob hair, white jeogori"}],
@@ -67,6 +76,12 @@ class FakeModel:
                     {"index": 9, "shot": "close-up", "height": "normal", "gap_before": "none", "description": "Hana stares at salt", "character_ids": ["hana"], "dialogue": [{"speaker": "hana", "text": "이게 왜 안 녹아?"}], "sfx": "사각", "avoid": "torii"},
                 ],
             }
+            if getattr(self, "with_scenes", False):
+                data["scenes"] = [{"id": 1, "place": "shrine back room, jar at center, door on the left", "time_light": "dusk, single candle on the right",
+                                   "layout": "Hana on the left facing right", "outfits": "Hana: gray hoodie, black bomber", "props_state": "salt ring intact"}]
+                for p in data["panels"]:
+                    p["scene"] = 1
+                    p["continuity"] = "Scene opens."
         elif "candidates" in props and "scenes" in props:
             data = {
                 "candidates": [{"name": f"후보{i}", "medium": ["cel", "ink", "bogus"][i - 1], "card": f"카드 {i}", "style_prompt": f"style {i}"} for i in range(1, 4)],
@@ -144,8 +159,12 @@ class FakeModel:
             data = {"defects": [{"code": "K-1", "severity": "minor", "note": "작은 차이"}] if ok else [{"code": "GA-3", "severity": "critical", "note": "일본도"}]}
         elif "people_count" in props:
             self.checks += 1
-            ok = self.checks % 2 == 0
+            self.check_images = getattr(self, "check_images", []) + [len(images or [])]
+            ok = self.checks % 2 == 0 or getattr(self, "always_pass", False)
             data = {"score": 88 if ok else 60, "people_count": 1, "defects": [] if ok else [{"code": "AI-03", "severity": "major", "note": "과한 광택"}]}
+            if getattr(self, "regions", False):
+                data["regions"] = [{"kind": "text", "character_id": "", "x": 10, "y": 10, "w": 30, "h": 30},
+                                   {"kind": "face", "character_id": "hana", "x": 40, "y": 20, "w": 20, "h": 20}]
         elif "glossary" in props:
             data = {"lines": [{"id": "1-0", "en": "That night, the salt would not melt.", "note": ""}, {"id": "2-0", "en": "Why won't this melt?", "note": ""}], "sfx": [{"panel": 2, "en": "skritch"}], "glossary": []}
         elif "bubbles" in props:
@@ -275,7 +294,9 @@ def test_art_lettering_review_flow(store, tmp_path):
     assert rev["auto_checks"]["banned_terms"][0]["panel"] == 2
     assert "합격 (91/100)" in rev["markdown"]
     review_call = [x for x in model.calls if "items" in x[0]][-1]
-    assert review_call[2] == 2 and "첨부 그림은 순서대로 1컷, 2컷" in review_call[1]  # 검수가 컷 그림을 직접 봄
+    # 검수가 모든 컷을 번호 붙인 모음 한 장으로 직접 봄
+    assert review_call[2] == 1 and "1~2컷, 모두 2컷" in review_call[1]
+    assert rev["score_runs"] == [91, 91]  # 두 번 채점해 흔들림을 확인 (차이가 작아 세 번째는 없음)
 
 
 def test_review_fails_on_low_ai_score(store, tmp_path):
@@ -794,6 +815,7 @@ def test_art_resumes_after_interruption(store, tmp_path):
     a = c.execute("select status, body from artifacts where id=%s", (aid,)).fetchone()
     assert a["status"] == "pending_review", a["body"]
     assert sum(1 for props, _, _ in model.calls if "style_prompt" in props) == plans  # 컷 목록을 새로 짜지 않아요
+    assert len(model.story_tasks) == 1  # 이야기 연결 검사도 다시 하지 않아요
     assert len(second.prompts) == len(a["body"]["panels"]) - 1  # 끝난 1컷은 다시 그리지 않아요
     assert all(p.get("image") for p in a["body"]["panels"])
     # 첫 시도에서 쓴 그림 값도 비용에 남아요
@@ -901,3 +923,134 @@ def test_same_critical_stops_redraws_and_attire_override_prompt():
     p = _panel_prompt("st", {"shot": "wide", "description": "d"}, cast, cast, "", 1, "BASE.", parts)
     assert "Reference image 3 is the approved, period-accurate costume of 수로" in p
     assert "Where the design sheet differs from this reference, follow this reference." in p
+
+
+def _noisy(seed, size=(200, 260), band=None, tint=(0, 0, 0)):
+    """무늬가 있는 그림. band=(위치 비율, 두께 비율)이면 가운데를 가로지르는 흰 띠를 그려요."""
+    import random
+
+    rnd = random.Random(seed)
+    img = Image.new("RGB", size)
+    px = img.load()
+    for x in range(size[0]):
+        for y in range(size[1]):
+            v = rnd.randint(30, 220)
+            px[x, y] = (min(255, v + tint[0]), min(255, v + tint[1]), min(255, v + tint[2]))
+    if band:
+        y0, t = int(size[1] * band[0]), max(2, int(size[1] * band[1]))
+        img.paste(Image.new("RGB", (size[0], t), (255, 255, 255)), (0, y0))
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
+
+
+def test_comic_page_band_is_found_only_inside_the_picture():
+    from noriva_worker.images import comic_page_bands
+
+    assert comic_page_bands(_noisy(1, band=(0.5, 0.03)))  # 가운데 흰 띠: 한 장에 컷 두 개
+    assert not comic_page_bands(_noisy(2))  # 띠 없음
+    assert not comic_page_bands(png((10, 10, 10), size=(200, 260)))  # 거의 검은 컷(불이 꺼진 연출)은 결함이 아님
+
+
+def test_match_colors_only_nudges_small_drift():
+    from noriva_worker.images import color_distance, match_colors
+
+    anchor = _noisy(3)
+    near = _noisy(4, tint=(25, 10, 0))
+    far = png((250, 30, 30), size=(200, 260))
+    d0 = color_distance(near, anchor)
+    out = match_colors(near, anchor, 0.5)
+    assert out is not None and color_distance(out, anchor) < d0  # 앞 컷 쪽으로 끌려와요
+    assert match_colors(far, anchor, 0.5) is None  # 큰 차이는 연출일 수 있어 그대로 둬요
+    assert match_colors(anchor, anchor, 0.5) is None  # 같으면 손대지 않아요
+
+
+def test_story_check_and_scene_refs_chain_panels(store, tmp_path):
+    """그리기 전 이야기 연결 검사가 컷 지시를 고치고, 같은 장면의 앞 컷(합격 그림)이 다음 컷의 참고 그림이 돼요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.with_scenes = True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=2, parallel=2, test_panels=0, color_match=0))
+    inputs = [
+        _approved(c, sid, eid, "storyboard", {"markdown": "| 1 | 원경 | 마을 |"}),
+        _approved(c, sid, None, "style", {"markdown": "먹선, 한지색"}),
+    ]
+    _, art = _run(store, tools, sid, eid, "art", inputs)
+
+    # 이야기 연결 검사: 고친 컷과 빠진 사건이 결과에 남아요
+    assert len(model.story_tasks) == 1 and "shrine back room" in model.story_tasks[0]
+    assert art["story_check"]["fixed"][0]["index"] == 2 and art["story_check"]["missing_beats"]
+    assert art["scenes"][0]["place"].startswith("shrine back room")
+    p1, p2 = art["panels"]
+    assert p2["description"].endswith("candle out")
+    # 1컷은 장면 첫 컷이라 앞 컷 참고가 없고, 2컷은 1컷(합격)을 참고로 받아요
+    prompts = [p for p, _ in images.prompts if "One single webtoon panel" in p]
+    assert all("Scene continuity (identical in every panel of this scene): Place: shrine back room" in p for p in prompts)
+    assert not p1["scene_ref"] and p2["scene_ref"]
+    assert "previous panel of this same scene" not in prompts[0] and "previous panel of this same scene" in prompts[-1]
+    assert "Continuing from the previous panel: Right after the candle went out" in prompts[-1]
+    assert model.check_images[-1] == 3  # 2컷 검사: 컷 + 하나 시트 + 앞 컷 (K-2 연속성 비교)
+    assert any("K-2" in t for props, t, _ in model.calls if "people_count" in props)
+
+
+def test_failed_panel_is_not_used_as_scene_reference(store, tmp_path):
+    """떨어진 그림은 다음 컷의 참고로 넘기지 않아요 (CLAUDE.md 1-5)."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.with_scenes = True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=1, parallel=1, test_panels=0, color_match=0))
+    inputs = [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})]
+    _, art = _run(store, tools, sid, eid, "art", inputs)
+    # 후보 1장씩: 1컷은 첫 검사에서 떨어지고, 2컷은 합격
+    assert not art["panels"][0]["passed"]
+    assert not art["panels"][1]["scene_ref"]
+
+
+def test_zoom_check_catches_text_the_small_check_missed(store, tmp_path):
+    """줄인 그림으로는 합격이어도, 원본에서 잘라 본 확대 검사가 가짜 글자를 찾으면 다시 그려요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.always_pass, model.regions = True, True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=2, parallel=1, test_panels=0))
+    _, art = _run(store, tools, sid, eid, "art", [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})])
+    p1 = art["panels"][0]
+    # 1컷 첫 후보: 확대 검사에서 치명(가짜 글자) → 둘째 후보 합격
+    assert p1["passed"] and len(p1["candidates"]) == 2
+    assert model.zooms == 3  # 1컷 후보 2장 + 2컷 1장
+    assert model.zoom_images[0] == 2  # 글자 자리 + 얼굴 자리 (1컷은 인물 시트가 없어요)
+    assert model.zoom_images[-1] == 3  # 2컷: 잘라 낸 두 곳 + 하나 시트
+
+
+def test_review_rescored_when_runs_disagree():
+    from noriva_worker.visual import run_review
+
+    model = FakeModel()
+    orig = model.json
+    totals = iter([0, -10, 0])
+
+    def shaky(system, task, schema, images=None, effort=None, max_tokens=32000):
+        r = orig(system, task, schema, images, effort, max_tokens)
+        if "items" in schema["properties"]:
+            d = next(totals)
+            for it in r.data["items"]:
+                if it["code"] == "Q-5":
+                    it["score"] += d // 2
+                if it["code"] == "Q-3":
+                    it["score"] += d // 2
+        return r
+
+    model.json = shaky
+    ctx = {"guidelines": [], "instruction": "",
+           "input_bodies": {"lettering": {"kind": "lettered", "panels": [{"index": 1, "height": "normal", "description": "", "score": 90, "defects": [], "bubbles": []}]}}}
+    body, costs = run_review(ctx, model, ArtSettings())
+    assert body["score_runs"] == [91, 81, 91] and body["total"] == 91  # 세 번째 채점 후 가운데 값
+    assert len(costs) == 3
