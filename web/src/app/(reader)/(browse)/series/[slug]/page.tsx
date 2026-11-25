@@ -81,7 +81,8 @@ export default async function SeriesPage({ params, searchParams }: { params: Pro
             <h1 className="mt-1 font-serif text-[30px] font-semibold leading-tight md:text-[36px]">{s.title}</h1>
             {s.altTitle ? <p className="mt-0.5 text-[13px] text-ink-faint">{s.altTitle}</p> : null}
             <p className="mt-1.5 text-[13px] text-ink-soft">
-              {t.byStudio} · {t.saves(saves)}
+              {t.byStudio}
+              {saves ? ` · ${t.saves(saves)}` : ""}
             </p>
             {s.logline ? <p className="mt-3 text-[14.5px] leading-relaxed text-ink-soft">{s.logline}</p> : null}
             {s.roots.length ? (

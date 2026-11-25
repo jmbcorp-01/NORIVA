@@ -172,7 +172,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                   {a ? (
                     <details className="mt-3 text-[11px] text-ink-faint">
                       <summary className="cursor-pointer">
-                        {formatDate(a.updatedAt)} · 지침 {a.guidelineVersionIds.length}개 버전 적용 (눌러서 보기) · 입력 지문 {a.inputHash || "없음"}
+                        {formatDate(a.updatedAt)} · {a.guidelineVersionIds.length ? `지침 ${a.guidelineVersionIds.length}개로 만들었어요 (눌러서 보기)` : "기본 지침으로 만들었어요"}
                       </summary>
                       <AppliedGuidelines ids={a.guidelineVersionIds} applied={applied} />
                     </details>

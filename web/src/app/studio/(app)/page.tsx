@@ -7,6 +7,7 @@ import { artifactHref } from "@/lib/links";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { JobProgressBar } from "@/components/job-progress";
 import { jobLabel, runningJobRows, typicalSeconds } from "@/lib/progress";
+import { funnel } from "@/lib/reader-funnel";
 
 export default async function Dashboard() {
   const { series, episodes, artifacts, jobs, costLedger } = schema;
@@ -90,11 +91,27 @@ export default async function Dashboard() {
     { label: "이번 달 제작비", value: `$${Number(cost.usd).toFixed(2)}` },
   ];
 
+  // 독자 흐름: 최근 공개 회차 5개의 완독률과 가장 많이 떠난 컷 (콘티 지침을 고칠 근거)
+  const recentEps = await db
+    .select({ id: episodes.id, number: episodes.number, title: series.title })
+    .from(episodes)
+    .innerJoin(series, eq(series.id, episodes.seriesId))
+    .where(and(eq(episodes.status, "published"), eq(series.isDummy, false)))
+    .orderBy(desc(episodes.publishAt))
+    .limit(5);
+  const progressRows = recentEps.length
+    ? await db
+        .select({ episodeId: schema.readingProgress.episodeId, maxPanel: schema.readingProgress.maxPanel, panelCount: schema.readingProgress.panelCount })
+        .from(schema.readingProgress)
+        .where(inArray(schema.readingProgress.episodeId, recentEps.map((e) => e.id)))
+    : [];
+  const funnels = recentEps.map((e) => ({ ...e, f: funnel(progressRows.filter((r) => r.episodeId === e.id)) }));
+
   return (
     <>
       <PageHeader
         title="대시보드"
-        sub="오늘 승인할 것과 돌고 있는 작업이에요. 매출과 독자 지표는 독자 앱이 열리면 여기에 더해져요."
+        sub="오늘 승인할 것, 돌고 있는 작업, 최근 회차를 독자가 어디까지 읽었는지 보여 줘요."
         actions={
           <LinkButton href="/studio/series/new" variant="seal">
             새 작품 기획
@@ -261,6 +278,31 @@ export default async function Dashboard() {
             ))}
           </ul>
         </Card>
+      )}
+
+      <h2 className="mb-3 mt-9 text-[14px] font-semibold">최근 회차 독자 흐름</h2>
+      {funnels.some((x) => x.f.readers) ? (
+        <Card>
+          <ul className="divide-y divide-line text-[13px]">
+            {funnels.map((x) => (
+              <li key={x.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3">
+                <span className="font-medium">
+                  {x.title} {x.number}화
+                </span>
+                <span className="text-ink-soft">읽은 사람 {x.f.readers}명</span>
+                <span className={x.f.completion >= 70 ? "text-pine" : "text-plum"}>끝까지 {x.f.completion}%</span>
+                {x.f.topDrop ? (
+                  <span className="text-ink-soft">
+                    가장 많이 떠난 곳 {x.f.topDrop.panel}컷 ({x.f.topDrop.readers}명)
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          <p className="border-t border-line px-4 py-2 text-[12px] text-ink-faint">목표: 끝까지 70% 이상. 많이 떠난 컷 앞뒤의 콘티 호흡을 다음 회차에서 고쳐요.</p>
+        </Card>
+      ) : (
+        <Empty>공개한 회차를 읽은 독자가 생기면 회차별로 끝까지 읽은 비율과 가장 많이 떠난 컷을 보여 줘요.</Empty>
       )}
     </>
   );

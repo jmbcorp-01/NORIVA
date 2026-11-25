@@ -11,7 +11,8 @@ import { panelSrc } from "@/lib/panel-media";
 import { getEpisode, reactions, recordView } from "@/lib/reader";
 import { canRead } from "@/lib/commerce";
 import { currentReader } from "@/lib/reader-auth";
-import { reactAction } from "@/app/reader-actions";
+import { reactAction, toggleBookmark } from "@/app/reader-actions";
+import { isBookmarked } from "@/lib/library";
 import { ViewerChrome } from "@/components/reader/viewer-chrome";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +46,7 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
   if (!gate.ok) redirect(`/series/${s.slug}?open=${episode.number}`);
   await recordView(s.id, episode.id, reader?.id ?? null);
   const react = await reactions(episode.id, reader?.id ?? null);
+  const saved = !next && reader ? await isBookmarked(reader.id, s.id) : false;
   const nav = "flex h-12 flex-1 items-center justify-center rounded-[6px] border border-line bg-paper-raised text-[14px]";
 
   return (
@@ -68,7 +70,10 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
           <nav aria-label={t.list} className="mx-auto flex h-14 max-w-[720px] items-center justify-between px-4 text-[13.5px] text-ink-soft">
             {prev ? <Link href={`/series/${s.slug}/${prev}`}>‹ {t.prev}</Link> : <span className="opacity-40">‹ {t.prev}</span>}
             <a href="#react" className="flex gap-4">
-              <span>{t.fun} {react.fun.toLocaleString()}</span>
+              <span>
+                {t.fun}
+                {react.fun ? ` ${react.fun.toLocaleString()}` : ""}
+              </span>
             </a>
             {next ? (
               <Link href={`/series/${s.slug}/${next}`} className="font-bold text-ink">
@@ -92,6 +97,20 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
           <div className="px-4 pb-28 pt-14 text-center">
             {s.sale.isDummy ? <p className="mx-auto mb-6 max-w-[420px] rounded-[6px] bg-plum-soft px-3 py-2.5 text-[13px] text-plum">{t.sampleNote}</p> : null}
             <p className="font-serif text-[16px] text-ink-soft">{next ? t.endOfEpisode : t.nextComing}</p>
+            {!next ? (
+              <form action={toggleBookmark} className="mt-3">
+                <input type="hidden" name="seriesId" value={s.id} />
+                <input type="hidden" name="back" value={`/series/${s.slug}/${episode.number}`} />
+                <p className="text-[13px] text-ink-soft">{t.followForNext}</p>
+                <button
+                  type="submit"
+                  aria-pressed={saved}
+                  className={`mt-2 h-11 min-w-[180px] rounded-full border px-4 text-[14px] font-semibold ${saved ? "border-seal text-seal" : "border-ink bg-ink text-paper"}`}
+                >
+                  {saved ? t.bookmarked : t.bookmark}
+                </button>
+              </form>
+            ) : null}
             <section id="react" aria-label={t.howWas} className="mt-6">
               <p className="text-[13px] text-ink-faint">{t.howWas}</p>
               <div className="mt-3 flex justify-center gap-2">
@@ -105,7 +124,8 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
                       aria-pressed={react.mine === k}
                       className={`h-11 min-w-[128px] rounded-full border px-4 text-[14px] font-semibold ${react.mine === k ? "border-ink bg-ink text-paper" : "border-line-strong bg-paper-raised text-ink"}`}
                     >
-                      {k === "fun" ? t.fun : t.meh} {react[k].toLocaleString()}
+                      {k === "fun" ? t.fun : t.meh}
+                      {react[k] ? ` ${react[k].toLocaleString()}` : ""}
                     </button>
                   </form>
                 ))}

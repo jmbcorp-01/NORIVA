@@ -10,7 +10,7 @@
   --paper-sunk: #eee8dc; /* 눌린 면 */
   --ink: #24221f; /* 먹 */
   --ink-soft: #5c574f; /* 묽은 먹 */
-  --ink-faint: #8c867b; /* 흐린 먹 */
+  --ink-faint: #6b665c; /* 흐린 먹 (한지 바탕 대비 4.5:1 이상, 작은 글자 기준) */
   --line: #ddd5c6; /* 닥종이 결 */
   --line-strong: #c9bfac;
   --seal: #8e3a2f; /* 낙관 빨강: 로고와 가장 중요한 동작 하나에만 */
@@ -32,7 +32,7 @@
     --paper-sunk: #151412;
     --ink: #ece6da;
     --ink-soft: #b8b0a2;
-    --ink-faint: #8a8377;
+    --ink-faint: #969082;
     --line: #36332e;
     --line-strong: #4a463f;
     --seal: #c0594a;
@@ -54,7 +54,7 @@
   --paper-sunk: #151412;
   --ink: #ece6da;
   --ink-soft: #b8b0a2;
-  --ink-faint: #8a8377;
+  --ink-faint: #969082;
   --line: #36332e;
   --line-strong: #4a463f;
   --seal: #c0594a;
