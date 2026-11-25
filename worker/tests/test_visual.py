@@ -63,6 +63,11 @@ class FakeModel:
             data = {"panel_fixes": [{"index": 2, "problem": "촛불이 앞 컷에서 꺼졌는데 켜져 있음", "description": "Hana stares at salt in the dark, candle out",
                                      "continuity": "Right after the candle went out; Hana still on the left."}],
                     "missing_beats": ["장면 1: 하나가 부적을 줍는 장면이 없어요"]} if getattr(self, "with_scenes", False) else {"panel_fixes": [], "missing_beats": []}
+        elif "style_match" in props:
+            self.match_calls = getattr(self, "match_calls", []) + [(task, len(images or []))]
+            low = getattr(self, "low_match", False) and len(self.match_calls) == 1
+            data = {"style_match": 55 if low else 90,
+                    "differences": [{"aspect": "선 굵기", "fix": "Use thick dark outlines with strong thick-thin variation."}] if low else []}
         elif "zoom_defects" in props:
             self.zooms = getattr(self, "zooms", 0) + 1
             self.zoom_images = getattr(self, "zoom_images", []) + [len(images or [])]
@@ -1079,3 +1084,37 @@ def test_storyboard_self_check_always_checks_script_coverage():
     assert "SB-1" in w.json_tasks[0] and "이게 왜 안 녹아?" in w.json_tasks[0]  # 대본과 대조해요
     assert body["checks"]["revised"] and body["markdown"] == "콘티 2"  # minor로 와도 major로 보고 고쳐 써요
     assert "3장면 대사 빠짐" in w.tasks[1]
+
+
+def test_owner_drawings_are_followed_by_style_sheets_and_art(store, tmp_path):
+    """대표가 직접 그린 그림은 그림 모델이 직접 보고 따라 그리고, 화풍이 다르면 차이를 고쳐 한 번 더 그려요.
+    남의 웹툰 캡처는 지금처럼 그림 모델에 보내지 않아요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    media.put("_private/own/a.png", png((10, 20, 30)))
+    media.put("_private/refs/b.png", png())
+    c.execute("update series set brief = %s where id = %s", (Jsonb({"ownArt": ["own/a.png"], "styleRefs": ["refs/b.png"]}), sid))
+    model, images = FakeModel(), FakeImages()
+    model.low_match = True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=0))
+    concept = _approved(c, sid, None, "concept", {"markdown": "기획"})
+    style_id, style = _run(store, tools, sid, None, "style", [concept])
+
+    assert style["own_art"] == 1
+    # 모든 샘플이 대표 그림 1장을 참고로 받고(캡처는 보내지 않음), 대표 그림을 따르라는 지시가 들어가요
+    assert all(n == 1 and "creator's own artwork" in p for p, n in images.prompts)
+    plan_task = next(t for props, t, _ in model.calls if "candidates" in props)
+    assert "대표가 직접 그린 그림이 있다" in plan_task
+    # 대표 그림이 있으면 세 후보 모두 화풍 일치 검사를 받아요. 첫 검사(55점)는 차이를 고쳐 다시 그려요
+    assert len(model.match_calls) >= 9 and model.match_calls[0][1] == 3  # 샘플 + 대표 그림 + 캡처
+    assert sum("Match the reference style more closely: Use thick dark outlines" in p for p, _ in images.prompts) == 1
+    assert all(m == 90 for cd in style["candidates"] for m in cd["sample_match"])
+
+    # 작화: 대표 그림이 화풍 기준 그림으로 마스터 앞에 들어가요
+    masters = [style["candidates"][0]["samples"][0]]
+    c.execute("update artifacts set body = body || %s, status='approved' where id=%s", (Jsonb({"chosen": 0, "style_masters": masters}), style_id))
+    images.prompts.clear()
+    _, art = _run(store, tools, sid, eid, "art", [_approved(c, sid, eid, "storyboard", {"markdown": "| 1 |"}), style_id])
+    assert images.prompts[0][1] == 2  # 인물 시트: 대표 그림 + 마스터
+    assert images.prompts[1][1] == 2 and "Reference image(s) 1-2" in images.prompts[1][0]  # 인물 없는 1컷: 대표 그림 + 마스터
