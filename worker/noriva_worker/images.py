@@ -232,3 +232,264 @@ def thumbnail(data: bytes, max_side: int = 1024) -> bytes:
     out = io.BytesIO()
     img.save(out, "JPEG", quality=88)
     return out.getvalue()
+
+
+# ── 기계 검사와 후처리 (그림 모델·Claude를 부르지 않아 돈이 들지 않아요) ─────────────
+
+
+def crop_region(data: bytes, x: float, y: float, w: float, h: float, pad: float = 0.15, max_side: int = 768) -> bytes | None:
+    """퍼센트 좌표(0~100)의 영역을 원본 크기에서 조금 넉넉히 잘라요. 확대 검사에 써요."""
+    from PIL import Image
+
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception:
+        return None
+    W, H = img.size
+    try:
+        x, y, w, h = (max(0.0, min(100.0, float(v))) for v in (x, y, w, h))
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    px, py = w * pad, h * pad
+    box = (
+        int(W * max(0.0, x - px) / 100),
+        int(H * max(0.0, y - py) / 100),
+        int(W * min(100.0, x + w + px) / 100),
+        int(H * min(100.0, y + h + py) / 100),
+    )
+    if box[2] - box[0] < 8 or box[3] - box[1] < 8:
+        return None
+    part = img.crop(box)
+    part.thumbnail((max_side, max_side))
+    out = io.BytesIO()
+    part.save(out, "JPEG", quality=92)
+    return out.getvalue()
+
+
+def _row_stats(img, axis: int) -> list[tuple[float, float]]:
+    """줄(axis=0: 가로줄, 1: 세로줄)마다 (밝기 평균, 표준편차)."""
+    px = img.load()
+    w, h = img.size
+    out = []
+    n_outer, n_inner = (h, w) if axis == 0 else (w, h)
+    for i in range(n_outer):
+        vals = [px[j, i] if axis == 0 else px[i, j] for j in range(n_inner)]
+        m = sum(vals) / n_inner
+        var = sum((v - m) ** 2 for v in vals) / n_inner
+        out.append((m, var ** 0.5))
+    return out
+
+
+def comic_page_bands(data: bytes) -> list[str]:
+    """그림 한가운데를 가로지르는 단색 띠(만화책 칸 사이 여백)를 찾아요. 한 장에 여러 컷이 들어간 그림이에요 (치명 결함).
+
+    가장자리 띠는 trim_border가 이미 잘라요. 띠 위아래(또는 좌우)에 모두 그림이 충분히 있을 때만 칸 나눔으로 봐요."""
+    from PIL import Image
+
+    try:
+        img = Image.open(io.BytesIO(data)).convert("L")
+    except Exception:
+        return []
+    img.thumbnail((256, 256))
+    found: list[str] = []
+    for axis, label in ((0, "가로"), (1, "세로")):
+        stats = _row_stats(img, axis)
+        n = len(stats)
+        if n < 40:
+            continue
+        flat = [s < 4 and (m > 232 or m < 18) for m, s in stats]
+        busy = [s > 18 for _, s in stats]
+        i = int(n * 0.12)
+        while i < int(n * 0.88):
+            if flat[i]:
+                j = i
+                while j < n and flat[j]:
+                    j += 1
+                thick = j - i
+                before = sum(busy[:i]) / max(1, i)
+                after = sum(busy[j:]) / max(1, n - j)
+                if 1 <= thick <= n * 0.06 and before > 0.5 and after > 0.5 and i > n * 0.15 and j < n * 0.85:
+                    color = "흰" if stats[i][0] > 128 else "검은"
+                    found.append(f"그림 {int(100 * i / n)}% 위치에 {label}로 가로지르는 {color} 띠가 있어 한 장에 컷이 여러 개처럼 보여요")
+                    break
+                i = j
+            else:
+                i += 1
+    return found
+
+
+def color_stats(data: bytes) -> tuple[float, float, float] | None:
+    """그림 전체의 평균 색(LAB). 장면 안에서 색이 따로 노는지(AI-10) 비교할 때 써요."""
+    from PIL import Image
+
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception:
+        return None
+    img.thumbnail((128, 128))
+    lab = img.convert("LAB")
+    bands = lab.split()
+    out = []
+    for b in bands:
+        hist = b.histogram()
+        total = sum(hist) or 1
+        out.append(sum(i * c for i, c in enumerate(hist)) / total)
+    return (out[0], out[1], out[2])
+
+
+def color_distance(a: bytes, b: bytes) -> float | None:
+    sa, sb = color_stats(a), color_stats(b)
+    if not sa or not sb:
+        return None
+    # PIL의 LAB은 0~255 범위라 L은 100/255로 맞춰요
+    dl = (sa[0] - sb[0]) * 100 / 255
+    return round((dl ** 2 + (sa[1] - sb[1]) ** 2 + (sa[2] - sb[2]) ** 2) ** 0.5, 1)
+
+
+COLOR_MATCH_MIN = 6.0  # 이보다 작은 차이는 손대지 않아요
+COLOR_MATCH_MAX = 22.0  # 이보다 큰 차이는 연출(불이 꺼짐, 회상)일 수 있어 손대지 않아요
+
+
+def match_colors(data: bytes, anchor: bytes, strength: float = 0.5) -> bytes | None:
+    """같은 장면 앞 컷의 색 분위기로 살짝 끌어당겨요 (04번 5.2 팔레트 맞춤).
+
+    차이가 작으면 할 필요가 없고, 너무 크면 의도한 빛 변화일 수 있어 그대로 둬요. 바꾼 그림을 돌려주거나, 바꾸지 않으면 None."""
+    from PIL import Image
+
+    d = color_distance(data, anchor)
+    if d is None or d < COLOR_MATCH_MIN or d > COLOR_MATCH_MAX or strength <= 0:
+        return None
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        ref = Image.open(io.BytesIO(anchor)).convert("RGB")
+    except Exception:
+        return None
+
+    def mean_std(im):
+        small = im.copy()
+        small.thumbnail((256, 256))
+        res = []
+        for band in small.convert("LAB").split():
+            hist = band.histogram()
+            total = sum(hist) or 1
+            m = sum(i * c for i, c in enumerate(hist)) / total
+            v = sum(((i - m) ** 2) * c for i, c in enumerate(hist)) / total
+            res.append((m, max(v ** 0.5, 1.0)))
+        return res
+
+    src_s, ref_s = mean_std(img), mean_std(ref)
+    lab = img.convert("LAB")
+    out_bands = []
+    for band, (ms, ss), (mr, sr) in zip(lab.split(), src_s, ref_s):
+        scale = 1 + strength * (sr / ss - 1)
+        shift_to = ms + strength * (mr - ms)
+        lut = [max(0, min(255, int(round((i - ms) * scale + shift_to)))) for i in range(256)]
+        out_bands.append(band.point(lut))
+    merged = Image.merge("LAB", out_bands).convert("RGB")
+    out = io.BytesIO()
+    merged.save(out, "PNG")
+    return out.getvalue()
+
+
+def contact_sheet(items: list[tuple[int, bytes]], cols: int = 3, cell: int = 340) -> bytes:
+    """컷 여러 장을 번호를 붙여 한 장으로 묶어요. 검수가 회차의 모든 컷을 적은 비용으로 보게 해요."""
+    from PIL import Image, ImageDraw
+
+    cells = []
+    for idx, data in items:
+        try:
+            im = Image.open(io.BytesIO(data)).convert("RGB")
+        except Exception:
+            im = Image.new("RGB", (cell, cell), (200, 200, 200))
+        im.thumbnail((cell, int(cell * 1.6)))
+        cells.append((idx, im))
+    rows = -(-len(cells) // cols) if cells else 1
+    row_h = [max((im.size[1] for _, im in cells[r * cols:(r + 1) * cols]), default=cell) for r in range(rows)]
+    sheet = Image.new("RGB", (cols * (cell + 8) + 8, sum(h + 8 for h in row_h) + 8), (255, 255, 255))
+    draw = ImageDraw.Draw(sheet)
+    y = 8
+    for r in range(rows):
+        x = 8
+        for idx, im in cells[r * cols:(r + 1) * cols]:
+            sheet.paste(im, (x, y))
+            draw.rectangle((x, y, x + 34, y + 18), fill=(0, 0, 0))
+            draw.text((x + 4, y + 4), str(idx), fill=(255, 255, 255))
+            x += cell + 8
+        y += row_h[r] + 8
+    out = io.BytesIO()
+    sheet.save(out, "JPEG", quality=85)
+    return out.getvalue()
+
+
+# ── 이어지는 긴 세로 컷 (콘티에서 정한 묶음) ─────────────────────────────────
+
+JOIN_BAND = 0.25  # 새 그림 위쪽 이만큼을 앞 컷 아래 끝으로 채워 넘겨요. 뷰어에서 이 부분이 앞 컷에 겹쳐요
+SEAM_MAX_DRIFT = 26.0  # 이어받은 띠가 앞 컷과 이보다 많이 달라지면 이음새가 보여요 (회색 0~255 평균 차이)
+
+
+def _aspect_wh(aspect: str) -> tuple[int, int]:
+    try:
+        a, b = (int(x) for x in aspect.split(":"))
+        return (a, b) if a > 0 and b > 0 else (3, 4)
+    except Exception:
+        return (3, 4)
+
+
+def continue_canvas(prev: bytes, aspect: str, band: float = JOIN_BAND, width: int = 1024) -> tuple[bytes, float, float] | None:
+    """앞 컷 아래 끝을 위쪽에 붙이고 나머지는 흰 바탕인 그림판을 만들어요. 그림 모델이 이 아래로 이어 그려요.
+
+    돌려주는 값: (그림판 PNG, 새 그림 높이 대비 겹치는 비율, 앞 컷 높이 대비 겹치는 비율). 앞 컷을 못 읽으면 None."""
+    from PIL import Image
+
+    try:
+        src = Image.open(io.BytesIO(prev)).convert("RGB")
+    except Exception:
+        return None
+    aw, ah = _aspect_wh(aspect)
+    w = width
+    h = int(round(w * ah / aw))
+    sw, sh = src.size
+    scaled = src.resize((w, max(1, int(round(sh * w / sw)))))
+    bh = min(int(h * band), scaled.size[1])
+    if bh < 8:
+        return None
+    canvas = Image.new("RGB", (w, h), (255, 255, 255))
+    canvas.paste(scaled.crop((0, scaled.size[1] - bh, w, scaled.size[1])), (0, 0))
+    out = io.BytesIO()
+    canvas.save(out, "PNG")
+    return out.getvalue(), bh / h, bh / scaled.size[1]
+
+
+def seam_check(result: bytes, canvas: bytes, overlap: float) -> list[str]:
+    """이어 그린 그림이 앞 컷 아래 끝을 그대로 이어받았는지, 아래를 비워 두지 않았는지 계산으로 봐요 (돈이 들지 않아요)."""
+    from PIL import Image, ImageChops, ImageStat
+
+    try:
+        a = Image.open(io.BytesIO(result)).convert("L")
+        b = Image.open(io.BytesIO(canvas)).convert("L")
+    except Exception:
+        return []
+    a = a.resize(b.size)
+    w, h = b.size
+    bh = max(1, int(h * overlap))
+    out = []
+    drift = ImageStat.Stat(ImageChops.difference(a.crop((0, 0, w, bh)), b.crop((0, 0, w, bh)))).mean[0]
+    if drift > SEAM_MAX_DRIFT:
+        out.append(f"위쪽 이어받은 부분이 앞 컷과 달라 이음새가 보여요 (차이 {drift:.0f})")
+    rest = ImageStat.Stat(a.crop((0, bh, w, h)))
+    if rest.stddev[0] < 4 and rest.mean[0] > 235:
+        out.append("이어 그릴 아래쪽이 비어 있어요")
+    return out
+
+
+def hw_ratio(data: bytes) -> float | None:
+    """그림의 세로/가로 비율."""
+    from PIL import Image
+
+    try:
+        w, h = Image.open(io.BytesIO(data)).size
+    except Exception:
+        return None
+    return h / w if w else None

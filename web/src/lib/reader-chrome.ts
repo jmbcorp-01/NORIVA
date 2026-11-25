@@ -1,5 +1,5 @@
 import "server-only";
-import { and, count, eq, isNull } from "drizzle-orm";
+import { and, count, eq, isNull, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { wallet } from "./commerce";
 import type { Reader } from "./reader-auth";
@@ -12,7 +12,7 @@ export async function chromeData(reader: Reader | null) {
     db
       .select({ n: count() })
       .from(schema.notifications)
-      .where(and(eq(schema.notifications.readerId, reader.id), isNull(schema.notifications.readAt))),
+      .where(and(eq(schema.notifications.readerId, reader.id), isNull(schema.notifications.readAt), lte(schema.notifications.createdAt, new Date()))),
   ]);
   return { coins: w.total, unread: n.n };
 }

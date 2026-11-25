@@ -3,6 +3,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Locale } from "./publish";
 import { listSeries, type ReaderSeries } from "./reader";
+import { sortFreshFirst } from "./reader-picks";
 
 const { bookmarks, readingProgress, episodes, series } = schema;
 
@@ -19,7 +20,8 @@ export async function bookmarkedSeries(readerId: string, locale: Locale): Promis
   if (rows.length === 0) return [];
   const all = await listSeries(locale);
   const byId = new Map(all.map((s) => [s.id, s]));
-  return rows.map((r) => byId.get(r.id)).filter((s): s is ReaderSeries => Boolean(s));
+  const list = rows.map((r) => byId.get(r.id)).filter((s): s is ReaderSeries => Boolean(s));
+  return sortFreshFirst(list);
 }
 
 export type ContinueItem = { series: ReaderSeries; lastEpisode: number; nextEpisode: number | null; finishedLast: boolean };

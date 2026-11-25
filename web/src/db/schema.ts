@@ -117,6 +117,8 @@ export type SeriesBrief = {
   imageModel?: string;
   /** 대표가 올린 참고 웹툰 캡처 (비공개 저장소 키). ④ 화풍에서 기준 값 분석에만 써요 */
   styleRefs?: string[];
+  /** 대표가 직접 그렸거나 권리를 가진 그림 (비공개 저장소 키, 3장까지). 그림 모델이 직접 보고 따라 그려요 */
+  ownArt?: string[];
   /** ④+ 인물 시트를 그릴 때 참조로 넣는 고증 참고 그림 (비공개 보관, S3 키). 유물·복식 사진 등 */
   historyRefs?: string[];
   /** 회차 하나에 쓸 수 있는 제작비 상한 (달러). 넘으면 그 회차의 새 작업을 시작하지 않아요. 없으면 40 */
@@ -219,6 +221,10 @@ export type PublishedPanel = {
   index: number;
   image: string; // 미디어 키
   gapBefore: "none" | "normal" | "long";
+  /** 이어지는 긴 세로 컷: 이 컷 위쪽 overlap(높이 비율)만큼이 앞 컷 아래에 겹쳐요. margin은 겹치는 길이(가로 폭 대비 %) */
+  join?: { overlap: number; margin: number };
+  /** 뷰어가 그림 위에 얹는 연출 효과 (집중선, 속도선, 번쩍임) */
+  effect?: "focus" | "speed" | "flash";
   bubbles: PublishedBubble[];
   sfx: { text: string; x: number; y: number; size: number; angle: number } | null;
 };

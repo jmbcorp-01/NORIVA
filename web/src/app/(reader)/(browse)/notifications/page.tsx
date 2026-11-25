@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, lte } from "drizzle-orm";
 import { PageTitle } from "@/components/reader/parts";
 import { markAllRead } from "@/app/reader-actions";
 import { db, schema } from "@/db";
@@ -16,7 +16,7 @@ export default async function Notifications() {
   if (!reader) redirect("/login?next=/notifications");
   const locale = await getLocale();
   const t = DICT[locale];
-  const rows = await db.select().from(schema.notifications).where(eq(schema.notifications.readerId, reader.id)).orderBy(desc(schema.notifications.createdAt)).limit(50);
+  const rows = await db.select().from(schema.notifications).where(and(eq(schema.notifications.readerId, reader.id), lte(schema.notifications.createdAt, new Date()))).orderBy(desc(schema.notifications.createdAt)).limit(50);
   const unread = rows.some((r) => !r.readAt);
   const fmt = new Intl.DateTimeFormat(locale === "ko" ? "ko-KR" : "en-US", { timeZone: "Asia/Seoul", month: "short", day: "numeric" });
   const safe = (h: string) => (h.startsWith("/") && !h.startsWith("//") ? h : "/");

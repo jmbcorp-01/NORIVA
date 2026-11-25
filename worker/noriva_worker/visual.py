@@ -11,11 +11,15 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .images import IMAGE_MODELS, ImageGen, NoImageError, thumbnail, trim_border
+from .images import (
+    IMAGE_MODELS, ImageGen, NoImageError, comic_page_bands, contact_sheet, continue_canvas, crop_region, hw_ratio, match_colors,
+    seam_check, thumbnail, trim_border,
+)
 from .llm import JSONResult
 from .media import Media
 from .prompts import render_guidelines
@@ -33,6 +37,11 @@ class ArtSettings:
     parallel: int = 4
     check_effort: str = "medium"
     test_panels: int = 5  # 처음 작화는 대표 장면 몇 컷만 그려 승인받아요. 0이면 끝까지 그려요.
+    scene_refs: bool = True  # 같은 장면의 앞 컷(합격한 그림)을 다음 컷의 참고 그림으로 넣어 이어 그려요
+    zoom_check: bool = True  # 합격한 후보는 얼굴·글자·손을 원본 크기로 잘라 한 번 더 봐요
+    color_match: float = 0.5  # 같은 장면 앞 컷과 색이 조금 어긋나면 이만큼 맞춰요 (0이면 끔)
+    review_rounds: int = 2  # 검수를 몇 번 채점해 흔들림을 줄일지 (차이가 5점 넘으면 한 번 더)
+    join_strips: bool = True  # 콘티에서 이어지는 컷으로 묶은 컷은 앞 컷 아래 끝을 이어받아 한 장처럼 그려요
 
 
 class StageInputError(Exception):
@@ -122,15 +131,34 @@ PLAN_SCHEMA = _obj(
         "characters": _arr(
             _obj({"id": _STR, "name": _STR, "kind": {"type": "string", "enum": ["person", "animal", "creature"]}, "appearance": _STR})
         ),
+        # 장면 연속성표: 같은 장면의 컷은 모두 이 값을 똑같이 써요 (장소 배치, 빛, 인물 위치와 화면 방향, 옷·소품 상태)
+        "scenes": _arr(
+            _obj(
+                {
+                    "id": _INT,
+                    "place": _STR,
+                    "time_light": _STR,
+                    "layout": _STR,
+                    "outfits": _STR,
+                    "props_state": _STR,
+                }
+            )
+        ),
         "panels": _arr(
             _obj(
                 {
                     "index": _INT,
+                    "scene": _INT,
+                    "continuity": _STR,
                     "shot": _STR,
                     "camera": _STR,
                     "depth": _STR,
                     "height": {"type": "string", "enum": ["short", "normal", "long"]},
                     "gap_before": {"type": "string", "enum": ["none", "normal", "long"]},
+                    # 이 컷과 다음 컷이 여백 없이 한 장의 긴 세로 그림으로 이어져요 (같은 장면 안에서만)
+                    "joins_next": _BOOL,
+                    # 효과 레이어: 그림 모델이 그리면 'AI 그림' 티가 나는 집중선·속도선·번쩍임은 뷰어가 직접 얹어요
+                    "effect": {"type": "string", "enum": ["none", "focus", "speed", "flash"]},
                     "description": _STR,
                     "character_ids": _arr(_STR),
                     "dialogue": _arr(_obj({"speaker": _STR, "text": _STR})),
@@ -154,9 +182,27 @@ PLAN_TASK = """# 과제: ⑦ 작화 준비 — 승인된 콘티를 컷 목록으
 - 이웃한 컷끼리 샷 크기와 각도를 바꿔 리듬을 만든다(같은 샷 3번 연속 금지, S-12~S-16).
 - character_ids: 그 컷에 실제로 보이는 인물만.
 - dialogue: 콘티의 한국어 대사를 고치지 말고 그대로. speaker는 인물 id, 내레이션은 "narration".
+- effect: 연출 효과 레이어. 충격·놀람·결심의 클로즈업은 focus(집중선), 빠른 움직임·추격은 speed(속도선), 번쩍임·깨달음·초자연 현상은 flash, 그 밖에는 none.
+  한 화에 열 컷 안팎만 쓴다. 효과는 뷰어가 그림 위에 따로 얹으므로 description에 집중선·속도선을 쓰지 않는다.
 - sfx: 한국어 효과음, 없으면 빈 문자열. avoid: 이 컷에 보이면 안 되는 것(영어, 검사에서만 쓴다), 없으면 빈 문자열.
 - characters: 등장하는 인물마다 짧은 id(영문 소문자)와 이름, kind(사람 person, 동물 animal, 용·요괴 같은 존재 creature), 모든 컷에 똑같이 쓸 영어 외모 명세(나이, 얼굴, 머리, 옷, 고정 소품). 동물도 그 컷에 보이면 character_ids에 넣는다.
 - style_prompt: 화풍 카드를 영어 한 단락으로(선, 채색, 명암, 팔레트, 질감). 특정 작가 이름은 쓰지 않는다.
+
+## 이야기가 컷 사이에서 끊기지 않게 (가장 중요)
+컷은 한 장씩 따로 그려진다. 그림 모델은 앞 컷을 모르므로, 이어져야 할 것을 모두 글로 넘겨줘야 한다.
+- 대본의 모든 사건과 대사를 순서대로 컷에 담는다. 빠뜨리거나 순서를 바꾸지 않는다. 한 사건의 원인과 결과(예: 소금을 쓴다 → 부적이 떨어진다)가 다른 컷이면 두 컷이 이어져 보이게 쓴다.
+- scenes: 대본의 장면마다 하나(id는 1부터). 같은 장면의 모든 컷이 똑같이 쓸 영어 연속성표다.
+  place: 장소와 그 안의 고정 배치(문·창·제단·항아리가 어느 쪽에 있는지), time_light: 시간대, 광원과 그 방향·색,
+  layout: 인물의 위치와 화면 방향(누가 화면 왼쪽, 누가 오른쪽을 보는지. 180도 규칙: 장면 안에서 마주 보는 두 인물의 좌우를 바꾸지 않는다),
+  outfits: 이 장면에서 인물마다 입은 옷·머리·고정 소품(장면 중간에 옷이 바뀌지 않는다), props_state: 장면 안에서 상태가 바뀌는 소품과 그 순서(예: salt ring intact → swept away in panel 28).
+- panels.scene: 그 컷이 속한 장면 id. continuity: 바로 앞 컷에서 이어지는 것을 영어 한 문장으로(인물의 위치·시선·동작의 다음 순간, 소품의 지금 상태, 빛의 변화). 장면 첫 컷은 장면이 바뀐 것을 쓴다.
+- description에는 연속성표와 모순되는 내용을 쓰지 않는다(촛불이 꺼진 뒤 컷에 촛불이 켜져 있거나, 왼쪽에 있던 인물이 이유 없이 오른쪽에 있으면 안 된다).
+
+## 이어지는 긴 세로 컷 (joins_next)
+웹툰은 한 장면을 여백 없이 세로로 길게 이어 그려 시선을 아래로 끌고 가기도 한다(하늘에서 인물로 내려오는 카메라, 떨어지는 사람이나 물건, 높은 건물·긴 계단·폭포, 위의 인물과 아래의 인물을 한 공간에 잇기).
+- 콘티가 이어지는 컷(이어 그림, 한 장으로 연결)으로 표시한 컷은 joins_next를 true로 한다. 표시가 없으면 위 경우에만 스스로 정하고, 그 밖에는 false.
+- joins_next가 true인 컷과 다음 컷은 같은 장면이고, 다음 컷 gap_before는 "none"이다. 다음 컷 description은 앞 컷 아래 끝에서 그대로 이어지는 아래쪽 공간을 쓴다(카메라가 아래로 내려가며 보는 것).
+- 한 묶음은 많아야 3컷. 대사가 많은 대화 컷, 장면이 바뀌는 곳에는 쓰지 않는다. 한 화에 많아야 서너 묶음.
 """
 
 CHECK_SCHEMA = _obj(
@@ -166,13 +212,73 @@ CHECK_SCHEMA = _obj(
         "defects": _arr(
             _obj({"code": _STR, "severity": {"type": "string", "enum": ["critical", "major", "minor"]}, "note": _STR})
         ),
+        # 확대 검사할 곳: 줄인 그림으로는 작은 글자·얼굴 차이·손가락을 놓쳐요. 원본에서 잘라 다시 봐요.
+        "regions": _arr(
+            _obj(
+                {
+                    "kind": {"type": "string", "enum": ["face", "text", "hand"]},
+                    "character_id": _STR,
+                    "x": _NUM,
+                    "y": _NUM,
+                    "w": _NUM,
+                    "h": _NUM,
+                }
+            )
+        ),
     }
 )
+
+ZOOM_SCHEMA = _obj(
+    {
+        "zoom_defects": _arr(
+            _obj({"code": _STR, "severity": {"type": "string", "enum": ["critical", "major", "minor"]}, "note": _STR})
+        )
+    }
+)
+
+ZOOM_TASK = """# 과제: 확대 검사
+
+앞선 검사는 줄인 그림을 봤다. 이번에는 같은 컷의 일부를 원본 크기로 잘라 붙였다. 줄인 그림에서 놓친 결함만 찾아라.
+- 확대 그림 순서: {order}
+- 그 뒤의 그림은 인물 시트다: {sheet_order}
+- face: 시트의 얼굴과 비교한다. 눈 모양·눈동자 색, 눈썹, 코, 입, 턱선, 피부색, 머리 모양과 색이 다르면 K-1 주요(major). 다른 사람처럼 보이면 치명(critical).
+  얼굴이 녹거나 눈·입이 일그러졌으면 AI-05 치명.
+- text: 글자처럼 보이는 획(한글·한자·알파벳·숫자, 읽을 수 없는 가짜 글자 포함)이 있으면 AI-06 치명. 단순한 붉은 무늬·문양뿐이면 결함이 아니다.
+- hand: 손가락 개수, 관절, 물건을 쥔 손이 녹아 있는지. 틀리면 AI-05 치명, 어색하면 주요.
+- 확실하지 않으면 적지 않는다. 결함이 없으면 빈 목록.
+"""
+
+STORY_CHECK_SCHEMA = _obj(
+    {
+        "panel_fixes": _arr(_obj({"index": _INT, "problem": _STR, "description": _STR, "continuity": _STR})),
+        "missing_beats": _arr(_STR),
+    }
+)
+
+STORY_CHECK_TASK = """# 과제: 그리기 전 이야기 연결 검사
+
+아래는 승인된 대본·콘티와, 그것을 그림 모델용으로 옮긴 컷 목록이다. 그림을 그리기 전에(돈이 들기 전에) 글로 검사한다.
+컷 목록만 보고 그린 독자가 이야기를 따라갈 수 있는지 본다.
+- 대본의 사건·대사가 컷 목록에서 빠졌으면 missing_beats에 한국어로 짧게(어느 장면, 무엇).
+- panel_fixes: 고쳐야 하는 컷만. problem은 한국어 한 문장.
+  · 장면 연속성표(scenes)와 모순: 빛·시간, 인물 좌우 위치와 시선 방향(180도 규칙), 옷·소품 상태(이미 쓸어 버린 소금이 다시 보임 등)
+  · 앞 컷과 이어지지 않음: 원인 컷 없이 결과만 나옴, 들어온 적 없는 인물이 갑자기 있음, 동작이 거꾸로 감
+  · 대사를 하는 인물이 화면에 있어야 하는데 character_ids에 없음, 화면 밖 화자인데 그려지게 씀
+  description과 continuity는 고친 영어 문장 전체(그대로 둘 것은 원래 문장을 그대로). 연속성표의 값을 그대로 옮겨 쓴다.
+- 문제가 없으면 두 목록 모두 비운다. 컷 수와 순서는 바꾸지 않는다.
+
+## 장면 연속성표
+{scenes}
+
+## 컷 목록
+{panels}
+"""
 
 CHECK_TASK = """# 과제: 컷 그림 자동 결함 검사
 
 첨부한 첫 번째 그림이 검사할 컷이다. 이 컷의 지시와 지침의 AI-01~AI-14, 한국 고증 규칙으로 검사하라.
-그 뒤에 붙은 그림은 등장인물의 인물 시트(설정화)다. 순서는 아래 '인물 시트 순서'와 같다. {master_note} 컷 속 인물의 얼굴형, 머리 모양과 색, 옷의 형태와 색, 고정 소품, 신발이 시트와 같은지 하나씩 비교하라. 다르면 code K-1, 주요(major)로 무엇이 어떻게 다른지 적어라.
+그 뒤에 붙은 그림은 등장인물의 인물 시트(설정화)다. 순서는 아래 '인물 시트 순서'와 같다. {master_note} {anchor_note} 컷 속 인물의 얼굴형, 머리 모양과 색, 옷의 형태와 색, 고정 소품, 신발이 시트와 같은지 하나씩 비교하라. 다르면 code K-1, 주요(major)로 무엇이 어떻게 다른지 적어라.
+regions: 확대해서 다시 볼 곳. 보이는 인물 얼굴마다 face(character_id에 인물 id), 글자나 글자 같은 획이 있을 수 있는 곳(간판, 부적, 종이, 화면, 옷의 무늬)마다 text, 물건을 쥐거나 크게 보이는 손마다 hand. x, y, w, h는 그림 너비·높이에 대한 퍼센트(0~100, 왼쪽 위 기준). 많아야 6개.
 people_count에는 사람만 센다(동물과 요괴는 빼고).
 - 치명(critical): 글자·가짜 글자·한자·워터마크(간판과 부적의 글자 포함), 그림 안에 그린 컷 테두리·여백·한 장에 여러 컷(만화책 페이지처럼 보임), 인물 수가 틀림, 손·얼굴 해부학 붕괴, 일본·중국식 요소(도리이, 일본도, 기모노 등), 기존 작품과 닮음.
 - 주요(major): {medium_rule}, 인물 외모가 명세와 다름, 다른 컷과 등신·화풍이 다름, AI 특유의 매끈한 광택·과한 보케·무의미한 배경 디테일.
@@ -184,6 +290,7 @@ score는 0~100, 그대로 연재할 수 있을 때만 80 이상. 결함마다 co
 
 ## 이 컷
 {panel}
+{scene}
 
 ## 등장인물 외모 명세
 {cast}
@@ -197,13 +304,15 @@ score는 0~100, 그대로 연재할 수 있을 때만 80 이상. 결함마다 co
 
 
 # 플랫폼 공통 화풍 바탕: 작품 화풍 카드보다 앞에 붙여 "웹툰 디지털 채색"에서 벗어나지 않게 해요.
+# 맞는 모습만 긍정형으로 써요. "Not watercolor…" 같은 부정문은 그림 모델이 오히려 그 모양을 떠올리게 하고,
+# 우리가 쓰는 편집형 모델(nano-banana, seedream)은 부정 지시를 따로 받지 않아요.
 WEBTOON_BASE = (
     "Korean webtoon (manhwa) digital illustration for vertical-scroll smartphone reading: clean confident digital lineart, "
-    "flat cel shading with one or two shadow tones and crisp highlights, saturated digital colors, simplified painted backgrounds. "
-    "Not watercolor, not paper or canvas texture, not ink hatching, not a western comic or picture-book style, not a photo or 3D render."
+    "flat cel shading with one or two shadow tones and crisp highlights, saturated digital colors, smooth flat digital surfaces, "
+    "simplified painted backgrounds, crisp vector-clean edges like a top-ranked serialized webtoon."
 )
 
-_FINISH = "Polished finish of a top-ranked serialized webtoon. Not a children's picture book or storybook, not a rough sketch, not a western comic, not a photo or 3D render."
+_FINISH = "Polished, confident, professional finish of a top-ranked serialized Korean webtoon, with readable silhouettes and clean faces."
 
 # 화풍 후보의 그리는 방식(medium)별 바탕. 대표가 수채·수묵 결의 참고작을 고르면 셀 채색 바탕과 충돌하지 않게 바꿔요.
 BASES = {
@@ -285,6 +394,9 @@ def _panel_prompt(
     n_masters: int = 0,
     base: str = WEBTOON_BASE,
     part_refs: list[dict[str, Any]] | None = None,
+    scene: str = "",
+    anchor_ref: int = 0,
+    join_ref: int = 0,
 ) -> str:
     sheet_offset = n_masters
     if isinstance(sheet_cast, bool):  # 예전 호출: 모든 인물에 시트가 있으면 True
@@ -293,12 +405,28 @@ def _panel_prompt(
     others = [c for c in cast if kind_of(c) != "person"]
     parts = [
         base,
-        f"One single webtoon panel, {panel['shot']} shot, one continuous image filling the whole frame edge to edge."
-        " Not a comic page: no panel borders, no frames, no gutters, no split panels, no paper margins.",
+        f"One single webtoon panel, {panel['shot']} shot: one continuous scene filling the whole frame edge to edge, full-bleed artwork.",
         f"Camera: {panel['camera']}." if panel.get("camera") else "",
         f"Depth: {panel['depth']}." if panel.get("depth") else "",
         "Dynamic cinematic webtoon composition with clear perspective and depth, not a flat centered storybook layout.",
         panel["description"],
+        f"Scene continuity (identical in every panel of this scene): {scene}" if scene else "",
+        f"Continuing from the previous panel: {panel['continuity']}" if (panel.get("continuity") or "").strip() else "",
+        (
+            f"Reference image {anchor_ref} is the previous panel of this same scene: keep the same location layout, lighting, time of day, "
+            "outfits, hairstyles, prop states and the same side of the frame for each character. Change only the camera and the moment "
+            "as described here; do not copy its composition."
+        )
+        if anchor_ref
+        else "",
+        (
+            f"Reference image {join_ref} is the canvas to paint on: this panel is the lower part of one tall, continuous vertical webtoon "
+            "strip. The top part of that canvas is the bottom edge of the previous panel and the rest is blank white. Return the whole "
+            "canvas: keep its top part exactly as it is, and continue the same artwork seamlessly downward to fill the blank area, as the "
+            "camera moves down through the same space. No border, gutter, line or color break between the top part and the new area."
+        )
+        if join_ref
+        else "",
         ("Characters: " + " | ".join(
             # 금지 목록은 검사에서만 써요. 그림 지시에 금지 단어를 넣으면 오히려 그 모양을 떠올려요.
             f"{c['name']}: {c['appearance']}" for c in cast
@@ -322,6 +450,7 @@ def _panel_prompt(
         (f"Exactly {len(humans)} visible person(s)." if humans else "No people in this panel.")
         + (" Also visible: " + ", ".join(c["name"] for c in others) + "." if others else ""),
         f"Style: {style}",
+        "Clean artwork only: motion lines, focus lines and flashes are added later as a separate layer." if panel.get("effect") in ("focus", "speed", "flash") else "",
         "Signs, papers and talismans are blank or carry only simple abstract red marks."
         " No text, letters, speech bubbles, signature or watermark anywhere.",
         (
@@ -394,6 +523,129 @@ def _rank(c: dict[str, Any], pass_score: int) -> tuple[int, int]:
     return (1 if ok else 0, c["score"])
 
 
+def own_art(brief: dict[str, Any], media: Media, n: int = 3) -> list[bytes]:
+    """대표가 '내 그림'으로 올린 그림. 대표에게 권리가 있어 그림 모델에 참고 그림으로 직접 보내요 (남의 웹툰 캡처는 보내지 않아요)."""
+    out = []
+    for k in (brief.get("ownArt") or [])[:n]:
+        try:
+            b = media.get_private(k)
+        except Exception:
+            b = None
+        if b:
+            out.append(b)
+    return out
+
+
+def scene_text(plan: dict[str, Any], panel: dict[str, Any]) -> str:
+    """이 컷이 속한 장면의 연속성표 (영어). 같은 장면의 모든 컷이 같은 값을 받아 장소·빛·옷·위치가 이어져요."""
+    sc = next((x for x in plan.get("scenes") or [] if x.get("id") == panel.get("scene")), None)
+    if not sc:
+        return ""
+    keys = (("place", "Place"), ("time_light", "Time and light"), ("layout", "Positions and screen direction"),
+            ("outfits", "Outfits"), ("props_state", "Prop states"))
+    return " ".join(f"{label}: {sc[k]}." for k, label in keys if (sc.get(k) or "").strip())
+
+
+def story_check(llm: JSONModel, system: str, plan: dict[str, Any], costs: list[dict[str, Any]]) -> dict[str, Any]:
+    """그리기 전에 컷 목록이 대본을 빠짐없이, 순서대로, 앞뒤가 이어지게 담았는지 글로 검사하고 고쳐요."""
+    panels = plan.get("panels") or []
+    rows = "\n".join(
+        json.dumps({k: p.get(k) for k in ("index", "scene", "continuity", "shot", "description", "character_ids", "dialogue")}, ensure_ascii=False)
+        for p in panels
+    )
+    scenes = "\n".join(json.dumps(x, ensure_ascii=False) for x in plan.get("scenes") or []) or "(없음)"
+    try:
+        r = llm.json(system, STORY_CHECK_TASK.format(scenes=scenes, panels=rows), STORY_CHECK_SCHEMA, effort="medium", max_tokens=32000)
+    except Exception as e:  # 검사가 실패해도 그리기는 할 수 있어요. 대신 검사하지 못했다고 남겨요.
+        return {"fixed": [], "missing_beats": [], "error": str(e)[:200]}
+    costs.append(r.result.cost_entry())
+    by_index = {p["index"]: p for p in panels}
+    fixed = []
+    for f in r.data.get("panel_fixes") or []:
+        p = by_index.get(f.get("index"))
+        if not p:
+            continue
+        if (f.get("description") or "").strip():
+            p["description"] = f["description"].strip()
+        if (f.get("continuity") or "").strip():
+            p["continuity"] = f["continuity"].strip()
+        fixed.append({"index": p["index"], "problem": (f.get("problem") or "").strip()})
+    missing = [m.strip() for m in r.data.get("missing_beats") or [] if (m or "").strip()]
+    return {"fixed": fixed, "missing_beats": missing}
+
+
+def scene_groups(panels: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """같은 장면의 컷끼리 순서대로 묶어요. 장면 안에서는 차례로 그려 앞 컷을 다음 컷의 참고로 쓰고, 장면끼리는 동시에 그려요."""
+    groups: dict[Any, list[dict[str, Any]]] = {}
+    order: list[Any] = []
+    for p in panels:
+        key = p.get("scene") if isinstance(p.get("scene"), int) else ("solo", p["index"])
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(p)
+    return [groups[k] for k in order]
+
+
+MAX_STRIP = 3  # 이어지는 컷 한 묶음의 최대 컷 수
+
+
+def strip_links(panels: list[dict[str, Any]]) -> dict[int, int]:
+    """이어지는 긴 세로 컷: {컷 번호: 위에 이어 붙는 앞 컷 번호}. 같은 장면의 바로 다음 컷끼리만, 한 묶음에 MAX_STRIP컷까지."""
+    links: dict[int, int] = {}
+    run = 1
+    for a, b in zip(panels, panels[1:]):
+        ok = (
+            bool(a.get("joins_next"))
+            and isinstance(a.get("scene"), int)
+            and a.get("scene") == b.get("scene")
+            and b["index"] == a["index"] + 1
+            and run < MAX_STRIP
+        )
+        if ok:
+            links[b["index"]] = a["index"]
+            run += 1
+        else:
+            run = 1
+    return links
+
+
+def strips(panels: list[dict[str, Any]]) -> list[list[int]]:
+    """이어지는 컷 묶음 목록 (컷 번호)."""
+    links = strip_links(panels)
+    out: list[list[int]] = []
+    for p in panels:
+        i = p["index"]
+        if i in links and out and out[-1][-1] == links[i]:
+            out[-1].append(i)
+        elif any(v == i for v in links.values()):
+            out.append([i])
+    return [g for g in out if len(g) > 1]
+
+
+def judge_text(examples: list[dict[str, Any]], n: int = 12) -> str:
+    """대표가 판정한 컷을 검사 지시의 사례로 바꿔요. 특히 검사기는 합격시켰는데 대표가 'AI 같다'고 한 컷이 중요해요."""
+    rows = []
+    missed = [e for e in examples if e.get("owner_verdict") == "ai" and e.get("passed")]
+    rest = [e for e in examples if e not in missed and e.get("owner_verdict") in ("ai", "good")]
+    for e in (missed + rest)[:n]:
+        verdict = "AI 같다(불합격이어야 함)" if e["owner_verdict"] == "ai" else "좋다(합격)"
+        note = (e.get("owner_note") or "").strip()
+        rows.append(
+            f"- 대표 판정: {verdict} · 검사기 점수 {e.get('score', '-')}점"
+            + (" (검사기는 합격시킴)" if e["owner_verdict"] == "ai" and e.get("passed") else "")
+            + f" · 컷: {(e.get('description') or '')[:160]}"
+            + (f" · 대표 메모: {note[:200]}" if note else "")
+        )
+    if not rows:
+        return ""
+    return (
+        "\n## 대표 판정 사례 (검사 기준을 대표 눈에 맞춘다)\n"
+        "대표가 직접 본 컷과 그 판정이다. 대표가 'AI 같다'고 한 이유(메모)와 같은 문제가 이 그림에 보이면 AI 계열 결함(주요 이상)으로 적고, "
+        "검사기가 합격시켰지만 대표가 떨어뜨린 사례와 비슷하면 점수를 더 엄하게 매긴다.\n" + "\n".join(rows) + "\n"
+    )
+
+
 def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media, s: ArtSettings) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     costs = Costs()
     system = render_guidelines(ctx["guidelines"])
@@ -422,7 +674,8 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         redraw = [int(i) for i in plan.pop("_redraw", [])]
     elif redraw and prev.get("kind") == "art":
         # 고른 컷만 다시 그려요. 컷 목록과 인물 명세는 이전 결과를 그대로 써요.
-        plan = {"style_prompt": prev["style_prompt"], "characters": prev["characters"], "panels": [dict(p) for p in prev["panels"]]}
+        plan = {"style_prompt": prev["style_prompt"], "characters": prev["characters"], "scenes": prev.get("scenes") or [],
+                "story_check": prev.get("story_check") or {}, "panels": [dict(p) for p in prev["panels"]]}
     else:
         redraw = []
         _report(ctx, "콘티를 컷 목록으로 정리 중")
@@ -444,8 +697,16 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         plan["panels"] = plan["panels"][: s.max_panels]
         for i, p in enumerate(plan["panels"]):
             p["index"] = i + 1
+    story_pending = bool(saved_plan.get("_story_pending")) if saved_plan else "story_check" not in plan
+    plan.pop("_story_pending", None)
     if not saved_plan:
-        _save_json(media, f"{ck_base}/plan.json", {**plan, "_redraw": redraw})
+        _save_json(media, f"{ck_base}/plan.json", {**plan, "_redraw": redraw, "_story_pending": story_pending})
+    if story_pending and plan.get("panels"):
+        # 그리기 전에 글로 이야기 연결을 검사하고 고쳐요 (CLAUDE.md 1-5: 돈 쓰기 전에 막을 수 있는 건 막는다).
+        # 컷 목록을 먼저 저장해 두고, 검사 결과도 바로 저장해요. 다시 시작하면 둘 다 다시 만들지 않아요.
+        _report(ctx, "그리기 전 이야기 연결 검사 중")
+        plan["story_check"] = story_check(llm, system, plan, costs)
+        _save_json(media, f"{ck_base}/plan.json", {**plan, "_redraw": redraw, "_story_pending": False})
 
     if not plan["panels"]:
         raise StageInputError("콘티에서 컷을 찾지 못했어요. 콘티 결과를 확인해 주세요.")
@@ -465,11 +726,29 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             p.pop("variants", None)
 
     # 처음 작화는 시험 컷만 그려요. 대표가 보고 '나머지 그리기'를 누르면 나머지를 그려요.
+    links = strip_links(plan["panels"]) if s.join_strips else {}
     if not redraw and s.test_panels > 0 and not payload.get("full"):
         redraw = choose_test_panels(plan["panels"], s.test_panels)
+        # 이어지는 컷 묶음의 아래 컷이 뽑히면 묶음 첫 컷으로 바꿔요 (앞 컷 없이 아래만 먼저 그리면 나중에 이어지지 않아요)
+        def head(i: int) -> int:
+            while i in links:
+                i = links[i]
+            return i
+        redraw = sorted({head(i) for i in redraw})
         test_run = True
     else:
         test_run = False
+    # 묶음의 위 컷을 다시 그리면 그 아래 이어진 컷도 함께 다시 그려요. 아니면 이음새가 어긋나요.
+    join_added: list[int] = []
+    if redraw and not test_run and not compare and links:
+        nxt = {v: k for k, v in links.items()}
+        for i in sorted(redraw):
+            j = nxt.get(i)
+            while j is not None:
+                if j not in redraw and j not in join_added:
+                    join_added.append(j)
+                j = nxt.get(j)
+        redraw = sorted(set(redraw) | set(join_added))
 
     # ④에서 대표가 고른 화풍: 영어 화풍 문구와 화풍 마스터 그림
     style_body = (ctx.get("input_bodies") or {}).get("style") or {}
@@ -483,6 +762,10 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     # ④+에서 금지 소품·장식을 지운 깨끗한 마스터를 만들었으면 그것을 써요
     master_keys = (sheets_body.get("clean_masters") or []) if sheets_body.get("kind") == "sheets" else []
     masters = [m for m in (media.get(k) for k in (master_keys or style_body.get("style_masters") or [])[:2]) if m]
+    # 대표가 직접 그린 그림(권리가 대표에게 있는 그림)은 그림 모델이 직접 보고 따라 그려요. 화풍 기준으로 가장 앞에 둬요.
+    own = own_art(brief, media)
+    if own:
+        masters = own[:1] + masters[:1]
 
     style = plan["style_prompt"]
     chars = {c["id"]: dict(c) for c in plan["characters"]}
@@ -529,36 +812,108 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     ep = ctx["episode"]["number"] if ctx.get("episode") else 0
     key_base = f"series/{ctx['series']['id']}/ep{ep:03d}/art/{artifact_id}"
 
+    names = {c["id"]: c["name"] for c in chars.values()}
+    judge_block = judge_text(ctx.get("judge_examples") or [])
+
     def check(
         panel: dict[str, Any], cast: list[dict[str, Any]], data: bytes, local: list[dict[str, Any]],
-        sheet_cast: list[dict[str, Any]] | None = None, sheets: list[bytes] | None = None,
+        sheet_cast: list[dict[str, Any]] | None = None, sheets: list[bytes] | None = None, anchor: bytes | None = None,
+        join: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         sheet_cast = sheet_cast or []
+        scene = scene_text(plan, panel)
+        scene_block = ""
+        if scene or panel.get("continuity"):
+            scene_block = (
+                "\n## 장면 연속성표 (같은 장면의 모든 컷이 따라야 한다)\n" + (scene or "(없음)")
+                + "\n## 바로 앞 컷에서 이어지는 것\n" + (panel.get("continuity") or "(없음)") + "\n"
+            )
+        if join:
+            scene_block += (
+                f"\n## 이어지는 긴 세로 컷\n이 그림의 위쪽 {round(join['overlap'] * 100)}%는 바로 앞 컷의 아래 끝을 그대로 이어받은 부분이고, 독자 화면에서 앞 컷과 겹쳐 한 장으로 보인다. "
+                "그 부분은 결함이 아니다. 그 아래가 같은 공간으로 끊김 없이 이어지지 않거나, 경계에 선·띠·색 차이가 보이면 code J-1, 주요(major)로 적어라.\n"
+            )
         r = llm.json(
             system,
             CHECK_TASK.format(
                 panel=json.dumps({k2: panel.get(k2, "") for k2 in ("shot", "camera", "depth", "description", "character_ids", "avoid")}, ensure_ascii=False),
+                scene=scene_block + judge_block,
                 cast=json.dumps([{"id": c["id"], "kind": kind_of(c), "appearance": c["appearance"], "never": c.get("never") or []} for c in cast], ensure_ascii=False) or "(없음)",
                 sheet_order=", ".join(f"{i + 2}번째 그림 = {c['name']}" for i, c in enumerate(sheet_cast)) or "(시트 없음)",
                 style=style,
                 medium_rule=medium_rule(chosen_medium),
-                master_note="마지막 그림은 작품의 화풍 마스터다. 선 굵기, 채색, 명암, 질감이 마스터와 다르면 V-7 주요(major)로 적어라." if masters else "",
+                master_note="시트 다음 그림은 작품의 화풍 기준 그림이다. 선 굵기, 채색, 명암, 질감이 이와 다르면 V-7 주요(major)로 적어라." if masters else "",
+                anchor_note=(
+                    "맨 마지막 그림은 같은 장면의 바로 앞 컷(합격한 그림)이다. 장소 배치, 빛과 시간, 인물의 옷·머리·소품, 소품 상태, 인물의 화면 좌우가 "
+                    "앞 컷이나 장면 연속성표와 다르면 code K-2, 주요(major)로 무엇이 다른지 적어라. 지시한 카메라·동작의 변화는 결함이 아니다."
+                )
+                if anchor
+                else "",
                 research=f"\n## ③+ 고증 자료 (옷·머리·무기·건물은 이것과 맞아야 한다)\n{research}\n" if research else "",
             ),
             CHECK_SCHEMA,
-            images=[thumbnail(data)] + [thumbnail(b, 640) for b in (sheets or [])] + ([thumbnail(masters[0], 512)] if masters else []),
+            images=[thumbnail(data, 1568)]
+            + [thumbnail(b, 640) for b in (sheets or [])]
+            + ([thumbnail(masters[0], 512)] if masters else [])
+            + ([thumbnail(anchor, 768)] if anchor else []),
             effort=s.check_effort,
             max_tokens=8000,
         )
         local.append(r.result.cost_entry())
         d = r.data
+        defects = list(d.get("defects") or [])
         humans = [c for c in cast if kind_of(c) == "person"]
         if humans and d.get("people_count", len(humans)) < len(humans):
-            d["defects"].append({"code": "AI-07", "severity": "major", "note": f"사람 수 {d['people_count']}명 (지시: {len(humans)}명)"})
-        return {"score": max(0, min(100, int(d["score"]))), "defects": d["defects"]}
+            defects.append({"code": "AI-07", "severity": "major", "note": f"사람 수 {d['people_count']}명 (지시: {len(humans)}명)"})
+        # 기계 검사 (돈이 들지 않아요): 한 장에 컷이 여러 개 들어간 만화책 페이지 모양
+        for note in comic_page_bands(data):
+            defects.append({"code": "P-1", "severity": "critical", "note": note})
+        if join:  # 이음새 기계 검사 (돈이 들지 않아요)
+            for note in seam_check(data, join["canvas"], join["overlap"]):
+                defects.append({"code": "J-1", "severity": "critical" if "비어" in note else "major", "note": note})
+        res = {"score": max(0, min(100, int(d["score"]))), "defects": defects}
+        # 확대 검사: 줄인 그림으로는 작은 가짜 글자, 시트와 다른 얼굴, 손가락을 놓쳐요 (1화 시험: 가짜 부적 글자가 88점 합격).
+        # 이미 떨어진 그림은 다시 그릴 테니 확대 검사를 하지 않아요 (돈 아끼기).
+        if s.zoom_check and _rank(res, s.pass_score)[0]:
+            crops: list[bytes] = []
+            order: list[str] = []
+            for rg in (d.get("regions") or [])[:6]:
+                kind = rg.get("kind")
+                c = crop_region(data, rg.get("x"), rg.get("y"), rg.get("w"), rg.get("h"))
+                if c is None or kind not in ("face", "text", "hand"):
+                    continue
+                crops.append(c)
+                label = {"face": "얼굴", "text": "글자 같은 곳", "hand": "손"}[kind]
+                who = names.get(rg.get("character_id") or "")
+                order.append(f"{len(crops)}번째 = {label}" + (f" ({who})" if kind == "face" and who else ""))
+            if crops:
+                z = llm.json(
+                    system,
+                    ZOOM_TASK.format(
+                        order=", ".join(order),
+                        sheet_order=", ".join(f"{len(crops) + i + 1}번째 = {c['name']}" for i, c in enumerate(sheet_cast)) or "(시트 없음)",
+                    ),
+                    ZOOM_SCHEMA,
+                    images=crops + [thumbnail(b, 768) for b in (sheets or [])],
+                    effort=s.check_effort,
+                    max_tokens=4000,
+                )
+                local.append(z.result.cost_entry())
+                extra = [dict(x, note="(확대 검사) " + x["note"]) for x in z.data.get("zoom_defects") or [] if (x.get("note") or "").strip()]
+                if extra:
+                    penalty = sum(15 if x["severity"] == "major" else 3 if x["severity"] == "minor" else 0 for x in extra)
+                    res = {"score": max(0, res["score"] - penalty), "defects": defects + extra}
+        return res
 
-    def draw(panel: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def draw(panel: dict[str, Any], anchor: bytes | None = None, join_src: bytes | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
+        # 지난 그림의 후처리 표시는 새 그림에 넘기지 않아요
+        panel = {k: v for k, v in panel.items() if k not in ("join", "join_failed", "raw_image", "color_matched")}
+        aspect = ASPECT.get(panel.get("height") or "normal", "3:4")
+        # 이어지는 컷: 앞 컷 아래 끝을 위에 붙인 그림판을 넘겨 그 아래로 이어 그려요. 앞 컷 참고 자리를 이 그림판이 대신해요.
+        canvas = continue_canvas(join_src, aspect) if (join_src is not None and not compare) else None
+        if canvas:
+            anchor = None
         cast = [chars[cid] for cid in panel["character_ids"] if cid in chars]
         # 인물 시트는 컷에 나오는 인물(동물 포함) 모두, 많아야 MAX_SHEETS장. 시트가 없는 인물만 빠져요.
         sheet_cast: list[dict[str, Any]] = []
@@ -568,8 +923,8 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             if b is not None and len(sheets) < MAX_SHEETS:
                 sheet_cast.append(c)
                 sheets.append(b)
-        # 화풍 마스터는 남는 자리에 (최소 1장, 많아야 2장)
-        use_masters = masters[: max(1, min(2, MAX_REFS - len(sheets)))]
+        # 화풍 마스터는 남는 자리에 (최소 1장, 많아야 2장). 같은 장면의 앞 컷이 있으면 그 자리 하나를 내줘요.
+        use_masters = masters[: max(1, min(2, MAX_REFS - len(sheets) - (1 if anchor else 0)))]
         ids = {c["id"] for c in cast}
         part_refs = [
             {"name": p["name"], "owner_name": ", ".join(chars[o]["name"] for o in p.get("owners") or [] if o in chars), "data": p["data"],
@@ -577,11 +932,16 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             for p in locked_objects
             if ids & set(p.get("owners") or [])
         ][:MAX_PART_REFS]
-        refs = use_masters + sheets + [p["data"] for p in part_refs]
+        if canvas:
+            use_masters = use_masters[: max(1, MAX_REFS - len(sheets) - 1)]
+        refs = use_masters + sheets + [p["data"] for p in part_refs] + ([anchor] if anchor else []) + ([canvas[0]] if canvas else [])
         prompt = _panel_prompt(
-            style, panel, cast, sheet_cast, instruction if redraw and not test_run else "", len(use_masters), base, part_refs
+            style, panel, cast, sheet_cast, instruction if redraw and not test_run else "", len(use_masters), base, part_refs,
+            scene=scene_text(plan, panel), anchor_ref=len(refs) if anchor else 0, join_ref=len(refs) if canvas else 0,
         )
-        aspect = ASPECT.get(panel.get("height") or "normal", "3:4")
+        join = {"canvas": canvas[0], "overlap": canvas[1]} if canvas else None
+        # 이어 그린 그림은 테두리 자르기를 하지 않아요 (위쪽 이어받은 띠의 크기가 바뀌면 이음새가 어긋나요)
+        tidy = (lambda b: b) if canvas else trim_border
         seed0 = panel["index"] * 100 + 10 * (ctx.get("attempt") or 1)
 
         if compare:
@@ -595,7 +955,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                     continue
                 local.append(img.cost_entry())
                 key = media.put(f"{key_base}/{panel['index']:03d}-{_model_slug(m)}.png", trim_border(img.data))
-                c = check(panel, cast, trim_border(img.data), local, sheet_cast, sheets)
+                c = check(panel, cast, trim_border(img.data), local, sheet_cast, sheets, anchor)
                 variants.append({"model": m, "image": key, **c, "passed": bool(_rank(c, s.pass_score)[0])})
             ok = [v for v in variants if "image" in v]
             best = ok[0] if ok else {"image": None, "score": 0, "defects": [], "passed": False}
@@ -615,7 +975,7 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             if old is None:
                 break
             n_old = k
-            cands.append({"image": old_key, "reused": True, **check(panel, cast, old, local, sheet_cast, sheets)})
+            cands.append({"image": old_key, "reused": True, **check(panel, cast, old, local, sheet_cast, sheets, anchor, join)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break
         for k in range(s.candidates):
@@ -628,9 +988,9 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
                 blocked = str(e)
                 break
             local.append(img.cost_entry())
-            data = trim_border(img.data)
+            data = tidy(img.data)
             key = media.put(f"{key_base}/{panel['index']:03d}-{k + 1 + n_old}.png", data)
-            cands.append({"image": key, **check(panel, cast, data, local, sheet_cast, sheets)})
+            cands.append({"image": key, **check(panel, cast, data, local, sheet_cast, sheets, anchor, join)})
             if _rank(cands[-1], s.pass_score)[0]:
                 break  # 합격 후보가 나오면 더 그리지 않아요
             if len(cands) >= 2 and _same_critical(cands[-1], cands[-2]):
@@ -643,17 +1003,37 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
             out.pop("variants", None)
             return out, local
         best = max(cands, key=lambda c: _rank(c, s.pass_score))
+        passed = bool(_rank(best, s.pass_score)[0])
+        image_key = best["image"]
+        extra: dict[str, Any] = {}
+        # 후처리: 같은 장면 앞 컷과 색 분위기가 조금 어긋나면 살짝 맞춰요 (04번 5.2). 큰 차이는 연출일 수 있어 두고,
+        # 원본은 raw_image로 남겨요. 떨어진 그림은 손대지 않아요.
+        if canvas and passed:
+            # 뷰어가 이 컷 위쪽(이어받은 띠)을 앞 컷 아래에 겹쳐 여백 없이 한 장처럼 보여 줘요
+            ratio = hw_ratio(media.get(image_key) or b"") or 1.0
+            extra = {"join": {"prev": panel["index"] - 1, "overlap": round(canvas[1], 4), "prev_overlap": round(canvas[2], 4),
+                              "margin": round(canvas[1] * ratio * 100, 3)}}
+        elif canvas:
+            extra = {"join_failed": "이어 그린 그림이 검사를 통과하지 못해 앞 컷과 겹치지 않고 따로 보여요. 이 컷을 다시 그려 주세요."}
+        if anchor and passed and s.color_match > 0:
+            raw = media.get(image_key)
+            matched = match_colors(raw, anchor, s.color_match) if raw else None
+            if matched:
+                extra = {"raw_image": image_key, "color_matched": True}
+                image_key = media.put(f"{key_base}/{panel['index']:03d}-cm.png", matched)
         out = {
             **panel,
             "prompt": prompt,
             "aspect": aspect,
             "model": model or images_default_model(images),
-            "image": best["image"],
+            "image": image_key,
             "score": best["score"],
             "defects": best["defects"],
-            "passed": bool(_rank(best, s.pass_score)[0]),
+            "passed": passed,
             "candidates": [{"image": c["image"], "score": c["score"]} for c in cands],
             "drawn_in": artifact_id,
+            "scene_ref": bool(anchor),
+            **extra,
             **({"stalled": "같은 치명 결함이 두 번 연달아 나와 더 그리지 않았어요. 인물 시트나 지시를 고친 뒤 다시 그려 주세요."} if stalled else {}),
         }
         out.pop("variants", None)
@@ -663,20 +1043,71 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
     if payload.get("keep_adopted"):
         todo = []  # 고른 모델의 시험 컷 그림만 옮기고 새로 그리지 않아요
 
+    # 한 장씩 확인 장면: 대표가 고른 장면은 아직 안 그린 컷을 한 번에 한 장만 그려요.
+    # 대표가 보고 '다음 컷'을 누르면 다음 한 장을 그려요. 다른 장면은 그대로 자동으로 그려요.
+    step_scenes = sorted({int(x) for x in (payload["step_scenes"] if "step_scenes" in payload else prev.get("step_scenes") or [])
+                          if isinstance(x, int) or str(x).isdigit()})
+    step_waiting: list[int] = []
+    if step_scenes and not test_run and not compare:
+        kept: list[dict[str, Any]] = []
+        started: set[int] = set()
+        for p in todo:
+            sc = p.get("scene")
+            if sc in step_scenes and not p.get("image"):
+                if sc in started:
+                    continue  # 이 장면은 이번에 한 장만
+                started.add(sc)
+                step_waiting.append(p["index"])
+            kept.append(p)
+        todo = kept
+
+    # 같은 장면의 앞 컷(합격한 그림)을 다음 컷의 참고 그림으로 넣어 장소·빛·옷·위치를 이어 그려요.
+    # 떨어진 그림은 참고로 넘기지 않아요 (CLAUDE.md 1-5).
+    passed_by_index: dict[int, dict[str, Any]] = {
+        p["index"]: p for p in plan["panels"] if p.get("image") and p.get("passed") and not (redraw and p["index"] in redraw)
+    }
+    lock = threading.Lock()
+
+    def anchor_for(panel: dict[str, Any]) -> bytes | None:
+        if not s.scene_refs or not isinstance(panel.get("scene"), int):
+            return None
+        with lock:
+            prev_panels = [p for i, p in passed_by_index.items() if i < panel["index"] and p.get("scene") == panel["scene"]]
+        if not prev_panels:
+            return None
+        return media.get(max(prev_panels, key=lambda p: p["index"])["image"])
+
+    def join_for(panel: dict[str, Any]) -> bytes | None:
+        """이어지는 컷이면 바로 위 컷(합격한 그림)을 돌려줘요. 위 컷이 떨어졌으면 따로 그려요 (틀린 그림을 이어받지 않아요)."""
+        j = links.get(panel["index"])
+        if j is None:
+            return None
+        with lock:
+            up = passed_by_index.get(j)
+        return media.get(up["image"]) if up else None
+
     def draw_saved(panel: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """끝난 컷은 바로 저장해요. 다시 시작한 작업은 저장된 컷을 그대로 쓰고 남은 컷만 그려요."""
         key = f"{ck_base}/panel-{panel['index']:03d}.json"
         done = _load_json(media, key)
         if done and (done.get("out", {}).get("image") or done.get("out", {}).get("blocked")):
-            return done["out"], done.get("costs") or []
-        out, local = draw(panel)
-        _save_json(media, key, {"out": out, "costs": local})
+            out, local = done["out"], done.get("costs") or []
+        else:
+            out, local = draw(panel, anchor_for(panel), join_for(panel))
+            _save_json(media, key, {"out": out, "costs": local})
+        if out.get("image") and out.get("passed"):
+            with lock:
+                passed_by_index[out["index"]] = out
         return out, local
 
+    def draw_scene(group: list[dict[str, Any]]) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        return [draw_saved(p) for p in group]
+
+    groups = scene_groups(todo)
     resumed = sum(1 for p in todo if _load_json(media, f"{ck_base}/panel-{p['index']:03d}.json"))
-    step = "시험 컷 그리는 중" if test_run else "컷 그리는 중"
+    step = "시험 컷 그리는 중" if test_run else "장면별로 컷 그리는 중"
     try:
-        results = _map_progress(ctx, s.parallel, draw_saved, todo, step + (f" (끝난 {resumed}컷 이어서)" if resumed else ""))
+        results = [r for g in _map_progress(ctx, s.parallel, draw_scene, groups, step + (f" (끝난 {resumed}컷 이어서)" if resumed else "")) for r in g]
     except BaseException as e:
         # 멈춰도 그때까지 끝난 컷은 화면에 보여 줘요. '이어서 그리기'를 누르면 다음 컷부터 그려요.
         done = [d["out"] for p in todo if (d := _load_json(media, f"{ck_base}/panel-{p['index']:03d}.json")) and d.get("out", {}).get("image")]
@@ -700,10 +1131,16 @@ def run_art(ctx: dict[str, Any], llm: JSONModel, images: ImageGen, media: Media,
         "kind": "art",
         "style_prompt": style,
         "characters": list(chars.values()),
+        "scenes": plan.get("scenes") or [],
+        "story_check": plan.get("story_check") or {},
         "panels": panels,
         "flagged": flagged,
         "rhythm_warnings": rhythm_warnings(panels),
         "redrawn": [] if test_run or payload.get("keep_adopted") else redraw,
+        "join_added": join_added,
+        "strips": strips(panels) if s.join_strips else [],
+        "step_scenes": step_scenes,
+        "step_waiting": step_waiting,
         "pending": pending,
         "blocked": blocked,
         "test_panels": redraw if test_run else (prev.get("test_panels") or []),
@@ -821,6 +1258,8 @@ def run_lettering(ctx: dict[str, Any], llm: JSONModel, media: Media, s: ArtSetti
         sfx_en = {x["panel"]: x["en"] for x in r.data["sfx"]}
         glossary = r.data["glossary"]
 
+    covered_below = {q["join"]["prev"]: q["join"].get("prev_overlap", 0) for q in panels if q.get("join")}
+
     def place(p: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         local: list[dict[str, Any]] = []
         dialogue = p.get("dialogue") or []
@@ -828,13 +1267,18 @@ def run_lettering(ctx: dict[str, Any], llm: JSONModel, media: Media, s: ArtSetti
             "index": p["index"],
             "image": p["image"],
             "height": p.get("height", "normal"),
-            "gap_before": p.get("gap_before", "normal"),
+            "gap_before": "none" if p.get("join") else p.get("gap_before", "normal"),
             "description": p.get("description", ""),
             "score": p.get("score"),
             "defects": p.get("defects", []),
             "bubbles": [],
             "sfx": None,
+            **({"join": p["join"]} if p.get("join") else {}),
+            **({"effect": p["effect"]} if p.get("effect") in ("focus", "speed", "flash") else {}),
         }
+        # 이어지는 컷: 위쪽 띠는 앞 컷 아래에 겹쳐 보이고, 아래 컷이 이어지면 아래쪽 띠가 가려져요. 말풍선은 그 밖에 둬요.
+        top = (p["join"]["overlap"] * 100 + 2) if p.get("join") else 3
+        bottom = 97 - (covered_below.get(p["index"], 0) * 100)
         if not dialogue and not p.get("sfx"):
             return out, local
         image = media.get(p["image"])
@@ -853,12 +1297,14 @@ def run_lettering(ctx: dict[str, Any], llm: JSONModel, media: Media, s: ArtSetti
         placed = {b["line"]: b for b in r.data["bubbles"] if 0 <= b["line"] < len(dialogue)}
         for li, d in enumerate(dialogue):
             b = placed.get(li) or {"shape": "speech", "x": 6, "y": 4 + 14 * li, "w": 50, "h": 12, "has_tail": False, "tail_x": 0, "tail_y": 0}
+            bh = _clip(b["h"], 5, 60)
+            by = _clip(b["y"], top, max(top, bottom - bh))
             out["bubbles"].append(
                 {
                     "speaker": d["speaker"],
                     "shape": "narration" if d["speaker"] == "narration" else b["shape"],
                     "text": {"ko": d["text"], "en": en.get(f"{p['index']}-{li}", "")},
-                    "box": {"x": _clip(b["x"], 3, 97), "y": _clip(b["y"], 3, 97), "w": _clip(b["w"], 8, 94), "h": _clip(b["h"], 5, 60)},
+                    "box": {"x": _clip(b["x"], 3, 97), "y": by, "w": _clip(b["w"], 8, 94), "h": bh},
                     "tail": {"x": _clip(b["tail_x"]), "y": _clip(b["tail_y"])} if b["has_tail"] else None,
                 }
             )
@@ -944,7 +1390,7 @@ def _banned_hits(body: dict[str, Any], terms: list[dict[str, Any]]) -> list[dict
     return hits
 
 
-REVIEW_MAX_IMAGES = 24
+REVIEW_SHEET_CELLS = 9  # 검수에 보낼 컷 모음 한 장에 넣는 컷 수
 
 
 def run_review(ctx: dict[str, Any], llm: JSONModel, s: ArtSettings, media: Media | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -982,34 +1428,51 @@ def run_review(ctx: dict[str, Any], llm: JSONModel, s: ArtSettings, media: Media
         panels="\n".join(row(p) for p in panels),
         auto=json.dumps(auto, ensure_ascii=False, indent=2),
     )
-    # 실제 컷 그림을 작게 줄여 함께 봐요 (캐릭터 일관성, AI 티, 화풍 통일은 그림을 봐야 채점할 수 있어요)
+    # 실제 컷 그림을 모두 봐요. 9컷씩 번호를 붙인 한 장으로 묶어 회차 전체(50~70컷)를 적은 비용으로 봐요.
+    # (예전에는 24컷만 골라 384px로 봐서 나머지 컷의 결함을 못 봤어요)
     shown: list[int] = []
     pics: list[bytes] = []
     if media is not None:
-        drawn = [p for p in panels if p.get("image")]
-        step = max(1, -(-len(drawn) // REVIEW_MAX_IMAGES))
-        for p in drawn[::step][:REVIEW_MAX_IMAGES]:
-            data = media.get(p["image"])
-            if data:
-                pics.append(thumbnail(data, 384))
-                shown.append(p["index"])
+        drawn = [(p["index"], data) for p in panels if p.get("image") and (data := media.get(p["image"]))]
+        for i in range(0, len(drawn), REVIEW_SHEET_CELLS):
+            chunk = drawn[i : i + REVIEW_SHEET_CELLS]
+            pics.append(contact_sheet(chunk))
+            shown += [idx for idx, _ in chunk]
     if shown:
         task += (
-            f"\n\n## 첨부한 컷 그림\n첨부 그림은 순서대로 {', '.join(f'{i}컷' for i in shown)}이다. "
-            "Q-4 캐릭터 일관성, Q-5 AI 티, Q-6 고증, Q-8 화풍 통일은 그림을 직접 보고 채점하고, 근거에 컷 번호를 적어라."
+            f"\n\n## 첨부한 컷 그림\n첨부 그림은 컷을 {REVIEW_SHEET_CELLS}개씩 묶은 모음이고, 각 칸 왼쪽 위 숫자가 컷 번호다 "
+            f"({shown[0]}~{shown[-1]}컷, 모두 {len(shown)}컷). "
+            "Q-4 캐릭터 일관성, Q-5 AI 티, Q-6 고증, Q-8 화풍 통일은 그림을 직접 보고 채점하고, 앞뒤 컷이 이야기로 이어지는지(장소·빛·옷·인물 위치)도 Q-2에서 본다. 근거에 컷 번호를 적어라."
         )
     if ctx.get("instruction"):
         task += f"\n\n## 대표의 추가 지시\n{ctx['instruction']}"
     _report(ctx, "채점표로 검수 중")
-    r = llm.json(render_guidelines(ctx["guidelines"]), task, REVIEW_SCHEMA, images=pics or None)
-    costs.add(r.result.cost_entry())
+    system = render_guidelines(ctx["guidelines"])
 
-    scores = {k: 0 for k in RUBRIC}
+    def score_once() -> tuple[dict[str, Any], dict[str, int]]:
+        r = llm.json(system, task, REVIEW_SCHEMA, images=pics or None)
+        costs.add(r.result.cost_entry())
+        sc = {k: 0 for k in RUBRIC}
+        for it in r.data["items"]:
+            if it.get("code") in RUBRIC:
+                sc[it["code"]] = max(0, min(RUBRIC[it["code"]], int(it["score"])))
+        return r.data, sc
+
+    # 점수 흔들림 막기 (04번 6.2): 두 번 채점해 5점 넘게 다르면 한 번 더 채점하고 항목별 가운데 값을 써요.
+    runs = [score_once()]
+    if s.review_rounds >= 2:
+        runs.append(score_once())
+        if abs(sum(runs[0][1].values()) - sum(runs[1][1].values())) > 5:
+            runs.append(score_once())
+    data = runs[0][0]
+    median_scores = {k: sorted(run[1][k] for run in runs)[len(runs) // 2] for k in RUBRIC}
+
+    scores = median_scores
     evidence = {k: "" for k in RUBRIC}
-    for it in r.data["items"]:
-        scores[it["code"]] = max(0, min(RUBRIC[it["code"]], int(it["score"])))
-        evidence[it["code"]] = it["evidence"]
-    defects = r.data["defects"] + [{"severity": "critical", **d} for d in art_critical if not any(x["panel"] == d["panel"] and x["severity"] == "critical" for x in r.data["defects"])]
+    for it in data["items"]:
+        if it.get("code") in RUBRIC:
+            evidence[it["code"]] = it["evidence"]
+    defects = data["defects"] + [{"severity": "critical", **d} for d in art_critical if not any(x["panel"] == d["panel"] and x["severity"] == "critical" for x in data["defects"])]
     total = sum(scores.values())
     critical = [d for d in defects if d["severity"] == "critical"]
     passed = total >= 80 and scores["Q-5"] >= 16 and not critical
@@ -1017,7 +1480,7 @@ def run_review(ctx: dict[str, Any], llm: JSONModel, s: ArtSettings, media: Media
     md = [
         f"# 검수 결과: {'합격' if passed else '불합격'} ({total}/100)",
         "",
-        r.data["summary"],
+        data["summary"],
         "",
         "| 항목 | 점수 | 근거 |",
         "| --- | --- | --- |",
@@ -1029,7 +1492,7 @@ def run_review(ctx: dict[str, Any], llm: JSONModel, s: ArtSettings, media: Media
         *([f"- [{ {'critical': '치명', 'major': '주요', 'minor': '경미'}[d['severity']] }] {d['panel'] or '전체'}컷 {d['rule']}: {d['note']}" for d in defects] or ["- 없음"]),
         "",
         "## 수정 지시",
-        *([f"{i + 1}. {f}" for i, f in enumerate(r.data["fixes"])] or ["- 없음"]),
+        *([f"{i + 1}. {f}" for i, f in enumerate(data["fixes"])] or ["- 없음"]),
         "",
         "## 자동 검사",
         f"- 금지 표현: {len(banned)}건" + ("".join(f"\n  - {h['panel']}컷 '{h['term']}' ({h['kind']})" for h in banned)),
@@ -1044,7 +1507,8 @@ def run_review(ctx: dict[str, Any], llm: JSONModel, s: ArtSettings, media: Media
         "total": total,
         "scores": scores,
         "defects": defects,
-        "fixes": r.data["fixes"],
+        "fixes": data["fixes"],
+        "score_runs": [sum(run[1].values()) for run in runs],
         "auto_checks": auto,
     }
     return body, list(costs)

@@ -1,5 +1,7 @@
 "use server";
 
+import { applyFields } from "@/lib/artifact-fields";
+
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
@@ -18,6 +20,9 @@ import { ALL_STAGES, IMAGE_MODELS, restGate, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
 import { enqueueJob, notifyWorker } from "@/lib/queue";
 import { putPrivate } from "@/lib/private-media";
+import { putPublic } from "@/lib/public-media";
+import { replacePanel } from "@/lib/hand-edit";
+import { setVerdict, type Verdict } from "@/lib/judge";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { totpSecret } from "@/lib/studio-2fa";
 import { verifyTotp } from "@/lib/totp";
@@ -342,6 +347,15 @@ export async function artNextStep(formData: FormData) {
     if (mode === "rest") {
       panels = nums("pending");
       if (!panels.length) throw new StudioError("남은 컷이 없어요");
+      // 한 장씩 확인할 장면: 고른 장면은 한 컷씩 그리고 멈춰요 (고른 것이 없으면 모두 자동으로)
+      if (formData.get("step_choice")) {
+        extra = {
+          step_scenes: formData
+            .getAll("step_scenes")
+            .map(Number)
+            .filter((n) => Number.isInteger(n) && n > 0),
+        };
+      }
       // 시험 컷이 하나도 합격하지 못했으면 나머지도 같은 이유로 떨어져요. 돈을 쓰기 전에 막아요.
       const [base] = await db
         .select({ body: schema.artifacts.body })
@@ -394,7 +408,66 @@ export async function artNextStep(formData: FormData) {
 
 const REF_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
-/** ④ 화풍 참고 캡처 올리기·빼기. 그림 모델에는 보내지 않고 기준 값 분석에만 써요. */
+/** 작화 컷에 대표 판정(좋아요 / AI 같아요)을 남겨요. 다음 작화부터 검사기가 이 판정을 사례로 배워요. 돈이 들지 않아요. */
+export async function judgePanel(formData: FormData) {
+  await requireOwner();
+  const path = String(formData.get("back"));
+  const id = String(formData.get("artifactId"));
+  const [idx, v] = String(formData.get("judge") ?? "").split(":");
+  const index = Number(idx);
+  const verdict: Verdict | null = v === "good" || v === "ai" ? v : null;
+  try {
+    const [a] = await db.select().from(schema.artifacts).where(eq(schema.artifacts.id, id));
+    if (!a) throw new StudioError("결과물을 찾을 수 없어요");
+    const body = setVerdict(a.body, index, verdict, String(formData.get(`judge_note_${index}`) ?? ""));
+    await db.update(schema.artifacts).set({ body }).where(eq(schema.artifacts.id, id));
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+/**
+ * 핵심 컷 손보기: 대표(또는 외주 작가)가 내려받아 고친 그림을 올리면 그 컷 그림을 바꿔요.
+ * 원래 그림은 raw_image로 남기고, 무엇을 바꿨는지 제작 원장에 적어요. 결과물은 검토 대기 그대로예요.
+ */
+export async function uploadPanelImage(formData: FormData) {
+  const owner = await requireOwner();
+  const path = String(formData.get("back"));
+  const id = String(formData.get("artifactId"));
+  const index = Number(formData.get("index"));
+  try {
+    // 컷 목록 안의 버튼으로 보내서, 그 컷의 파일 칸(file_N)을 읽어요
+    const f = formData.get(`file_${index}`) ?? formData.get("file");
+    if (!(f instanceof File) || f.size === 0) throw new StudioError("올릴 그림을 골라 주세요");
+    const ext = REF_TYPES[f.type];
+    if (!ext) throw new StudioError("PNG, JPG, WEBP 그림만 올릴 수 있어요");
+    if (f.size > 15 * 1024 * 1024) throw new StudioError("한 장에 15MB까지 올릴 수 있어요");
+    const [a] = await db.select().from(schema.artifacts).where(eq(schema.artifacts.id, id));
+    if (!a) throw new StudioError("결과물을 찾을 수 없어요");
+    if (a.status === "generating") throw new StudioError("그리는 중에는 바꿀 수 없어요");
+    const key = `series/${a.seriesId}/hand/${a.id}/${String(index).padStart(3, "0")}-${crypto.randomUUID()}.${ext}`;
+    const body = replacePanel(a.body, index, key);
+    await putPublic(key, new Uint8Array(await f.arrayBuffer()), f.type);
+    await db.update(schema.artifacts).set({ body, updatedAt: new Date() }).where(eq(schema.artifacts.id, id));
+    await db.insert(schema.decisionLedger).values({
+      artifactId: id,
+      seriesId: a.seriesId,
+      actor: owner.email,
+      action: "edit",
+      before: a.body,
+      after: body,
+      note: `${index}컷 그림을 손으로 고친 그림으로 바꿨어요` + (String(formData.get("note") ?? "").trim() ? `: ${String(formData.get("note")).trim()}` : ""),
+    });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+/** ④ 화풍 기준 그림 올리기·빼기. 참고 캡처는 기준 값 분석에만, 대표가 그린 그림(kind=own)은 그림 모델이 직접 보고 따라 그려요. */
 export async function updateStyleRefs(formData: FormData) {
   await requireOwner();
   const path = String(formData.get("back"));
@@ -402,24 +475,30 @@ export async function updateStyleRefs(formData: FormData) {
   try {
     const [s] = await db.select({ brief: schema.series.brief }).from(schema.series).where(eq(schema.series.id, seriesId));
     if (!s) throw new StudioError("작품을 찾을 수 없어요");
-    let refs = [...(s.brief.styleRefs ?? [])];
+    // kind=own: 대표가 직접 그린 그림 (그림 모델이 직접 보고 따라 그려요). 그 밖: 참고 웹툰 캡처 (기준 값 분석에만)
+    const own = String(formData.get("kind") ?? "") === "own";
+    const limit = own ? 3 : 8;
+    let refs = [...((own ? s.brief.ownArt : s.brief.styleRefs) ?? [])];
     const remove = String(formData.get("remove") ?? "");
     if (remove) {
       refs = refs.filter((r) => r !== remove);
     } else {
       const files = formData.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
       if (!files.length) throw new StudioError("올릴 그림을 골라 주세요");
-      if (refs.length + files.length > 8) throw new StudioError("참고 캡처는 8장까지예요");
+      if (refs.length + files.length > limit) throw new StudioError(own ? "내 그림은 3장까지예요" : "참고 캡처는 8장까지예요");
       for (const f of files) {
         const ext = REF_TYPES[f.type];
         if (!ext) throw new StudioError("PNG, JPG, WEBP 그림만 올릴 수 있어요");
         if (f.size > 5 * 1024 * 1024) throw new StudioError("한 장에 5MB까지 올릴 수 있어요");
-        const key = `series/${seriesId}/style-refs/${crypto.randomUUID()}.${ext}`;
+        const key = `series/${seriesId}/${own ? "own-art" : "style-refs"}/${crypto.randomUUID()}.${ext}`;
         await putPrivate(key, new Uint8Array(await f.arrayBuffer()), f.type);
         refs.push(key);
       }
     }
-    await db.update(schema.series).set({ brief: { ...s.brief, styleRefs: refs } }).where(eq(schema.series.id, seriesId));
+    await db
+      .update(schema.series)
+      .set({ brief: { ...s.brief, ...(own ? { ownArt: refs } : { styleRefs: refs }) } })
+      .where(eq(schema.series.id, seriesId));
   } catch (e) {
     back(path, e);
   }
@@ -763,7 +842,18 @@ export async function decideArtifact(formData: FormData) {
       const raw = String(formData.get("body") ?? "");
       const format = String(formData.get("format") ?? "markdown");
       let body: Record<string, unknown>;
-      if (format === "json") {
+      if (format === "fields") {
+        // 입력란으로 고친 칸만 원래 결과에 넣어요
+        const [a] = await db.select().from(schema.artifacts).where(eq(schema.artifacts.id, id));
+        if (!a) throw new StudioError("결과물을 찾을 수 없어요");
+        const fields = new Map<string, string>();
+        for (const [k, v] of formData.entries()) if (/^p\d+\./.test(k) && typeof v === "string") fields.set(k, v);
+        try {
+          body = applyFields(a.body as Record<string, unknown>, fields);
+        } catch (e) {
+          throw new StudioError(e instanceof Error ? e.message : "고칠 수 없는 결과예요");
+        }
+      } else if (format === "json") {
         try {
           body = JSON.parse(raw);
         } catch {

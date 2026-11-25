@@ -24,7 +24,7 @@ from .images import IMAGE_MODELS, ImageGen, NoImageError, thumbnail, trim_border
 from .media import Media
 from .prompts import PERIOD_JUDGE_NOTE, render_guidelines, render_task
 from .research import research_text
-from .visual import Costs, StageInputError, _arr, _map_progress, _obj, _report, base_for
+from .visual import own_art, Costs, StageInputError, _arr, _map_progress, _obj, _report, base_for
 
 _STR = {"type": "string"}
 
@@ -53,6 +53,33 @@ SPEC_SCHEMA = _obj(
     }
 )
 
+_FACE_STOP = {
+    "a", "an", "and", "with", "of", "the", "in", "on", "her", "his", "their", "wears", "wearing", "year", "years", "old", "short", "long",
+}
+FACE_SIMILAR = 0.55  # 외모 문구 낱말이 이만큼 겹치면 얼굴이 비슷하게 그려질 가능성이 커요
+
+
+def _face_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", (text or "").lower()) if len(w) > 2 and w not in _FACE_STOP}
+
+
+def face_warnings(chars: list[dict[str, Any]], others: list[dict[str, Any]]) -> list[str]:
+    """다른 작품 주요 인물과 외모 문구가 많이 겹치면 알려요 (계산만 해서 돈이 들지 않아요)."""
+    out = []
+    for c in chars:
+        if c.get("kind", "person") != "person" or c.get("role") == "minor":
+            continue
+        mine = _face_words(c.get("appearance", ""))
+        if not mine:
+            continue
+        for o in others:
+            theirs = _face_words(o.get("appearance", ""))
+            if theirs and len(mine & theirs) / len(mine | theirs) >= FACE_SIMILAR:
+                out.append(f"{c.get('name', c['id'])}의 외모 명세가 「{o['series']}」 {o['name']}와 많이 겹쳐요. 얼굴이 비슷하게 그려질 수 있어요.")
+                break
+    return out
+
+
 SPEC_TASK = """
 ## 출력 형식 (JSON)
 승인된 인물 문서에 나오는 인물(동물·요괴 포함)마다 작화가 모든 회차에 그대로 쓸 고정 명세를 만든다. 많아야 12명, 주인공부터.
@@ -62,6 +89,9 @@ SPEC_TASK = """
   의상 변형, 특정 회차에만 나오는 상태(부상, 붕대, 변신, 젖은 모습), 회차 번호, '변형' 같은 말은 넣지 않는다(시트에 글자로 그려져요).
   인물 문서의 '영어 외모 고정 문구'가 기본 모습만 담고 있으면 그대로 옮기고, 아니면 기본 모습만 남긴다.
   나이, 얼굴형, 눈, 머리 모양과 색, 체형, 의상(형태·길이·색), 고정 소품, 신발 순서로 구체적인 단어만 쓴다.
+  얼굴은 이 인물만의 설계값으로 쓴다: 눈 모양과 크기(예: narrow upturned monolid eyes), 눈썹 모양, 코, 입, 턱선과 광대, 피부색, 알아볼 표식(점, 흉터, 주근깨) 하나.
+  같은 작품의 인물끼리 얼굴 설계값이 겹치지 않게 하고(특히 같은 나이·성별), '아름다운', '잘생긴' 같은 막연한 말 대신 생김새를 쓴다.
+  그림 모델은 막연한 말을 들으면 모든 젊은 인물을 같은 얼굴로 그린다.
 - period_notes: 시대 고증을 영어로, **맞는 생김새만** 긍정형으로 쓴다(예: straight single-edged sword with a round ring pommel and a plain grip,
   straight scabbard). 금지할 것의 이름(일본도, 코등이 등)은 여기 쓰지 않고 never에만 쓴다.
 - hair: 머리 모양과 머리에 쓰거나 두르는 것만 영어 한두 문장(묶는 위치와 방법, 덮는 것의 모양, 이마에 아무것도 없으면 그렇게).
@@ -498,6 +528,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
     medium = cands[chosen].get("medium")
     base = base_for(medium)
     masters = [m for m in (media.get(k) for k in (style_body.get("style_masters") or [])[:2]) if m]
+    own = own_art(brief, media, 1)
     history = [h for h in (media.get_private(k) for k in (brief.get("historyRefs") or [])[:3]) if h]
     history = [thumbnail(h, 1280) for h in history]
     research_body = (ctx.get("input_bodies") or {}).get("research") or {}
@@ -555,6 +586,12 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         only = []
         _report(ctx, "인물 외모 명세 고정하는 중")
         task = render_task("characters", ctx).replace("# 과제: ③ 인물", "# 과제: ④+ 인물 시트 — 외모 명세 고정") + SPEC_TASK
+        if ctx.get("other_faces"):
+            task += (
+                "\n\n## 다른 작품의 주요 인물 (얼굴이 겹치지 않게)\n"
+                "NORIVA의 작품마다 인물 얼굴이 달라 보여야 한다. 아래 인물과 같은 나이·성별이면 눈 모양, 눈썹, 코, 입, 턱선, 표식 중 적어도 세 가지를 다르게 쓴다.\n"
+                + "\n".join(f"- 「{f['series']}」 {f['name']}: {f['appearance']}" for f in ctx["other_faces"])
+            )
         if instruction:
             task += f"\n\n## 대표의 추가 지시 (가장 우선)\n{instruction}"
         r = llm.json(system, task, SPEC_SCHEMA, effort="medium", max_tokens=32000)
@@ -918,7 +955,9 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         note = instruction if only else ""
         mine = props_of(c)
         n_masters = 0 if c["id"] in no_master else len(masters)
-        refs = masters[:n_masters] + [prop_imgs[p["id"]] for p in mine]
+        # 대표가 직접 그린 그림이 있으면 화풍 기준으로 가장 앞에 넣어요 (선·채색·얼굴 구성을 따라 그려요)
+        n_style = n_masters + len(own[:1])
+        refs = own[:1] + masters[:n_masters] + [prop_imgs[p["id"]] for p in mine]
         tries: list[dict[str, Any]] = []
         # 대표가 고칠 곳을 지시했으면 첫 번째는 이전 시트를 그대로 두고 그 부분만 고쳐요. 두 번째는 새 명세로 새로 그려요.
         old = media.get(c["sheet"]) if edits.get(c["id"]) and c.get("sheet") else None
@@ -939,7 +978,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
                 img = images.generate(_edit_prompt(c, fix, mine), seed=seed, aspect_ratio="4:3",
                                       references=[prev_best["data"], *prop_refs], model=model)
             else:
-                img = images.generate(_sheet_prompt(base, style, c, n_masters, mine, note), seed=seed, aspect_ratio="4:3", references=refs or None, model=model)
+                img = images.generate(_sheet_prompt(base, style, c, n_style, mine, note), seed=seed, aspect_ratio="4:3", references=refs or None, model=model)
             local.append(img.cost_entry())
             if tries:
                 budget.spend(img.cost_entry())
@@ -998,6 +1037,7 @@ def run_sheets(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) ->
         "clean_masters": clean_keys,
         "clean_from": master_keys,
         "spec_fixes": spec_fixes,
+        "face_warnings": face_warnings(final, ctx.get("other_faces") or []),
         "retry_spent_usd": round(budget.spent, 2),
         "clean_research": research_body.get("era"),
         "summary": {"characters": len(final), "passed": sum(1 for c in final if c.get("passed")),

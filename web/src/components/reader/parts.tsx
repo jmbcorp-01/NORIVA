@@ -38,7 +38,7 @@ export function SeriesCard({ s, locale, t, badge, eager = false }: { s: ReaderSe
   return (
     <Link href={`/series/${s.slug}`} className="group block">
       <div className="relative">
-        <Cover src={s.cover} title={s.title} eager={eager} className="transition-transform duration-200 group-hover:-translate-y-0.5" />
+        <Cover src={s.cover} title={s.title} eager={eager} titled className="transition-transform duration-200 group-hover:-translate-y-0.5" />
         {b ? <Badge kind={b} t={t} className="absolute left-1.5 top-1.5" /> : null}
       </div>
       <p className="mt-1.5 line-clamp-2 text-[13.5px] font-semibold leading-snug">{s.title}</p>

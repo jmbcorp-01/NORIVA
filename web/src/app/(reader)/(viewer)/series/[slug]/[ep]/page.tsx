@@ -8,10 +8,15 @@ import { LangToggle } from "@/components/reader/lang-toggle";
 import { ProgressTracker } from "@/components/reader/progress-tracker";
 import { DICT, getLocale } from "@/lib/i18n";
 import { panelSrc } from "@/lib/panel-media";
-import { getEpisode, reactions, recordView } from "@/lib/reader";
+import { joinStyles } from "@/lib/publish";
+import { episodeThumbs, getEpisode, listSeries, reactions, recordView } from "@/lib/reader";
+import { similarSeries } from "@/lib/reader-picks";
+import { Cover } from "@/components/reader/cover";
+import { EffectLayer } from "@/components/reader/effect-layer";
 import { canRead } from "@/lib/commerce";
 import { currentReader } from "@/lib/reader-auth";
-import { reactAction } from "@/app/reader-actions";
+import { reactAction, toggleBookmark } from "@/app/reader-actions";
+import { isBookmarked } from "@/lib/library";
 import { ViewerChrome } from "@/components/reader/viewer-chrome";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +50,12 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
   if (!gate.ok) redirect(`/series/${s.slug}?open=${episode.number}`);
   await recordView(s.id, episode.id, reader?.id ?? null);
   const react = await reactions(episode.id, reader?.id ?? null);
+  const saved = !next && reader ? await isBookmarked(reader.id, s.id) : false;
+  // 회차 끝: 다음 화 미리보기(첫 컷)와 비슷한 뿌리의 작품
+  const [thumbs, all] = await Promise.all([next ? episodeThumbs(s.id, locale) : Promise.resolve(new Map<number, string>()), listSeries(locale)]);
+  const nextEp = next ? s.episodes.find((e) => e.number === next) : null;
+  const nextThumb = next ? thumbs.get(next) : undefined;
+  const picks = similarSeries(all, { id: s.id, genre: s.genre, roots: s.roots, isDummy: s.sale.isDummy });
   const nav = "flex h-12 flex-1 items-center justify-center rounded-[6px] border border-line bg-paper-raised text-[14px]";
 
   return (
@@ -68,7 +79,10 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
           <nav aria-label={t.list} className="mx-auto flex h-14 max-w-[720px] items-center justify-between px-4 text-[13.5px] text-ink-soft">
             {prev ? <Link href={`/series/${s.slug}/${prev}`}>‹ {t.prev}</Link> : <span className="opacity-40">‹ {t.prev}</span>}
             <a href="#react" className="flex gap-4">
-              <span>{t.fun} {react.fun.toLocaleString()}</span>
+              <span>
+                {t.fun}
+                {react.fun ? ` ${react.fun.toLocaleString()}` : ""}
+              </span>
             </a>
             {next ? (
               <Link href={`/series/${s.slug}/${next}`} className="font-bold text-ink">
@@ -92,6 +106,38 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
           <div className="px-4 pb-28 pt-14 text-center">
             {s.sale.isDummy ? <p className="mx-auto mb-6 max-w-[420px] rounded-[6px] bg-plum-soft px-3 py-2.5 text-[13px] text-plum">{t.sampleNote}</p> : null}
             <p className="font-serif text-[16px] text-ink-soft">{next ? t.endOfEpisode : t.nextComing}</p>
+            {nextEp ? (
+              <Link
+                href={`/series/${s.slug}/${nextEp.number}`}
+                className="mx-auto mt-4 flex max-w-[420px] items-center gap-3 rounded-[8px] border border-line bg-paper-raised p-2.5 text-left hover:bg-paper-sunk"
+              >
+                {nextThumb ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={panelSrc(nextThumb)} alt="" className="h-[72px] w-[96px] flex-none rounded-[5px] object-cover" loading="lazy" />
+                ) : null}
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[12px] text-ink-faint">{t.nextUp}</span>
+                  <span className="mt-0.5 block truncate text-[15px] font-semibold">
+                    {t.epNo(nextEp.number)} {nextEp.title}
+                  </span>
+                </span>
+                <span className="pr-1 text-[18px] text-ink-faint">›</span>
+              </Link>
+            ) : null}
+            {!next ? (
+              <form action={toggleBookmark} className="mt-3">
+                <input type="hidden" name="seriesId" value={s.id} />
+                <input type="hidden" name="back" value={`/series/${s.slug}/${episode.number}`} />
+                <p className="text-[13px] text-ink-soft">{t.followForNext}</p>
+                <button
+                  type="submit"
+                  aria-pressed={saved}
+                  className={`mt-2 h-11 min-w-[180px] rounded-full border px-4 text-[14px] font-semibold ${saved ? "border-seal text-seal" : "border-ink bg-ink text-paper"}`}
+                >
+                  {saved ? t.bookmarked : t.bookmark}
+                </button>
+              </form>
+            ) : null}
             <section id="react" aria-label={t.howWas} className="mt-6">
               <p className="text-[13px] text-ink-faint">{t.howWas}</p>
               <div className="mt-3 flex justify-center gap-2">
@@ -105,12 +151,28 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
                       aria-pressed={react.mine === k}
                       className={`h-11 min-w-[128px] rounded-full border px-4 text-[14px] font-semibold ${react.mine === k ? "border-ink bg-ink text-paper" : "border-line-strong bg-paper-raised text-ink"}`}
                     >
-                      {k === "fun" ? t.fun : t.meh} {react[k].toLocaleString()}
+                      {k === "fun" ? t.fun : t.meh}
+                      {react[k] ? ` ${react[k].toLocaleString()}` : ""}
                     </button>
                   </form>
                 ))}
               </div>
             </section>
+            {picks.length ? (
+              <section aria-label={t.alsoLike} className="mt-10 text-left">
+                <p className="text-[13px] font-semibold">{t.alsoLike}</p>
+                <ul className="mt-2 grid grid-cols-3 gap-2.5">
+                  {picks.map((x) => (
+                    <li key={x.id}>
+                      <Link href={`/series/${x.slug}`} className="block">
+                        <Cover src={x.cover} title={x.title} titled />
+                        <span className="mt-1 block truncate text-[12.5px] font-semibold">{x.title}</span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
             <nav aria-label={t.list} className="mt-10 flex gap-2">
               {prev ? (
                 <Link href={`/series/${s.slug}/${prev}`} className={nav}>
@@ -136,10 +198,14 @@ export default async function Viewer({ params }: { params: Promise<{ slug: strin
 }
 
 function Panel({ p, first, n }: { p: PublishedPanel; first: boolean; n: number }) {
+  // 이어지는 긴 세로 컷은 앞 컷 아래 끝에 겹쳐 여백 없이 한 장처럼 보여요
+  const join = first ? undefined : p.join;
+  const js = joinStyles(join);
   return (
-    <figure data-panel={n} className={`relative ${first ? "" : GAP[p.gapBefore]}`}>
+    <figure data-panel={n} className={`relative ${first || join ? "" : GAP[p.gapBefore]}`} style={js.figure}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={panelSrc(p.image)} alt="" className="block w-full" loading={first ? "eager" : "lazy"} />
+      <img src={panelSrc(p.image)} alt="" className="block w-full" style={js.img} loading={first ? "eager" : "lazy"} />
+      <EffectLayer kind={p.effect} seed={p.index} />
       {p.bubbles.map((b, i) => (
         <BubbleView key={i} b={b} />
       ))}

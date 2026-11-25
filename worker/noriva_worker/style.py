@@ -23,7 +23,7 @@ from .images import IMAGE_MODELS, ImageGen, thumbnail, trim_border
 from .media import Media
 from .prompts import PERIOD_JUDGE_NOTE, render_guidelines, render_task
 from .research import research_text
-from .visual import BASES, Costs, JSONModel, _arr, _map_progress, _obj, _report, base_for
+from .visual import BASES, Costs, JSONModel, _arr, _map_progress, _obj, _report, base_for, own_art
 
 _STR = {"type": "string"}
 
@@ -91,6 +91,25 @@ PLAN_TASK = """
 """
 
 SCENE_ASPECT = ["3:4", "9:16", "4:3"]
+
+STYLE_MATCH_PASS = 75  # 기준 그림과 화풍이 이만큼 맞아야 그대로 둬요. 아래면 차이를 고쳐 한 번 더 그려요.
+
+STYLE_MATCH_SCHEMA = _obj(
+    {
+        "style_match": {"type": "integer"},
+        "differences": _arr(_obj({"aspect": _STR, "fix": _STR})),
+    }
+)
+
+STYLE_MATCH_TASK = """# 과제: 화풍이 기준을 따라갔는지 검사
+
+첫 번째 그림은 우리가 새로 그린 화풍 샘플이다. {ref_note}
+장면 내용, 인물, 구도는 달라도 된다. 그리는 방식만 비교한다.
+- style_match: 0~100. 선(굵기, 강약, 색), 채색 방식과 그림자 단계, 명암 대비, 팔레트(채도·명도), 얼굴 구성(눈 크기와 모양, 코·입 생략 정도, 턱선),
+  등신과 체형, 배경 처리, 질감이 기준과 같은 사람이 그린 것처럼 보이면 90 이상, 결이 비슷하면 70~80, 다른 작가처럼 보이면 50 이하.
+- differences: 가장 크게 다른 것부터 많아야 5개. aspect는 한국어 짧게(예: 선 굵기), fix는 이미지 모델에 줄 영어 한 문장(맞는 모습만 긍정형으로,
+  예: Use thick dark-brown outlines with strong thick-thin variation and only two flat shadow tones).
+{criteria}"""
 
 SCENE_REVIEW_SCHEMA = _obj({"scenes": _arr(_obj({"title": _STR, "prompt": _STR, "changes": _STR}))})
 
@@ -192,13 +211,15 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
     brief = (ctx.get("series") or {}).get("brief") or {}
     model = brief.get("imageModel") if brief.get("imageModel") in IMAGE_MODELS else None
 
-    # 1. 참고 캡처 → 기준 값
+    # 1. 참고 캡처·대표 그림 → 기준 값
     criteria = None
     refs = [media.get_private(k) for k in (brief.get("styleRefs") or [])[:8]]
     refs = [thumbnail(r, 1280) for r in refs if r]
-    if refs:
-        _report(ctx, f"참고 캡처 {len(refs)}장에서 기준 값 뽑는 중")
-        r = llm.json(system, CRITERIA_TASK, CRITERIA_SCHEMA, images=refs, effort="medium", max_tokens=8000)
+    # 대표가 직접 그린 그림: 기준 값을 뽑는 데 더해, 그림 모델에 참고 그림으로 직접 보내 그 결대로 그려요.
+    own = own_art(brief, media)
+    if refs or own:
+        _report(ctx, f"기준 그림 {len(refs) + len(own)}장에서 기준 값 뽑는 중")
+        r = llm.json(system, CRITERIA_TASK, CRITERIA_SCHEMA, images=[thumbnail(o, 1280) for o in own] + refs, effort="medium", max_tokens=8000)
         costs.add(r.result.cost_entry())
         criteria = r.data
 
@@ -215,6 +236,12 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
         for i, t in enumerate(picked):
             task += f"\n### 참고 화풍 {chr(65 + i)}\n" + _criteria_text(t)
         task += "\n후보 1은 참고 화풍의 결에 가장 가깝게, 후보 2·3은 같은 완성도에서 변주한다."
+    if own:
+        task += (
+            "\n\n## 대표가 직접 그린 그림이 있다 (가장 우선)\n샘플은 대표 그림을 참고 그림으로 직접 보고 그린다. 세 후보 모두 대표 그림의 선·채색·얼굴 구성을 따르고, "
+            "후보 1은 대표 그림과 같은 사람이 그린 것처럼 가장 충실하게, 후보 2·3은 같은 결에서 배경·명암·연출만 다듬는다. "
+            "style_prompt에는 대표 그림에서 보이는 선 굵기, 채색 단계, 얼굴 구성을 구체적으로 적는다."
+        )
     r = llm.json(system, task, PLAN_SCHEMA, effort="medium", max_tokens=32000)
     costs.add(r.result.cost_entry())
     cands = r.data["candidates"][:3]
@@ -258,43 +285,90 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
     def weight(issues: list[dict[str, Any]]) -> int:
         return sum(3 if i.get("severity") == "critical" else 1 for i in issues)
 
-    def draw(job: tuple[int, int]) -> tuple[tuple[int, int, str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    # 화풍 일치 검사의 기준: 대표 그림 > 참고 캡처. 그림이 없으면 뽑아 둔 기준 값 글로만 비교해요.
+    match_refs = [thumbnail(o, 768) for o in own[:3]] + [thumbnail(r, 768) for r in refs[: max(0, 3 - len(own))]]
+    criteria_lines = _criteria_text(criteria) if criteria else ""
+    if picked and not criteria_lines:
+        criteria_lines = _criteria_text(picked[0])
+
+    def style_match(data: bytes, local: list[dict[str, Any]]) -> tuple[int, list[dict[str, Any]]] | None:
+        if not match_refs and not criteria_lines:
+            return None
+        ref_note = (
+            f"그 뒤의 {len(match_refs)}장은 이 작품이 따라야 할 기준 그림이다"
+            + (" (앞쪽은 대표가 직접 그린 그림)." if own else " (대표가 고른 시장 웹툰 캡처. 완성도와 결의 기준).")
+            if match_refs
+            else "기준 그림은 없고 아래 기준 값 글이 기준이다."
+        )
+        r = llm.json(
+            system,
+            STYLE_MATCH_TASK.format(ref_note=ref_note, criteria=f"\n## 기준 값\n{criteria_lines}\n" if criteria_lines else ""),
+            STYLE_MATCH_SCHEMA,
+            images=[thumbnail(data, 1024)] + match_refs,
+            effort="medium",
+            max_tokens=6000,
+        )
+        local.append(r.result.cost_entry())
+        score = max(0, min(100, int(r.data.get("style_match") or 0)))
+        return score, [d for d in r.data.get("differences") or [] if (d.get("fix") or "").strip()]
+
+    own_note = (
+        f"Reference images 1-{len(own)} are the creator's own artwork for this series: reproduce their exact line quality, line color, "
+        "coloring and shading steps, palette, proportions and face construction (eye shape and size, nose, mouth, jaw) so the new picture "
+        "looks drawn by the same artist. Draw the new scene described here, not their characters or composition."
+        if own
+        else ""
+    )
+
+    def draw(job: tuple[int, int]) -> tuple[tuple[int, int, str, list[dict[str, Any]], int | None], list[dict[str, Any]]]:
         ci, si = job
         prompt = (
-            f"{base_for(cands[ci].get('medium'))} One single webtoon panel, one continuous image edge to edge, no borders, no split panels. "
-            f"{scenes[si]['prompt']} Style: {_strip_avoid(cands[ci]['style_prompt'])} "
-            "No text, letters, speech bubbles or watermark."
+            f"{base_for(cands[ci].get('medium'))} One single webtoon panel, one continuous full-bleed image edge to edge. "
+            f"{scenes[si]['prompt']} Style: {_strip_avoid(cands[ci]['style_prompt'])} {own_note} "
+            "Signs and papers are blank; the picture contains no lettering, speech bubbles or watermark."
         )
+        # 기준을 따라가야 하는 후보: 대표 그림이 있으면 모두, 참고 캡처·참고작만 있으면 '가장 가깝게'인 후보 1
+        follow = bool(own) or ci == 0
         local: list[dict[str, Any]] = []
-        tries: list[tuple[bytes, list[dict[str, Any]]]] = []
+        tries: list[dict[str, Any]] = []
         for k in range(2):
             p = prompt
             if tries:
-                fixes = " ".join(i["fix"].strip() for i in tries[-1][1] if (i.get("fix") or "").strip())
+                last = tries[-1]
+                fixes = " ".join(i["fix"].strip() for i in last["issues"] if (i.get("fix") or "").strip())
                 p += f" Draw these details correctly: {fixes}" if fixes else ""
-            img = images.generate(p, seed=1000 + si + 100 * k, aspect_ratio=SCENE_ASPECT[si % 3], model=model)
+                if last["diffs"]:
+                    p += " Match the reference style more closely: " + " ".join(d["fix"].strip() for d in last["diffs"][:5])
+            img = images.generate(p, seed=1000 + si + 100 * k, aspect_ratio=SCENE_ASPECT[si % 3], model=model, references=own or None)
             local.append(img.cost_entry())
             data = trim_border(img.data)
-            tries.append((data, check(data, si, local)))
-            if not tries[-1][1]:
+            found = check(data, si, local)
+            sm = style_match(data, local) if follow else None
+            tries.append({"data": data, "issues": found, "match": sm[0] if sm else None, "diffs": sm[1] if sm else []})
+            if not found and (sm is None or sm[0] >= STYLE_MATCH_PASS):
                 break
-        data, issues = min(tries, key=lambda t: weight(t[1]))
+        best = min(tries, key=lambda t: (weight(t["issues"]), -(t["match"] if t["match"] is not None else 100)))
+        data, issues, match = best["data"], best["issues"], best["match"]
         key = media.put(f"{base}/c{ci + 1}-s{si + 1}.png", data)
-        return (ci, si, key, [{"item": i["item"], "severity": i.get("severity", "major")} for i in issues]), local
+        return (ci, si, key, [{"item": i["item"], "severity": i.get("severity", "major")} for i in issues], match), local
 
     results = _map_progress(ctx, 4, draw, jobs, "화풍 샘플 그리는 중")
     for _, local in results:
         costs.extend(local)
     samples: dict[int, dict[int, str]] = {}
     issues: dict[int, dict[int, list[dict[str, Any]]]] = {}
-    for (ci, si, key, found), _ in results:
+    matches: dict[int, dict[int, int | None]] = {}
+    for (ci, si, key, found, match), _ in results:
         samples.setdefault(ci, {})[si] = key
         issues.setdefault(ci, {})[si] = found
+        matches.setdefault(ci, {})[si] = match
 
     out_cands = [
         {"name": c["name"], "medium": c.get("medium") if c.get("medium") in BASES else "cel", "card": c["card"], "style_prompt": c["style_prompt"],
          "samples": [samples.get(i, {}).get(s) for s in range(len(scenes))],
-         "sample_issues": [issues.get(i, {}).get(s) or [] for s in range(len(scenes))]}
+         "sample_issues": [issues.get(i, {}).get(s) or [] for s in range(len(scenes))],
+         # 기준 그림(대표 그림·참고 캡처)과 화풍이 얼마나 맞는지 0~100. 검사하지 않은 후보는 None
+         "sample_match": [matches.get(i, {}).get(s) for s in range(len(scenes))]}
         for i, c in enumerate(cands)
     ]
     md = ["# ④ 화풍 후보 3안", ""]
@@ -309,6 +383,7 @@ def run_style(ctx: dict[str, Any], llm: Any, images: ImageGen, media: Media) -> 
         "markdown": "\n".join(md),
         "stage": "style",
         "criteria": criteria,
+        "own_art": len(own),
         # 화면 표시용. 작품 이름은 markdown에 넣지 않아요 (다음 단계 에이전트가 읽지 않게)
         "picked": picked_titles(brief) if picked else [],
         "candidates": out_cands,

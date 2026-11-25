@@ -15,6 +15,10 @@ export default async function Samples({ searchParams }: { searchParams: Promise<
     .from(schema.series)
     .where(eq(schema.series.isDummy, true))
     .orderBy(asc(schema.series.title));
+  const listed = new Set(SAMPLES.map((s) => s.slug));
+  const have = new Set(rows.map((r) => r.slug));
+  const missing = SAMPLES.filter((s) => !have.has(s.slug)).length;
+  const stale = rows.filter((r) => !listed.has(r.slug)).length;
   return (
     <>
       <PageHeader
@@ -29,9 +33,14 @@ export default async function Samples({ searchParams }: { searchParams: Promise<
         <Card className="min-w-[260px] flex-1 p-5">
           <h2 className="text-[15px] font-semibold">샘플 채우기</h2>
           <p className="mt-1 text-[13px] text-ink-soft">지금 {rows.length}개 있어요. 없는 것만 넣어요.</p>
+          {stale ? (
+            <p className="mt-1 text-[13px] text-plum">
+              그림이 작품 소개와 맞지 않아 목록에서 뺀 예전 샘플이 {stale}개 있어요. 모두 삭제한 뒤 다시 채우면 정리돼요.
+            </p>
+          ) : null}
           <form action={fillSamplesAction} className="mt-4">
-            <Button variant="primary" disabled={rows.length >= SAMPLES.length}>
-              샘플 {SAMPLES.length - rows.length}개 넣기
+            <Button variant="primary" disabled={missing === 0}>
+              {missing ? `샘플 ${missing}개 넣기` : "모두 들어 있어요"}
             </Button>
           </form>
         </Card>

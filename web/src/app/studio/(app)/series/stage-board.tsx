@@ -5,6 +5,7 @@ import { JobProgressBar } from "@/components/job-progress";
 import { activeJobs, type JobView, typicalSeconds } from "@/lib/progress";
 import { canStart, type JobType, STAGE_HELP, STAGE_INFO, stageStates, type LatestArtifact, type Stage } from "@/lib/pipeline";
 import type { Artifact } from "@/lib/studio";
+import { fieldGroups } from "@/lib/artifact-fields";
 import { decideArtifact, resumeJob, runStage } from "../../actions";
 import { mediaUrl } from "./panel-views";
 import { and, desc, eq, inArray } from "drizzle-orm";
@@ -113,7 +114,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                         busy={scoutBusy}
                         error={scoutJob?.status === "failed" ? (scoutJob.error ?? "찾기에 실패했어요") : null}
                       />
-                      <StyleRefs seriesId={seriesId} refs={styleRefs} back={back} />
+                      <StyleRefs seriesId={seriesId} refs={styleRefs} own={brief?.ownArt ?? []} back={back} />
                       <ImageModelPicker seriesId={seriesId} back={back} current={brief?.imageModel} />
                     </>
                   ) : null}
@@ -172,7 +173,7 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                   {a ? (
                     <details className="mt-3 text-[11px] text-ink-faint">
                       <summary className="cursor-pointer">
-                        {formatDate(a.updatedAt)} · 지침 {a.guidelineVersionIds.length}개 버전 적용 (눌러서 보기) · 입력 지문 {a.inputHash || "없음"}
+                        {formatDate(a.updatedAt)} · {a.guidelineVersionIds.length ? `지침 ${a.guidelineVersionIds.length}개로 만들었어요 (눌러서 보기)` : "기본 지침으로 만들었어요"}
                       </summary>
                       <AppliedGuidelines ids={a.guidelineVersionIds} applied={applied} />
                     </details>
@@ -218,23 +219,17 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
                   {editable ? (
                     <details className="mt-4">
                       <summary className="cursor-pointer text-[12px] text-indigo">직접 고치기</summary>
-                      <form action={decideArtifact} className="mt-3 space-y-2">
-                        <Hidden back={back} artifactId={a.id} />
-                        <input type="hidden" name="decision" value="edit" />
-                        <input type="hidden" name="format" value={markdown !== null ? "markdown" : "json"} />
-                        <Textarea
-                          name="body"
-                          rows={16}
-                          defaultValue={markdown ?? JSON.stringify(a.body, null, 2)}
-                          className="font-mono text-[13px]"
-                        />
-                        <div className="flex flex-wrap gap-2">
-                          <Input name="note" placeholder="고친 이유 (제작 원장에 남아요)" className="min-w-[240px] flex-1" />
-                          <Button type="submit" variant="primary">
-                            고친 내용으로 승인
-                          </Button>
-                        </div>
-                      </form>
+                      {markdown === null && fieldGroups(a.body).length ? (
+                        <>
+                          <FieldEditor a={a} back={back} />
+                          <details className="mt-4">
+                            <summary className="cursor-pointer text-[11px] text-ink-faint">고급: 원본 데이터 전체 고치기 (형식이 틀리면 저장되지 않아요)</summary>
+                            <RawEditor a={a} back={back} markdown={markdown} />
+                          </details>
+                        </>
+                      ) : (
+                        <RawEditor a={a} back={back} markdown={markdown} />
+                      )}
                     </details>
                   ) : null}
                 </div>
@@ -244,6 +239,59 @@ export async function StageBoard({ stages, latest, seriesId, episodeId, back }: 
         );
       })}
     </ol>
+  );
+}
+
+/** 결과 전체(마크다운 또는 원본 데이터)를 그대로 고쳐요 */
+function RawEditor({ a, back, markdown }: { a: Artifact; back: string; markdown: string | null }) {
+  return (
+    <form action={decideArtifact} className="mt-3 space-y-2">
+      <Hidden back={back} artifactId={a.id} />
+      <input type="hidden" name="decision" value="edit" />
+      <input type="hidden" name="format" value={markdown !== null ? "markdown" : "json"} />
+      <Textarea name="body" rows={16} defaultValue={markdown ?? JSON.stringify(a.body, null, 2)} className="font-mono text-[13px]" />
+      <div className="flex flex-wrap gap-2">
+        <Input name="note" placeholder="고친 이유 (제작 원장에 남아요)" className="min-w-[240px] flex-1" />
+        <Button type="submit" variant="primary">
+          고친 내용으로 승인
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** 자주 고치는 칸(컷 설명, 대사, 말풍선 글)만 입력란으로. 저장하면 그 칸만 바꿔 승인해요. */
+function FieldEditor({ a, back }: { a: Artifact; back: string }) {
+  const groups = fieldGroups(a.body).filter((g) => g.rows.length);
+  return (
+    <form action={decideArtifact} className="mt-3 space-y-3">
+      <Hidden back={back} artifactId={a.id} />
+      <input type="hidden" name="decision" value="edit" />
+      <input type="hidden" name="format" value="fields" />
+      <ol className="max-h-[560px] space-y-3 overflow-y-auto pr-1">
+        {groups.map((g) => (
+          <li key={g.index} className="rounded-[5px] border border-line px-3 py-2">
+            <p className="text-[12px] font-semibold">{g.index}컷</p>
+            {g.rows.map((r) => (
+              <label key={r.name} className="mt-1.5 block text-[12px] text-ink-soft">
+                {r.label}
+                {r.long ? (
+                  <Textarea name={r.name} rows={3} defaultValue={r.value} className="mt-0.5 text-[13px]" />
+                ) : (
+                  <Input name={r.name} defaultValue={r.value} className="mt-0.5 w-full text-[13px]" />
+                )}
+              </label>
+            ))}
+          </li>
+        ))}
+      </ol>
+      <div className="flex flex-wrap gap-2">
+        <Input name="note" placeholder="고친 이유 (제작 원장에 남아요)" className="min-w-[240px] flex-1" />
+        <Button type="submit" variant="primary">
+          고친 내용으로 승인
+        </Button>
+      </div>
+    </form>
   );
 }
 

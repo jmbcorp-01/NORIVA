@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { isApproved, type Stage } from "./pipeline";
 import { LOCALES, PublishError, toPublishedPanels } from "./publish";
@@ -46,6 +46,18 @@ export async function publishEpisode(episodeId: string, actor: string, publishAt
       .update(series)
       .set({ status: "serializing", updatedAt: new Date() })
       .where(and(eq(series.id, ep.seriesId), inArray(series.status, ["planning", "production"])));
+    // 관심 작품에 담은 독자에게 새 회차 알림 (예약 공개면 공개 시각부터 보여요). 같은 회차 알림은 한 번만.
+    const [sr] = await tx.select({ slug: series.slug, title: series.title }).from(series).where(eq(series.id, ep.seriesId));
+    if (sr) {
+      const href = `/series/${sr.slug}/${ep.number}`;
+      await tx.execute(sql`
+        insert into notifications (reader_id, kind, title, body, href, created_at)
+        select b.reader_id, 'new_episode', ${`${sr.title} ${ep.number}화가 올라왔어요`}, ${ep.title ?? ""}, ${href}, ${when}
+        from bookmarks b
+        where b.series_id = ${ep.seriesId}
+          and coalesce((select np.new_episode from notification_prefs np where np.reader_id = b.reader_id), true)
+          and not exists (select 1 from notifications n where n.reader_id = b.reader_id and n.href = ${href})`);
+    }
     await tx.insert(decisionLedger).values({
       artifactId: lettering.id,
       seriesId: ep.seriesId,

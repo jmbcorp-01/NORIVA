@@ -58,7 +58,21 @@ class FakeModel:
     def json(self, system, task, schema, images=None, effort=None, max_tokens=32000):
         props = schema["properties"]
         self.calls.append((list(props), task, len(images or [])))
-        if "panels" in props:
+        if "panel_fixes" in props:
+            self.story_tasks = getattr(self, "story_tasks", []) + [task]
+            data = {"panel_fixes": [{"index": 2, "problem": "촛불이 앞 컷에서 꺼졌는데 켜져 있음", "description": "Hana stares at salt in the dark, candle out",
+                                     "continuity": "Right after the candle went out; Hana still on the left."}],
+                    "missing_beats": ["장면 1: 하나가 부적을 줍는 장면이 없어요"]} if getattr(self, "with_scenes", False) else {"panel_fixes": [], "missing_beats": []}
+        elif "style_match" in props:
+            self.match_calls = getattr(self, "match_calls", []) + [(task, len(images or []))]
+            low = getattr(self, "low_match", False) and len(self.match_calls) == 1
+            data = {"style_match": 55 if low else 90,
+                    "differences": [{"aspect": "선 굵기", "fix": "Use thick dark outlines with strong thick-thin variation."}] if low else []}
+        elif "zoom_defects" in props:
+            self.zooms = getattr(self, "zooms", 0) + 1
+            self.zoom_images = getattr(self, "zoom_images", []) + [len(images or [])]
+            data = {"zoom_defects": [{"code": "AI-06", "severity": "critical", "note": "부적에 가짜 글자"}] if self.zooms == 1 else []}
+        elif "panels" in props:
             data = {
                 "style_prompt": "ink line, muted hanji palette",
                 "characters": [{"id": "hana", "name": "하나", "appearance": "girl, 17, black bob hair, white jeogori"}],
@@ -67,6 +81,17 @@ class FakeModel:
                     {"index": 9, "shot": "close-up", "height": "normal", "gap_before": "none", "description": "Hana stares at salt", "character_ids": ["hana"], "dialogue": [{"speaker": "hana", "text": "이게 왜 안 녹아?"}], "sfx": "사각", "avoid": "torii"},
                 ],
             }
+            if getattr(self, "with_scenes", False):
+                data["scenes"] = [{"id": 1, "place": "shrine back room, jar at center, door on the left", "time_light": "dusk, single candle on the right",
+                                   "layout": "Hana on the left facing right", "outfits": "Hana: gray hoodie, black bomber", "props_state": "salt ring intact"}]
+                for p in data["panels"]:
+                    p["scene"] = 1
+                    p["continuity"] = "Scene opens."
+                if getattr(self, "joins", False):
+                    data["panels"][0]["joins_next"] = True
+                if getattr(self, "four", False):
+                    data["panels"] += [dict(p, scene=2, description=p["description"] + " (yard)") for p in data["panels"]]
+                    data["scenes"].append(dict(data["scenes"][0], id=2, place="shrine yard"))
         elif "candidates" in props and "scenes" in props:
             data = {
                 "candidates": [{"name": f"후보{i}", "medium": ["cel", "ink", "bogus"][i - 1], "card": f"카드 {i}", "style_prompt": f"style {i}"} for i in range(1, 4)],
@@ -144,8 +169,12 @@ class FakeModel:
             data = {"defects": [{"code": "K-1", "severity": "minor", "note": "작은 차이"}] if ok else [{"code": "GA-3", "severity": "critical", "note": "일본도"}]}
         elif "people_count" in props:
             self.checks += 1
-            ok = self.checks % 2 == 0
+            self.check_images = getattr(self, "check_images", []) + [len(images or [])]
+            ok = self.checks % 2 == 0 or getattr(self, "always_pass", False)
             data = {"score": 88 if ok else 60, "people_count": 1, "defects": [] if ok else [{"code": "AI-03", "severity": "major", "note": "과한 광택"}]}
+            if getattr(self, "regions", False):
+                data["regions"] = [{"kind": "text", "character_id": "", "x": 10, "y": 10, "w": 30, "h": 30},
+                                   {"kind": "face", "character_id": "hana", "x": 40, "y": 20, "w": 20, "h": 20}]
         elif "glossary" in props:
             data = {"lines": [{"id": "1-0", "en": "That night, the salt would not melt.", "note": ""}, {"id": "2-0", "en": "Why won't this melt?", "note": ""}], "sfx": [{"panel": 2, "en": "skritch"}], "glossary": []}
         elif "bubbles" in props:
@@ -275,7 +304,9 @@ def test_art_lettering_review_flow(store, tmp_path):
     assert rev["auto_checks"]["banned_terms"][0]["panel"] == 2
     assert "합격 (91/100)" in rev["markdown"]
     review_call = [x for x in model.calls if "items" in x[0]][-1]
-    assert review_call[2] == 2 and "첨부 그림은 순서대로 1컷, 2컷" in review_call[1]  # 검수가 컷 그림을 직접 봄
+    # 검수가 모든 컷을 번호 붙인 모음 한 장으로 직접 봄
+    assert review_call[2] == 1 and "1~2컷, 모두 2컷" in review_call[1]
+    assert rev["score_runs"] == [91, 91]  # 두 번 채점해 흔들림을 확인 (차이가 작아 세 번째는 없음)
 
 
 def test_review_fails_on_low_ai_score(store, tmp_path):
@@ -794,6 +825,7 @@ def test_art_resumes_after_interruption(store, tmp_path):
     a = c.execute("select status, body from artifacts where id=%s", (aid,)).fetchone()
     assert a["status"] == "pending_review", a["body"]
     assert sum(1 for props, _, _ in model.calls if "style_prompt" in props) == plans  # 컷 목록을 새로 짜지 않아요
+    assert len(model.story_tasks) == 1  # 이야기 연결 검사도 다시 하지 않아요
     assert len(second.prompts) == len(a["body"]["panels"]) - 1  # 끝난 1컷은 다시 그리지 않아요
     assert all(p.get("image") for p in a["body"]["panels"])
     # 첫 시도에서 쓴 그림 값도 비용에 남아요
@@ -901,3 +933,313 @@ def test_same_critical_stops_redraws_and_attire_override_prompt():
     p = _panel_prompt("st", {"shot": "wide", "description": "d"}, cast, cast, "", 1, "BASE.", parts)
     assert "Reference image 3 is the approved, period-accurate costume of 수로" in p
     assert "Where the design sheet differs from this reference, follow this reference." in p
+
+
+def _noisy(seed, size=(200, 260), band=None, tint=(0, 0, 0)):
+    """무늬가 있는 그림. band=(위치 비율, 두께 비율)이면 가운데를 가로지르는 흰 띠를 그려요."""
+    import random
+
+    rnd = random.Random(seed)
+    img = Image.new("RGB", size)
+    px = img.load()
+    for x in range(size[0]):
+        for y in range(size[1]):
+            v = rnd.randint(30, 220)
+            px[x, y] = (min(255, v + tint[0]), min(255, v + tint[1]), min(255, v + tint[2]))
+    if band:
+        y0, t = int(size[1] * band[0]), max(2, int(size[1] * band[1]))
+        img.paste(Image.new("RGB", (size[0], t), (255, 255, 255)), (0, y0))
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
+
+
+def test_comic_page_band_is_found_only_inside_the_picture():
+    from noriva_worker.images import comic_page_bands
+
+    assert comic_page_bands(_noisy(1, band=(0.5, 0.03)))  # 가운데 흰 띠: 한 장에 컷 두 개
+    assert not comic_page_bands(_noisy(2))  # 띠 없음
+    assert not comic_page_bands(png((10, 10, 10), size=(200, 260)))  # 거의 검은 컷(불이 꺼진 연출)은 결함이 아님
+
+
+def test_match_colors_only_nudges_small_drift():
+    from noriva_worker.images import color_distance, match_colors
+
+    anchor = _noisy(3)
+    near = _noisy(4, tint=(25, 10, 0))
+    far = png((250, 30, 30), size=(200, 260))
+    d0 = color_distance(near, anchor)
+    out = match_colors(near, anchor, 0.5)
+    assert out is not None and color_distance(out, anchor) < d0  # 앞 컷 쪽으로 끌려와요
+    assert match_colors(far, anchor, 0.5) is None  # 큰 차이는 연출일 수 있어 그대로 둬요
+    assert match_colors(anchor, anchor, 0.5) is None  # 같으면 손대지 않아요
+
+
+def test_story_check_and_scene_refs_chain_panels(store, tmp_path):
+    """그리기 전 이야기 연결 검사가 컷 지시를 고치고, 같은 장면의 앞 컷(합격 그림)이 다음 컷의 참고 그림이 돼요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.with_scenes = True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=2, parallel=2, test_panels=0, color_match=0))
+    inputs = [
+        _approved(c, sid, eid, "storyboard", {"markdown": "| 1 | 원경 | 마을 |"}),
+        _approved(c, sid, None, "style", {"markdown": "먹선, 한지색"}),
+    ]
+    _, art = _run(store, tools, sid, eid, "art", inputs)
+
+    # 이야기 연결 검사: 고친 컷과 빠진 사건이 결과에 남아요
+    assert len(model.story_tasks) == 1 and "shrine back room" in model.story_tasks[0]
+    assert art["story_check"]["fixed"][0]["index"] == 2 and art["story_check"]["missing_beats"]
+    assert art["scenes"][0]["place"].startswith("shrine back room")
+    p1, p2 = art["panels"]
+    assert p2["description"].endswith("candle out")
+    # 1컷은 장면 첫 컷이라 앞 컷 참고가 없고, 2컷은 1컷(합격)을 참고로 받아요
+    prompts = [p for p, _ in images.prompts if "One single webtoon panel" in p]
+    assert all("Scene continuity (identical in every panel of this scene): Place: shrine back room" in p for p in prompts)
+    assert not p1["scene_ref"] and p2["scene_ref"]
+    assert "previous panel of this same scene" not in prompts[0] and "previous panel of this same scene" in prompts[-1]
+    assert "Continuing from the previous panel: Right after the candle went out" in prompts[-1]
+    assert model.check_images[-1] == 3  # 2컷 검사: 컷 + 하나 시트 + 앞 컷 (K-2 연속성 비교)
+    assert any("K-2" in t for props, t, _ in model.calls if "people_count" in props)
+
+
+def test_failed_panel_is_not_used_as_scene_reference(store, tmp_path):
+    """떨어진 그림은 다음 컷의 참고로 넘기지 않아요 (CLAUDE.md 1-5)."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.with_scenes = True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=1, parallel=1, test_panels=0, color_match=0))
+    inputs = [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})]
+    _, art = _run(store, tools, sid, eid, "art", inputs)
+    # 후보 1장씩: 1컷은 첫 검사에서 떨어지고, 2컷은 합격
+    assert not art["panels"][0]["passed"]
+    assert not art["panels"][1]["scene_ref"]
+
+
+def test_zoom_check_catches_text_the_small_check_missed(store, tmp_path):
+    """줄인 그림으로는 합격이어도, 원본에서 잘라 본 확대 검사가 가짜 글자를 찾으면 다시 그려요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.always_pass, model.regions = True, True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=2, parallel=1, test_panels=0))
+    _, art = _run(store, tools, sid, eid, "art", [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})])
+    p1 = art["panels"][0]
+    # 1컷 첫 후보: 확대 검사에서 치명(가짜 글자) → 둘째 후보 합격
+    assert p1["passed"] and len(p1["candidates"]) == 2
+    assert model.zooms == 3  # 1컷 후보 2장 + 2컷 1장
+    assert model.zoom_images[0] == 2  # 글자 자리 + 얼굴 자리 (1컷은 인물 시트가 없어요)
+    assert model.zoom_images[-1] == 3  # 2컷: 잘라 낸 두 곳 + 하나 시트
+
+
+def test_review_rescored_when_runs_disagree():
+    from noriva_worker.visual import run_review
+
+    model = FakeModel()
+    orig = model.json
+    totals = iter([0, -10, 0])
+
+    def shaky(system, task, schema, images=None, effort=None, max_tokens=32000):
+        r = orig(system, task, schema, images, effort, max_tokens)
+        if "items" in schema["properties"]:
+            d = next(totals)
+            for it in r.data["items"]:
+                if it["code"] == "Q-5":
+                    it["score"] += d // 2
+                if it["code"] == "Q-3":
+                    it["score"] += d // 2
+        return r
+
+    model.json = shaky
+    ctx = {"guidelines": [], "instruction": "",
+           "input_bodies": {"lettering": {"kind": "lettered", "panels": [{"index": 1, "height": "normal", "description": "", "score": 90, "defects": [], "bubbles": []}]}}}
+    body, costs = run_review(ctx, model, ArtSettings())
+    assert body["score_runs"] == [91, 81, 91] and body["total"] == 91  # 세 번째 채점 후 가운데 값
+    assert len(costs) == 3
+
+
+def test_storyboard_self_check_always_checks_script_coverage():
+    """콘티는 지침과 상관없이 '대본 대사가 모두 들어갔는지, 컷이 이어지는지'를 늘 점검하고, 어기면 한 번 고쳐 써요."""
+    from noriva_worker.textcheck import write_checked
+
+    class W:
+        def __init__(self):
+            self.tasks, self.json_tasks = [], []
+
+        def write(self, system, task):
+            self.tasks.append(task)
+            return LLMResult(text=f"콘티 {len(self.tasks)}", model="claude-opus-5-5", usage={}, cost_usd=0.0)
+
+        def json(self, system, task, schema, images=None, effort=None, max_tokens=0):
+            self.json_tasks.append(task)
+            ok = len(self.json_tasks) > 1
+            return JSONResult(data={"items": [{"code": "SB-1", "ok": ok, "severity": "minor", "note": "3장면 대사 빠짐"}], "summary": ""}, result=_r())
+
+    w = W()
+    ctx = {"guidelines": [], "inputs": [("⑤ 회차 플롯(대본)", "하나: 이게 왜 안 녹아?")]}
+    body, costs = write_checked("storyboard", ctx, w, "sys", "과제")
+    assert "SB-1" in w.json_tasks[0] and "이게 왜 안 녹아?" in w.json_tasks[0]  # 대본과 대조해요
+    assert body["checks"]["revised"] and body["markdown"] == "콘티 2"  # minor로 와도 major로 보고 고쳐 써요
+    assert "3장면 대사 빠짐" in w.tasks[1]
+
+
+def test_owner_drawings_are_followed_by_style_sheets_and_art(store, tmp_path):
+    """대표가 직접 그린 그림은 그림 모델이 직접 보고 따라 그리고, 화풍이 다르면 차이를 고쳐 한 번 더 그려요.
+    남의 웹툰 캡처는 지금처럼 그림 모델에 보내지 않아요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    media.put("_private/own/a.png", png((10, 20, 30)))
+    media.put("_private/refs/b.png", png())
+    c.execute("update series set brief = %s where id = %s", (Jsonb({"ownArt": ["own/a.png"], "styleRefs": ["refs/b.png"]}), sid))
+    model, images = FakeModel(), FakeImages()
+    model.low_match = True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=0))
+    concept = _approved(c, sid, None, "concept", {"markdown": "기획"})
+    style_id, style = _run(store, tools, sid, None, "style", [concept])
+
+    assert style["own_art"] == 1
+    # 모든 샘플이 대표 그림 1장을 참고로 받고(캡처는 보내지 않음), 대표 그림을 따르라는 지시가 들어가요
+    assert all(n == 1 and "creator's own artwork" in p for p, n in images.prompts)
+    plan_task = next(t for props, t, _ in model.calls if "candidates" in props)
+    assert "대표가 직접 그린 그림이 있다" in plan_task
+    # 대표 그림이 있으면 세 후보 모두 화풍 일치 검사를 받아요. 첫 검사(55점)는 차이를 고쳐 다시 그려요
+    assert len(model.match_calls) >= 9 and model.match_calls[0][1] == 3  # 샘플 + 대표 그림 + 캡처
+    assert sum("Match the reference style more closely: Use thick dark outlines" in p for p, _ in images.prompts) == 1
+    assert all(m == 90 for cd in style["candidates"] for m in cd["sample_match"])
+
+    # 작화: 대표 그림이 화풍 기준 그림으로 마스터 앞에 들어가요
+    masters = [style["candidates"][0]["samples"][0]]
+    c.execute("update artifacts set body = body || %s, status='approved' where id=%s", (Jsonb({"chosen": 0, "style_masters": masters}), style_id))
+    images.prompts.clear()
+    _, art = _run(store, tools, sid, eid, "art", [_approved(c, sid, eid, "storyboard", {"markdown": "| 1 |"}), style_id])
+    assert images.prompts[0][1] == 2  # 인물 시트: 대표 그림 + 마스터
+    assert images.prompts[1][1] == 2 and "Reference image(s) 1-2" in images.prompts[1][0]  # 인물 없는 1컷: 대표 그림 + 마스터
+
+
+def test_strip_links_stay_inside_one_scene_and_three_panels():
+    from noriva_worker.visual import strip_links, strips
+
+    ps = [{"index": i, "scene": 1 if i <= 5 else 2, "joins_next": True} for i in range(1, 8)]
+    ps[6]["joins_next"] = False
+    links = strip_links(ps)
+    # 1-2-3 (3컷까지), 4-5, 장면이 바뀌는 5→6은 잇지 않음, 6-7
+    assert links == {2: 1, 3: 2, 5: 4, 7: 6}
+    assert strips(ps) == [[1, 2, 3], [4, 5], [6, 7]]
+
+
+def test_continue_canvas_and_seam_check():
+    from noriva_worker.images import continue_canvas, seam_check
+
+    prev = _noisy(5, size=(200, 260))
+    canvas, overlap, prev_overlap = continue_canvas(prev, "3:4", width=200)
+    assert 0.2 < overlap < 0.3 and 0 < prev_overlap < 0.35
+    # 위 띠를 그대로 두고 아래를 채운 그림: 이음새 결함 없음
+    filled = Image.open(io.BytesIO(canvas)).convert("RGB")
+    lower = Image.open(io.BytesIO(_noisy(6, size=(200, 267)))).convert("RGB")
+    band = int(filled.size[1] * overlap)
+    filled.paste(lower.crop((0, band, 200, filled.size[1])), (0, band))
+    buf = io.BytesIO()
+    filled.save(buf, "PNG")
+    assert seam_check(buf.getvalue(), canvas, overlap) == []
+    # 아래를 비워 둔 그림, 위 띠가 바뀐 그림은 걸러요
+    assert any("비어" in n for n in seam_check(canvas, canvas, overlap))
+    assert any("이음새" in n for n in seam_check(_noisy(7, size=(200, 267)), canvas, overlap))
+
+
+def test_joined_panels_continue_the_panel_above_and_letter_outside_overlap(store, tmp_path):
+    """콘티에서 이어지는 컷으로 묶으면 아래 컷은 위 컷 아래 끝을 이어받아 그리고, 뷰어에서 겹쳐 한 장처럼 보여요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.with_scenes, model.joins, model.always_pass = True, True, True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=1, parallel=1, test_panels=0, zoom_check=False))
+    inputs = [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})]
+    art_id, art = _run(store, tools, sid, eid, "art", inputs)
+    p1, p2 = art["panels"]
+    assert art["strips"] == [[1, 2]]
+    assert "join" not in p1 and p2["join"]["prev"] == 1 and p2["join"]["margin"] > 0
+    assert not p2["scene_ref"]  # 앞 컷 참고 자리를 이어 그릴 그림판이 대신해요
+    assert "canvas to paint on" in images.prompts[-1][0] and "canvas to paint on" not in images.prompts[-2][0]
+    assert any("이어지는 긴 세로 컷" in t for props, t, _ in model.calls if "people_count" in props)
+
+    # 말풍선: 이어진 컷은 여백 없이, 겹치는 띠에는 말풍선을 두지 않아요
+    c.execute("update artifacts set status='approved' where id=%s", (art_id,))
+    _, let = _run(store, tools, sid, eid, "lettering", [art_id])
+    l1, l2 = let["panels"]
+    assert l2["gap_before"] == "none" and l2["join"]["prev"] == 1
+    assert l2["bubbles"][0]["box"]["y"] >= p2["join"]["overlap"] * 100
+    b = l1["bubbles"][0]["box"]
+    assert b["y"] + b["h"] <= 100 - p2["join"]["prev_overlap"] * 100
+
+    # 위 컷만 다시 그리라고 해도 이어진 아래 컷을 같이 다시 그려요
+    c.execute("update artifacts set status='pending_review' where id=%s", (art_id,))
+    _, again = _run(store, tools, sid, eid, "art", inputs, payload={"panels": [1], "base_artifact_id": str(art_id)}, attempt=2)
+    assert again["redrawn"] == [1, 2] and again["join_added"] == [2]
+
+
+def test_step_scenes_draw_one_panel_at_a_time(store, tmp_path):
+    """한 장씩 확인 장면은 한 번에 한 컷만 그리고, 나머지 장면은 자동으로 다 그려요."""
+    c = store.conn
+    sid, eid = _series(c)
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    model.with_scenes, model.four, model.always_pass = True, True, True
+    tools = Tools(writer=model, media=media, image_factory=lambda: images,
+                  art=ArtSettings(candidates=1, parallel=2, test_panels=0, zoom_check=False))
+    inputs = [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})]
+    art_id, art = _run(store, tools, sid, eid, "art", inputs, payload={"step_scenes": [2]})
+    assert [p["index"] for p in art["panels"] if p.get("image")] == [1, 2, 3]
+    assert art["pending"] == [4] and art["step_waiting"] == [3] and art["step_scenes"] == [2]
+
+    # '다음 컷': 남은 컷을 넘겨도 그 장면은 한 장만, 한 장씩 확인 설정은 이어져요
+    c.execute("update artifacts set status='pending_review' where id=%s", (art_id,))
+    n = len(images.prompts)
+    _, nxt = _run(store, tools, sid, eid, "art", inputs, payload={"panels": [4], "base_artifact_id": str(art_id)}, attempt=2)
+    assert nxt["pending"] == [] and nxt["step_waiting"] == [4] and nxt["step_scenes"] == [2]
+    assert len(images.prompts) == n + 1  # 4컷 한 장만 그림
+
+
+def test_face_warnings_flag_copied_looks_across_series():
+    from noriva_worker.sheets import face_warnings
+
+    others = [{"series": "달빛 혼례", "name": "연화", "appearance": "woman, 19, oval face, large round double-lidded eyes, small nose, full red lips, long black hair"}]
+    same = {"id": "a", "name": "하나", "kind": "person", "role": "main",
+            "appearance": "woman, 18, oval face, large round double-lidded eyes, small nose, full red lips, long black hair, white jeogori"}
+    other = {"id": "b", "name": "수로", "kind": "person", "role": "main",
+             "appearance": "man, 34, square jaw, narrow monolid eyes, thick straight brows, scar on left cheek, cropped gray hair"}
+    minor = dict(same, id="c", role="minor")
+    w = face_warnings([same, other, minor], others)
+    assert len(w) == 1 and "하나" in w[0] and "달빛 혼례" in w[0]
+
+
+def test_owner_verdicts_tune_the_checker(store, tmp_path):
+    """대표가 'AI 같아요'로 표시한 컷(검사기는 합격시킨 컷)이 다음 작화 검사 지시에 사례로 들어가요."""
+    from noriva_worker.visual import judge_text
+
+    t = judge_text([{"owner_verdict": "good", "score": 85, "passed": True, "description": "wide shot"},
+                    {"owner_verdict": "ai", "score": 88, "passed": True, "description": "close-up", "owner_note": "피부가 플라스틱 같음"}])
+    assert t.index("피부가 플라스틱 같음") < t.index("wide shot")  # 검사기가 놓친 사례를 먼저
+    assert "검사기는 합격시킴" in t
+    assert judge_text([]) == ""
+
+    c = store.conn
+    sid, eid = _series(c)
+    _approved(c, sid, eid, "art", {"kind": "art", "panels": [{"index": 1, "description": "old close-up", "score": 90, "passed": True,
+                                                             "owner_verdict": "ai", "owner_note": "눈이 번들거림"}]})
+    media = LocalMedia(str(tmp_path))
+    model, images = FakeModel(), FakeImages()
+    tools = Tools(writer=model, media=media, image_factory=lambda: images, art=ArtSettings(candidates=1, parallel=1, test_panels=0, zoom_check=False))
+    _run(store, tools, sid, eid, "art", [_approved(c, sid, eid, "storyboard", {"markdown": "콘티"})])
+    checks = [t for props, t, _ in model.calls if "people_count" in props]
+    assert checks and all("눈이 번들거림" in t for t in checks)

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { joinStyles, toJoin } from "@/lib/publish";
+import { EffectLayer } from "@/components/reader/effect-layer";
 
 export type Bubble = {
   speaker: string;
@@ -14,6 +16,8 @@ export type LetteredPanel = {
   image: string;
   height: string;
   gap_before: string;
+  join?: { overlap?: number; margin?: number };
+  effect?: string;
   bubbles: Bubble[];
   sfx: { text: { ko: string; en: string }; x: number; y: number; size: number; angle: number } | null;
 };
@@ -40,14 +44,18 @@ export function LetteredStrip({ panels }: { panels: LetteredPanel[] }) {
       </div>
       <div className="max-h-[760px] overflow-y-auto rounded-[5px] bg-paper-sunk px-3 py-4">
         <div className="mx-auto w-full max-w-[360px]">
-          {panels.map((p, i) => (
-            <figure key={p.index} className={`relative ${i === 0 ? "" : GAP[p.gap_before as keyof typeof GAP] ?? GAP.normal}`}>
+          {panels.map((p, i) => {
+            const join = i === 0 || !p.image ? undefined : toJoin(p.join);
+            const js = joinStyles(join);
+            return (
+            <figure key={p.index} className={`relative ${i === 0 || join ? "" : GAP[p.gap_before as keyof typeof GAP] ?? GAP.normal}`} style={js.figure}>
               {p.image ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={p.image} alt={`${p.index}컷`} className="block w-full" loading="lazy" />
+                <img src={p.image} alt={`${p.index}컷`} className="block w-full" style={js.img} loading="lazy" />
               ) : (
                 <div className="aspect-[3/4] w-full bg-line" />
               )}
+              <EffectLayer kind={p.effect} seed={p.index} />
               {p.bubbles.map((b, j) => (
                 <BubbleLayer key={j} b={b} text={b.text[lang] || b.text.ko} />
               ))}
@@ -66,7 +74,8 @@ export function LetteredStrip({ panels }: { panels: LetteredPanel[] }) {
               ) : null}
               <figcaption className="absolute -left-1 top-1 -translate-x-full text-[10px] text-ink-faint">{p.index}</figcaption>
             </figure>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
