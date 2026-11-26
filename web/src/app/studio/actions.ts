@@ -954,6 +954,71 @@ export async function saveSeriesPublic(formData: FormData) {
   redirect(`${path}?saved=1`);
 }
 
+/**
+ * AI 표지 만들기: 승인한 기획·스토리·인물(웹툰은 화풍·주인공 시트도)로 표지 후보 1·2·4장을 그려요.
+ * 한 장에 약 $0.15, 그림 지시 쓰기에 약 $0.05가 들어요. 대표가 후보를 골라야 표지가 바뀌어요.
+ */
+export async function startCoverAI(formData: FormData) {
+  await requireOwner();
+  const seriesId = String(formData.get("seriesId"));
+  const path = `/studio/series/${seriesId}`;
+  try {
+    const [concept] = await db
+      .select({ id: schema.artifacts.id })
+      .from(schema.artifacts)
+      .where(
+        and(
+          eq(schema.artifacts.seriesId, seriesId),
+          eq(schema.artifacts.stage, "concept"),
+          inArray(schema.artifacts.status, ["approved", "edited"]),
+        ),
+      )
+      .limit(1);
+    if (!concept) throw new StudioError("① 기획안을 먼저 승인해야 표지를 그릴 수 있어요");
+    const busy = await db
+      .select({ id: schema.jobs.id })
+      .from(schema.jobs)
+      .where(and(eq(schema.jobs.type, "cover"), eq(schema.jobs.seriesId, seriesId), inArray(schema.jobs.status, ["queued", "running"])));
+    if (busy.length) throw new StudioError("표지를 그리는 중이에요. 몇 분 뒤 새로고침해 주세요");
+    const direction = String(formData.get("direction") ?? "").trim().slice(0, 500);
+    const count = [1, 2, 4].includes(Number(formData.get("count"))) ? Number(formData.get("count")) : 2;
+    await enqueueJob({ type: "cover", seriesId, payload: { direction, count } });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(`${path}?cover=started#cover`);
+}
+
+/** AI 표지 후보 중 하나를 표지로 골라요. 대표의 선택은 제작 이력에 남아요 (사람 기여의 증거). */
+export async function pickCoverAI(formData: FormData) {
+  const owner = await requireOwner();
+  const seriesId = String(formData.get("seriesId"));
+  const key = String(formData.get("key"));
+  const path = `/studio/series/${seriesId}`;
+  try {
+    const [s] = await db.select({ brief: schema.series.brief, coverUrl: schema.series.coverUrl }).from(schema.series).where(eq(schema.series.id, seriesId));
+    if (!s) throw new StudioError("작품을 찾을 수 없어요");
+    const ai = s.brief.coverAI;
+    const n = ai?.images.indexOf(key) ?? -1;
+    if (!ai || n < 0) throw new StudioError("AI 표지 후보에서만 고를 수 있어요");
+    await db.update(schema.series).set({ coverUrl: key, updatedAt: new Date() }).where(eq(schema.series.id, seriesId));
+    await db.insert(schema.decisionLedger).values({
+      seriesId,
+      actor: owner.email,
+      action: "cover_pick",
+      before: { coverUrl: s.coverUrl },
+      after: { coverUrl: key, prompt: ai.prompt, direction: ai.direction ?? "" },
+      note: `AI 표지 후보 ${ai.images.length}장 중 ${n + 1}번을 표지로 골랐어요`,
+    });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  revalidatePath("/");
+  redirect(`${path}?saved=1#cover`);
+}
+
 /** 표지 올리기: 웹소설처럼 작화 그림이 없는 작품도 표지를 쓸 수 있게, 대표가 만든 표지 그림을 올려요 (3:4 권장). */
 export async function uploadCover(formData: FormData) {
   const owner = await requireOwner();
