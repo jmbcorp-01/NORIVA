@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { count, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { mediaUrl } from "@/lib/media";
 import { Badge, Card, Empty, LinkButton, PageHeader } from "@/components/ui";
 import { AGE_RATING, SERIES_STATUS } from "@/lib/labels";
 
@@ -34,7 +35,7 @@ export default async function SeriesListPage() {
                 <div className="hanji flex aspect-[3/4] items-end bg-paper-sunk p-4">
                   {s.coverUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={s.coverUrl} alt="" className="h-full w-full object-cover" />
+                    <img src={mediaUrl(s.coverUrl)} alt="" className="h-full w-full object-cover" />
                   ) : (
                     <span className="font-serif text-[20px] leading-snug font-semibold text-ink-soft">{s.title}</span>
                   )}

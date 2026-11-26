@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { asc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { mediaUrl } from "@/lib/media";
 import { Badge, Button, Card, Input, Notice, PageHeader } from "@/components/ui";
 import { deleteSamplesAction, fillSamplesAction } from "@/app/studio/sample-actions";
 import { SAMPLES } from "@/lib/samples";
@@ -62,7 +63,7 @@ export default async function Samples({ searchParams }: { searchParams: Promise<
             <li key={r.slug}>
               <Card className="overflow-hidden">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={r.cover} alt="" className="aspect-[3/4] w-full object-cover" />
+                <img src={mediaUrl(r.cover)} alt="" className="aspect-[3/4] w-full object-cover" />
                 <div className="p-2.5">
                   <Link href={`/series/${r.slug}`} className="block truncate text-[13px] font-semibold hover:underline">
                     {r.title}
