@@ -11,7 +11,7 @@ import { FORMAT_LABEL, isApproved, seriesStagesFor, type SeriesFormat, type Stag
 import { seriesCreditsOf } from "@/lib/credits-store";
 import { creditBlockers, headlineCredits } from "@/lib/credits";
 import { AGE_RATING, SERIES_STATUS, SOURCE_CATEGORY } from "@/lib/labels";
-import { createEpisode, fillSeriesMeta, saveSeriesPublic, uploadCover } from "../../../actions";
+import { createEpisode, fillSeriesMeta, pickCoverAI, saveSeriesPublic, startCoverAI, uploadCover } from "../../../actions";
 
 const DAYS = [
   ["mon", "월"],
@@ -77,6 +77,14 @@ export default async function SeriesPage({
     .orderBy(desc(schema.jobs.createdAt))
     .limit(1);
   const metaBusy = metaJob && (metaJob.status === "queued" || metaJob.status === "running");
+  const [coverJob] = await db
+    .select({ id: schema.jobs.id, status: schema.jobs.status, error: schema.jobs.error, progress: schema.jobs.progress })
+    .from(schema.jobs)
+    .where(and(eq(schema.jobs.type, "cover"), eq(schema.jobs.seriesId, id)))
+    .orderBy(desc(schema.jobs.createdAt))
+    .limit(1);
+  const coverBusy = coverJob && (coverJob.status === "queued" || coverJob.status === "running");
+  const coverAI = s.brief.coverAI;
   const toL = (st: Stage) => (latest[st] ? { id: latest[st]!.id, stage: st, status: latest[st]!.status } : undefined);
   const readyForEpisodes = isApproved(toL("story")) && isApproved(toL("characters"));
   const back = `/studio/series/${id}`;
@@ -234,6 +242,53 @@ export default async function SeriesPage({
               연재 설정 저장
             </Button>
           </form>
+          <div id="cover" className="mt-3 space-y-2 rounded-[6px] border border-line px-3 py-3">
+            <p className="text-[12px] font-medium text-ink-soft">AI로 표지 만들기</p>
+            {coverAI?.images.length ? (
+              <>
+                {coverAI.idea ? <p className="text-[12px] leading-relaxed text-ink-soft">{coverAI.idea}</p> : null}
+                <div className="grid grid-cols-3 gap-1.5">
+                  {coverAI.images.map((k, i) => (
+                    <form key={k} action={pickCoverAI}>
+                      <input type="hidden" name="seriesId" value={id} />
+                      <input type="hidden" name="key" value={k} />
+                      <button type="submit" className="block w-full text-left" title="이 그림을 표지로 쓰기">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={mediaUrl(k)}
+                          alt={`AI 표지 후보 ${i + 1}`}
+                          className={`aspect-[3/4] w-full rounded-[4px] border-2 object-cover ${s.coverUrl === k ? "border-ink" : "border-transparent hover:border-line-strong"}`}
+                          loading="lazy"
+                        />
+                        <span className={`mt-1 block text-center text-[11.5px] ${s.coverUrl === k ? "font-semibold text-ink" : "text-indigo"}`}>
+                          {s.coverUrl === k ? "지금 표지" : "이 표지로"}
+                        </span>
+                      </button>
+                    </form>
+                  ))}
+                </div>
+              </>
+            ) : null}
+            {coverBusy ? (
+              <p className="text-[12px] text-ochre">
+                표지를 그리는 중이에요{coverJob?.progress?.done != null ? ` (${coverJob.progress.done}/${coverJob.progress.total ?? 3}장)` : ""}. 3~5분 뒤 새로고침해 주세요.
+              </p>
+            ) : (
+              <form action={startCoverAI} className="space-y-2">
+                <input type="hidden" name="seriesId" value={id} />
+                <Input name="direction" placeholder="원하는 느낌 (비워도 돼요. 예: 밤바다, 주인공 뒷모습, 붉은 등불)" aria-label="표지 요청" className="w-full" />
+                {coverJob?.status === "failed" ? <p className="text-[12px] text-plum">표지 그리기 실패: {coverJob.error}</p> : null}
+                <Button type="submit" disabled={!isApproved(toL("concept"))}>
+                  {coverAI?.images.length ? "후보 3장 다시 그리기" : "표지 후보 3장 그리기"} · 약 $0.5
+                </Button>
+                <p className="text-[11.5px] text-ink-faint">
+                  {isApproved(toL("concept"))
+                    ? `승인한 기획·스토리·인물${format === "webtoon" ? "과 화풍·주인공 시트" : ""}를 읽고 그려요. 제목 글자는 그림에 넣지 않고 독자 화면이 아래쪽에 얹어요. 골라야 표지가 바뀌고, 고른 기록은 제작 이력에 남아요.`
+                    : "① 기획안을 승인하면 그릴 수 있어요."}
+                </p>
+              </form>
+            )}
+          </div>
           <form action={uploadCover} className="mt-3 space-y-2 rounded-[6px] border border-dashed border-line px-3 py-3">
             <input type="hidden" name="seriesId" value={id} />
             <p className="text-[12px] font-medium text-ink-soft">표지 올리기</p>

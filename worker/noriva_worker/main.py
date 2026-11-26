@@ -24,6 +24,7 @@ from .llm import RefusedError, TextModel, TruncatedError
 from .media import media_from_env
 from .scout import run_scout, run_source_fill
 from .series_meta import run_episode_meta, run_series_meta
+from .cover import run_cover
 from .style_scout import run_style_scout
 from .store import Store
 from .visual import ArtSettings, StageInputError
@@ -97,6 +98,22 @@ def _process(store: Store, job: dict, tools: Tools, cfg: Config, report) -> None
             works, costs = run_style_scout(mctx, tools.writer)
             store.finish_style_scout(job, works, costs)
             log.info("화풍 참고작 %s: %d편", job["series_id"], len(works))
+        elif job["type"] == "cover":
+            cctx = store.cover_context(job, tools.media)
+            if cctx is None:
+                raise StageInputError("작품을 찾지 못했어요 (지워졌을 수 있어요)")
+            if not cctx["inputs"]:
+                raise StageInputError("승인한 기획안이 없어요. ① 기획안을 먼저 승인해 주세요.")
+            report("표지 그리는 중", len(cctx["saved"].get("images") or []), 3)
+            image = tools.images()
+
+            def save(state):
+                store.save_cover(job, state)
+                report("표지 그리는 중", len(state["images"]), 3)
+
+            state, costs = run_cover(cctx, tools.writer, image, tools.media, cctx["saved"], save)
+            store.finish_cover(job, state, costs)
+            log.info("표지 후보 %s: %d장", job["series_id"], len(state["images"]))
         elif job["type"] == "episode_meta":
             ectx = store.episode_meta_context(job)
             if ectx is None:

@@ -324,6 +324,57 @@ class Store:
             self.finish(job, {}, costs)
         return filled
 
+    # ── AI 표지 ──
+
+    def cover_context(self, job: dict[str, Any], media: Any) -> dict[str, Any] | None:
+        """표지 그림 지시에 쓸 자료: 연재 설정과 같은 승인 자료 + 웹툰이면 화풍과 주인공 시트 그림."""
+        ctx = self.series_meta_context(job)
+        if ctx is None:
+            return None
+        c = self.conn
+        style = c.execute(
+            """select body from artifacts where series_id = %s and episode_id is null and stage = 'style'
+               and status in ('approved','edited') order by updated_at desc limit 1""",
+            (job["series_id"],),
+        ).fetchone()
+        if style:
+            ctx["inputs"].append((STAGE_LABEL_KO["style"], body_text(style["body"])))
+        sheet = c.execute(
+            """select body->'characters'->0->>'sheet' as k from artifacts where series_id = %s and episode_id is null
+               and stage = 'sheets' and status in ('approved','edited') order by updated_at desc limit 1""",
+            (job["series_id"],),
+        ).fetchone()
+        ref = media.get(sheet["k"]) if sheet and sheet["k"] else None
+        ctx["reference"] = ref
+        ctx["has_reference"] = bool(ref)
+        ctx["direction"] = str((job.get("payload") or {}).get("direction") or "").strip()
+        ctx["job_id"] = str(job["id"])
+        ctx["seed"] = int(str(job["id"]).replace("-", "")[:6], 16)
+        prev = ((ctx["series"].get("brief") or {}).get("coverAI") or {})
+        ctx["saved"] = prev if prev.get("jobId") == str(job["id"]) else {}
+        return ctx
+
+    def save_cover(self, job: dict[str, Any], state: dict[str, Any], done: bool = False) -> None:
+        """표지 진행 상황을 바로 저장해요 (그림 한 장마다). 다시 시작하면 이걸 보고 이어 그려요."""
+        data = {
+            "jobId": str(job["id"]),
+            "prompt": state.get("prompt", ""),
+            "idea": state.get("idea", ""),
+            "images": state.get("images", []),
+            "direction": str((job.get("payload") or {}).get("direction") or ""),
+            "done": done,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.conn.execute(
+            "update series set brief = brief || jsonb_build_object('coverAI', %s::jsonb), updated_at = now() where id = %s",
+            (json.dumps(data, ensure_ascii=False), job["series_id"]),
+        )
+
+    def finish_cover(self, job: dict[str, Any], state: dict[str, Any], costs: list[dict[str, Any]]) -> None:
+        with self.conn.transaction():
+            self.save_cover(job, state, done=True)
+            self.finish(job, {}, costs)
+
     def finish_style_scout(self, job: dict[str, Any], works: list[dict[str, Any]], costs: list[dict[str, Any]]) -> None:
         """찾은 참고작을 작품 설정(brief.styleSuggestions)에 넣어요. 새로 찾으면 전에 고른 것은 풀어요."""
         data = {"at": datetime.now(timezone.utc).isoformat(), "works": works}
