@@ -137,7 +137,7 @@ export const STAGE_HELP: Record<Stage, { ai: string; look: string; approve: stri
 };
 
 /** 작품 밖에서 도는 작업 (작업 큐 표시용) */
-export type JobType = Stage | "scout" | "source_fill" | "series_meta" | "episode_meta" | "style_scout";
+export type JobType = Stage | "scout" | "source_fill" | "series_meta" | "episode_meta" | "style_scout" | "cover";
 export const JOB_LABEL: Record<JobType, string> = {
   ...Object.fromEntries(Object.entries(STAGE_INFO).map(([k, v]) => [k, `${v.no} ${v.label}`])),
   scout: "소재 발굴 (시장 분석)",
@@ -145,6 +145,7 @@ export const JOB_LABEL: Record<JobType, string> = {
   series_meta: "연재 설정 AI로 채우기",
   episode_meta: "회차 제목 가져오기",
   style_scout: "어울리는 웹툰 화풍 찾기",
+  cover: "AI로 표지 만들기",
 } as Record<JobType, string>;
 
 /** 단계마다 함께 읽는 다른 에이전트의 지침 (말풍선은 영어 대사 지침도 따라요) */
@@ -297,6 +298,16 @@ export function sheetBlockers(body: unknown): string[] {
   return (b?.characters ?? [])
     .filter((c) => c.role === "main" && (c.defects ?? []).some((d) => d.severity === "critical"))
     .map((c) => c.name || c.id || "?");
+}
+
+/** AI 표지 만들기: 한 번에 그리는 장 수, 그림 지시를 쓰는 Claude 한 번의 어림 비용 */
+export const COVER_COUNTS = [1, 2, 4] as const;
+export const COVER_PROMPT_COST = 0.1;
+
+/** AI 표지 만들기 어림 비용 (그림 지시 + 그림 n장). 작품에 고른 그림 모델이 없으면 기본 모델 가격으로 셈해요 */
+export function coverEstimate(count: number, imageModel?: string | null): number {
+  const price = IMAGE_MODELS.find((m) => m.id === imageModel)?.price ?? IMAGE_MODELS[0].price;
+  return Math.round((COVER_PROMPT_COST + count * price) * 100) / 100;
 }
 
 /** 컷 하나를 그리고 검사하는 어림 비용: 그림 최대 2장 + 검사 2번(장당 약 $0.07). */

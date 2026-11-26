@@ -7,11 +7,12 @@ import { Badge, Button, Card, Empty, Input, Label, Notice, PageHeader, Textarea 
 import { coverCandidates } from "@/lib/studio-publish";
 import { mediaUrl } from "@/lib/media";
 import { latestArtifacts } from "@/lib/studio";
-import { FORMAT_LABEL, isApproved, seriesStagesFor, type SeriesFormat, type Stage } from "@/lib/pipeline";
+import { COVER_COUNTS, FORMAT_LABEL, coverEstimate, imageModelLabel, isApproved, seriesStagesFor, type SeriesFormat, type Stage } from "@/lib/pipeline";
+import { AutoRefresh } from "@/components/auto-refresh";
 import { seriesCreditsOf } from "@/lib/credits-store";
 import { creditBlockers, headlineCredits } from "@/lib/credits";
 import { AGE_RATING, SERIES_STATUS, SOURCE_CATEGORY } from "@/lib/labels";
-import { createEpisode, fillSeriesMeta, saveSeriesPublic, uploadCover } from "../../../actions";
+import { createEpisode, fillSeriesMeta, makeCover, saveSeriesPublic, uploadCover } from "../../../actions";
 
 const DAYS = [
   ["mon", "월"],
@@ -77,6 +78,14 @@ export default async function SeriesPage({
     .orderBy(desc(schema.jobs.createdAt))
     .limit(1);
   const metaBusy = metaJob && (metaJob.status === "queued" || metaJob.status === "running");
+  const [coverJob] = await db
+    .select({ status: schema.jobs.status, error: schema.jobs.error, progress: schema.jobs.progress })
+    .from(schema.jobs)
+    .where(and(eq(schema.jobs.type, "cover"), eq(schema.jobs.seriesId, id)))
+    .orderBy(desc(schema.jobs.createdAt))
+    .limit(1);
+  const coverBusy = !!coverJob && (coverJob.status === "queued" || coverJob.status === "running");
+  const coverModel = s.brief?.imageModel;
   const toL = (st: Stage) => (latest[st] ? { id: latest[st]!.id, stage: st, status: latest[st]!.status } : undefined);
   const readyForEpisodes = isApproved(toL("story")) && isApproved(toL("characters"));
   const back = `/studio/series/${id}`;
@@ -219,7 +228,7 @@ export default async function SeriesPage({
               </div>
             </fieldset>
             <fieldset>
-              <legend className="mb-1.5 text-[12px] font-medium text-ink-soft">표지 {covers.length === 0 ? <span className="font-normal text-ink-faint">{format === "novel" ? "· 아래에서 표지 그림을 올려 주세요" : "· 작화가 끝나면 그림 중에서 고르거나, 아래에서 올릴 수 있어요"}</span> : null}</legend>
+              <legend className="mb-1.5 text-[12px] font-medium text-ink-soft">표지 {covers.length === 0 ? <span className="font-normal text-ink-faint">{format === "novel" ? "· 아래에서 AI로 만들거나 표지 그림을 올려 주세요" : "· 작화가 끝나면 그림 중에서 고르거나, 아래에서 AI로 만들거나 올릴 수 있어요"}</span> : null}</legend>
               <div className="grid grid-cols-4 gap-1.5">
                 {covers.map((k) => (
                   <label key={k} className="cursor-pointer">
@@ -241,6 +250,30 @@ export default async function SeriesPage({
             <Input name="note" placeholder="누가 만들었는지 (예: 외주 디자이너 ○○, 계약 2026-11)" aria-label="표지 출처 메모" className="w-full" />
             <p className="text-[11.5px] text-ink-faint">세로 3:4 그림이 가장 잘 맞아요. 8MB까지. 올리면 바로 표지가 바뀌고 제작 이력에 남아요. 사람이 만든 표지면 크레딧에 &lsquo;표지&rsquo;도 더해 주세요.</p>
             <Button type="submit">올리고 표지로 쓰기</Button>
+          </form>
+          <form action={makeCover} className="mt-3 space-y-2 rounded-[6px] border border-dashed border-line px-3 py-3">
+            <AutoRefresh active={coverBusy} />
+            <input type="hidden" name="seriesId" value={id} />
+            <p className="text-[12px] font-medium text-ink-soft">AI로 표지 만들기</p>
+            <Textarea name="instruction" rows={2} placeholder="원하는 느낌 (비워도 돼요. 예: 주인공 혼자, 밤의 궁궐, 푸른 달빛)" aria-label="표지 요청" className="w-full" />
+            <fieldset className="flex flex-wrap gap-1">
+              <legend className="sr-only">몇 장 그릴지</legend>
+              {COVER_COUNTS.map((n) => (
+                <label key={n} className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-[5px] border border-line px-2.5 text-[13px] has-[:checked]:border-ink has-[:checked]:bg-paper-sunk">
+                  <input type="radio" name="count" value={n} defaultChecked={n === 2} className="sr-only" />
+                  {n}장 · 약 ${coverEstimate(n, coverModel).toFixed(2)}
+                </label>
+              ))}
+            </fieldset>
+            <p className="text-[11.5px] text-ink-faint">
+              승인한 기획·스토리·인물을 보고 세로 3:4 표지를 그려요. 제목 글자는 넣지 않아요 (독자 화면이 제목을 얹어요). 다 그리면 위 표지 고르기에 나타나고, 표지가 없으면 첫 장을 바로 표지로 써요. 그림 모델: {imageModelLabel(coverModel)}.
+            </p>
+            <Button type="submit" disabled={coverBusy}>
+              {coverBusy
+                ? `그리는 중… ${coverJob?.progress?.step ?? "대기 중"}${coverJob?.progress?.total ? ` (${coverJob.progress.done ?? 0}/${coverJob.progress.total})` : ""}`
+                : "표지 그리기"}
+            </Button>
+            {coverJob?.status === "failed" ? <p className="text-[12px] text-plum">표지 그리기 실패: {coverJob.error}</p> : null}
           </form>
         </section>
       </div>

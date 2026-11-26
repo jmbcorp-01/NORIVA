@@ -17,6 +17,7 @@ import anthropic
 import httpx
 
 from .config import Config
+from .cover import run_cover
 from .handlers import Tools, run_stage
 from . import ledger
 from .images import FalImage, ImageNotConfiguredError, NoImageError
@@ -97,6 +98,13 @@ def _process(store: Store, job: dict, tools: Tools, cfg: Config, report) -> None
             works, costs = run_style_scout(mctx, tools.writer)
             store.finish_style_scout(job, works, costs)
             log.info("화풍 참고작 %s: %d편", job["series_id"], len(works))
+        elif job["type"] == "cover":
+            cctx = store.cover_context(job)
+            if cctx is None:
+                raise StageInputError("작품을 찾지 못했어요 (지워졌을 수 있어요)")
+            result, costs = run_cover(cctx, tools.writer, tools.images(), tools.media, lambda part: store.save_job_result(job, part), report)
+            changed = store.finish_cover(job, result, costs)
+            log.info("표지 후보 %s: %d장%s", job["series_id"], len(result["keys"]), " (표지로 씀)" if changed else "")
         elif job["type"] == "episode_meta":
             ectx = store.episode_meta_context(job)
             if ectx is None:

@@ -114,7 +114,7 @@ export async function unpublishEpisode(episodeId: string, actor: string) {
   await db.insert(decisionLedger).values({ seriesId: ep.seriesId, actor, action: "unpublish", note: `${ep.number}화 비공개` });
 }
 
-/** 표지로 고를 수 있는 그림: 이 작품의 작화 결과에 있는 컷 그림과 인물 시트 */
+/** 표지로 고를 수 있는 그림: AI가 그린 표지 후보, 이 작품의 작화 결과에 있는 컷 그림과 인물 시트 */
 export async function coverCandidates(seriesId: string): Promise<string[]> {
   const rows = await db
     .select({ body: artifacts.body })
@@ -124,8 +124,10 @@ export async function coverCandidates(seriesId: string): Promise<string[]> {
     .limit(5);
   const keys = new Set<string>();
   // 지금 표지(올린 표지 포함)는 늘 맨 앞에 둬요. 빠지면 연재 설정을 저장할 때 표지가 지워져요
-  const [cur] = await db.select({ cover: series.coverUrl }).from(series).where(eq(series.id, seriesId));
+  const [cur] = await db.select({ cover: series.coverUrl, brief: series.brief }).from(series).where(eq(series.id, seriesId));
   if (cur?.cover) keys.add(cur.cover);
+  // AI가 그린 표지 후보는 작화 그림보다 앞에 둬요
+  for (const k of cur?.brief?.aiCovers ?? []) keys.add(k);
   for (const { body } of rows) {
     const b = body as { panels?: { image?: string }[]; characters?: { sheet?: string }[] };
     for (const p of b.panels ?? []) if (p.image) keys.add(p.image);

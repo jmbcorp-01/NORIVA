@@ -335,6 +335,56 @@ class Store:
             )
             self.finish(job, {}, costs)
 
+    # ── 표지 만들기 ──
+
+    def cover_context(self, job: dict[str, Any]) -> dict[str, Any] | None:
+        """연재 설정과 같은 승인 자료에, 대표의 요청과 지난 시도에서 저장한 결과(saved)를 더해요."""
+        ctx = self.series_meta_context(job)
+        if ctx is None:
+            return None
+        p = job.get("payload") or {}
+        ctx["instruction"] = (p.get("instruction") or "").strip()
+        ctx["count"] = p.get("count")
+        ctx["saved"] = p.get("saved") or {}
+        return ctx
+
+    def save_job_result(self, job: dict[str, Any], part: dict[str, Any]) -> None:
+        """돈을 쓴 결과를 바로 작업 기록(payload.saved)에 남겨요. 다시 시작하면 이어서 해요 (CLAUDE.md 1-1)."""
+        row = self.conn.execute(
+            """update jobs set payload = jsonb_set(payload, '{saved}', coalesce(payload->'saved', '{}'::jsonb) || %s::jsonb),
+               updated_at = now() where id = %s returning payload""",
+            (json.dumps(part, ensure_ascii=False), job["id"]),
+        ).fetchone()
+        if row:
+            job["payload"] = row["payload"]
+
+    def finish_cover(self, job: dict[str, Any], result: dict[str, Any], costs: list[dict[str, Any]]) -> bool:
+        """새 표지 후보를 작품 설정(brief.aiCovers)의 앞에 넣어요. 표지가 아직 없으면 첫 장을 표지로 써요.
+        표지를 바꿨으면 True."""
+        keys = result["keys"]
+        with self.conn.transaction():
+            s = self.conn.execute("select cover_url, brief from series where id = %s for update", (job["series_id"],)).fetchone()
+            old = list((s["brief"] or {}).get("aiCovers") or [])
+            covers = (keys + [k for k in old if k not in keys])[:12]
+            set_cover = not (s["cover_url"] or "").strip()
+            self.conn.execute(
+                """update series set brief = brief || jsonb_build_object('aiCovers', %s::jsonb),
+                   cover_url = case when %s then %s else cover_url end, updated_at = now() where id = %s""",
+                (json.dumps(covers), set_cover, keys[0], job["series_id"]),
+            )
+            note = f"AI가 표지 후보 {len(keys)}장을 그렸어요" + (f": {result['summary']}" if result.get("summary") else "")
+            if result.get("skipped"):
+                note += f" (안전 필터로 {result['skipped']}장 빠짐)"
+            if set_cover:
+                note += ". 표지가 없어서 첫 장을 표지로 썼어요"
+            self.conn.execute(
+                """insert into decision_ledger (series_id, actor, action, before, after, note)
+                   values (%s, 'NORIVA AI', 'cover_ai', %s, %s, %s)""",
+                (job["series_id"], Jsonb({"coverUrl": s["cover_url"]}), Jsonb({"candidates": keys, "coverUrl": keys[0] if set_cover else s["cover_url"]}), note),
+            )
+            self.finish(job, {}, costs)
+        return set_cover
+
     def episode_meta_context(self, job: dict[str, Any]) -> dict[str, Any] | None:
         c = self.conn
         ep = c.execute("select * from episodes where id = %s", (job["episode_id"],)).fetchone()

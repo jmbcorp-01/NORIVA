@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allDownstream,
+  coverEstimate,
   sheetBlockers,
   restGate,
   canStart,
@@ -180,5 +181,13 @@ describe("웹소설 단계 (07번)", () => {
     expect(extraGuidelineAgents("story", "novel")).toEqual(["novelist"]);
     expect(extraGuidelineAgents("story")).toEqual([]);
     expect(extraGuidelineAgents("lettering")).toEqual(["translator_en"]);
+  });
+});
+
+describe("coverEstimate", () => {
+  it("그림 지시 한 번과 그림 장수만큼 셈해요", () => {
+    expect(coverEstimate(2)).toBe(0.4); // 기본 모델 $0.15 × 2 + 지시 $0.10
+    expect(coverEstimate(4, "fal-ai/nano-banana")).toBe(0.26);
+    expect(coverEstimate(1, "모르는 모델")).toBe(0.25);
   });
 });

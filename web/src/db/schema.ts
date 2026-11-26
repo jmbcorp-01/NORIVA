@@ -129,6 +129,8 @@ export type SeriesBrief = {
   styleSuggestions?: { at: string; works: StyleWork[] };
   /** styleSuggestions.works 중 대표가 고른 번호 (최대 3개) */
   styleChoice?: number[];
+  /** AI가 그린 표지 후보 (공개 저장소 키, 새것부터 12장까지). 연재 설정의 표지 고르기에 보여요 */
+  aiCovers?: string[];
 };
 
 export type StyleWork = {
@@ -294,6 +296,7 @@ export const stage = pgEnum("stage", [
   "series_meta", // 승인한 기획·스토리·인물로 연재 설정(제목, 소개, 뿌리 노트) 채우기
   "episode_meta", // 승인한 스토리의 회차 요약으로 회차 제목(한·영)과 한 줄 요약 채우기
   "style_scout", // 승인한 기획·스토리·인물에 맞는 시장 웹툰을 찾아 화풍 특징 정리 (④ 화풍 참고)
+  "cover", // 승인한 기획·스토리·인물로 표지 후보 그리기 (웹소설처럼 작화 그림이 없는 작품도 표지를 갖게)
 ]);
 
 export const artifactStatus = pgEnum("artifact_status", [

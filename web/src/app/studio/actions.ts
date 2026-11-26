@@ -16,7 +16,7 @@ import {
   startStage,
   StudioError,
 } from "@/lib/studio";
-import { ALL_STAGES, IMAGE_MODELS, restGate, type Stage } from "@/lib/pipeline";
+import { ALL_STAGES, COVER_COUNTS, IMAGE_MODELS, restGate, type Stage } from "@/lib/pipeline";
 import { publishEpisode, unpublishEpisode } from "@/lib/studio-publish";
 import { addCredit, deleteCredit, seriesCreditsOf, updateCredit, type CreditInput } from "@/lib/credits-store";
 import { enqueueJob, notifyWorker } from "@/lib/queue";
@@ -985,6 +985,42 @@ export async function uploadCover(formData: FormData) {
   revalidatePath(path);
   revalidatePath("/");
   redirect(`${path}?saved=1`);
+}
+
+/** AI로 표지 만들기: 승인한 기획·스토리·인물로 표지 후보를 그려요. 다 그리면 연재 설정의 표지 고르기에 나타나요.
+ *  표지가 아직 없으면 첫 장을 바로 표지로 써요. 같은 작품의 표지 작업이 돌고 있으면 새로 넣지 않아요. */
+export async function makeCover(formData: FormData) {
+  await requireOwner();
+  const id = String(formData.get("seriesId"));
+  const path = `/studio/series/${id}`;
+  try {
+    const count = Number(formData.get("count"));
+    if (!(COVER_COUNTS as readonly number[]).includes(count)) throw new StudioError("몇 장 그릴지 골라 주세요");
+    const instruction = String(formData.get("instruction") ?? "").trim().slice(0, 1000);
+    const [concept] = await db
+      .select({ id: schema.artifacts.id })
+      .from(schema.artifacts)
+      .where(
+        and(
+          eq(schema.artifacts.seriesId, id),
+          isNull(schema.artifacts.episodeId),
+          eq(schema.artifacts.stage, "concept"),
+          inArray(schema.artifacts.status, ["approved", "edited"]),
+        ),
+      )
+      .limit(1);
+    if (!concept) throw new StudioError("① 기획안을 먼저 승인해 주세요. 표지는 승인한 기획·인물을 보고 그려요");
+    const busy = await db
+      .select({ id: schema.jobs.id })
+      .from(schema.jobs)
+      .where(and(eq(schema.jobs.type, "cover"), eq(schema.jobs.seriesId, id), inArray(schema.jobs.status, ["queued", "running"])));
+    if (busy.length) throw new StudioError("표지를 그리고 있어요. 끝나면 다시 눌러 주세요");
+    await enqueueJob({ type: "cover", seriesId: id, payload: { instruction, count } });
+  } catch (e) {
+    back(path, e);
+  }
+  revalidatePath(path);
+  redirect(path);
 }
 
 export async function publishEpisodeAction(formData: FormData) {
