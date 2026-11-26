@@ -247,7 +247,7 @@ export default async function SeriesPage({
             {coverAI?.images.length ? (
               <>
                 {coverAI.idea ? <p className="text-[12px] leading-relaxed text-ink-soft">{coverAI.idea}</p> : null}
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-2 gap-1.5">
                   {coverAI.images.map((k, i) => (
                     <form key={k} action={pickCoverAI}>
                       <input type="hidden" name="seriesId" value={id} />
@@ -271,15 +271,23 @@ export default async function SeriesPage({
             ) : null}
             {coverBusy ? (
               <p className="text-[12px] text-ochre">
-                표지를 그리는 중이에요{coverJob?.progress?.done != null ? ` (${coverJob.progress.done}/${coverJob.progress.total ?? 3}장)` : ""}. 3~5분 뒤 새로고침해 주세요.
+                표지를 그리는 중이에요{coverJob?.progress?.done != null ? ` (${coverJob.progress.done}/${coverJob.progress.total ?? 2}장)` : ""}. 3~5분 뒤 새로고침해 주세요.
               </p>
             ) : (
               <form action={startCoverAI} className="space-y-2">
                 <input type="hidden" name="seriesId" value={id} />
                 <Input name="direction" placeholder="원하는 느낌 (비워도 돼요. 예: 밤바다, 주인공 뒷모습, 붉은 등불)" aria-label="표지 요청" className="w-full" />
                 {coverJob?.status === "failed" ? <p className="text-[12px] text-plum">표지 그리기 실패: {coverJob.error}</p> : null}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[1, 2, 4].map((n) => (
+                    <label key={n} className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 rounded-[5px] border border-line px-2.5 text-[12.5px] has-[:checked]:border-ink has-[:checked]:bg-paper-sunk">
+                      <input type="radio" name="count" value={n} defaultChecked={n === 2} className="sr-only" />
+                      {n}장 · 약 ${(n * 0.15 + 0.05).toFixed(2)}
+                    </label>
+                  ))}
+                </div>
                 <Button type="submit" disabled={!isApproved(toL("concept"))}>
-                  {coverAI?.images.length ? "후보 3장 다시 그리기" : "표지 후보 3장 그리기"} · 약 $0.5
+                  {coverAI?.images.length ? "후보 다시 그리기" : "표지 후보 그리기"}
                 </Button>
                 <p className="text-[11.5px] text-ink-faint">
                   {isApproved(toL("concept"))

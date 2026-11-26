@@ -81,7 +81,7 @@ def test_cover_task_mentions_format_direction_and_reference():
 def test_run_cover_saves_each_image_right_away():
     saves = []
     w, p, m = Writer(), Painter(), Media()
-    state, costs = run_cover(ctx(), w, p, m, {}, lambda s: saves.append(list(s["images"])))
+    state, costs = run_cover(ctx(), w, p, m, {}, lambda s: saves.append(list(s["images"])), 3)
     assert len(state["images"]) == 3 and len(p.calls) == 3
     assert saves == [[], [state["images"][0]], state["images"][:2], state["images"]]  # 지시 저장 + 그림마다 저장
     assert all(m.files[k][1] == "image/jpeg" for k in state["images"])
@@ -92,16 +92,16 @@ def test_resume_reuses_prompt_and_drawn_images():
     """끊긴 뒤 다시 시작하면 지시를 다시 쓰지 않고, 그린 장은 다시 그리지 않아요 (CLAUDE.md 1-1, 1-7)."""
     w, p = Writer(), Painter()
     saved = {"prompt": "saved prompt", "idea": "i", "images": ["series/s1/cover/ai-abcdef12-1.jpg"]}
-    state, costs = run_cover(ctx(), w, p, Media(), saved, lambda s: None)
+    state, costs = run_cover(ctx(), w, p, Media(), saved, lambda s: None, 3)
     assert w.calls == [] and len(p.calls) == 2
     assert state["images"][0] == "series/s1/cover/ai-abcdef12-1.jpg" and len(state["images"]) == 3
 
 
 def test_one_failed_image_is_skipped_all_failed_stops():
-    state, _ = run_cover(ctx(), Writer(), Painter(fail_at={1}), Media(), {}, lambda s: None)
+    state, _ = run_cover(ctx(), Writer(), Painter(fail_at={1}), Media(), {}, lambda s: None, 3)
     assert len(state["images"]) == 2 and state["failed"] == 1
     with pytest.raises(NoImageError):
-        run_cover(ctx(), Writer(), Painter(fail_at={0, 1, 2}), Media(), {}, lambda s: None)
+        run_cover(ctx(), Writer(), Painter(fail_at={0, 1, 2}), Media(), {}, lambda s: None, 3)
 
 
 @pytest.fixture
@@ -120,7 +120,7 @@ def test_cover_job_on_db(store):
         (f"c-{uuid.uuid4().hex[:8]}", Jsonb({"tone": "", "ageRating": "15", "audience": "", "memo": ""})),
     ).fetchone()["id"]
     c.execute("insert into artifacts (series_id, stage, status, body) values (%s, 'concept', 'approved', %s)", (sid, Jsonb({"markdown": "# 기획"})))
-    jid = c.execute("insert into jobs (type, series_id, payload) values ('cover', %s, %s) returning id", (sid, Jsonb({"direction": "밤바다"}))).fetchone()["id"]
+    jid = c.execute("insert into jobs (type, series_id, payload) values ('cover', %s, %s) returning id", (sid, Jsonb({"direction": "밤바다", "count": 3}))).fetchone()["id"]
     w, p, m = Writer(), Painter(), Media()
     process(store, store.claim_by_id(str(jid), "test"), Tools(writer=w, media=m, image_factory=lambda: p), Config.from_env())
     job = c.execute("select status, error from jobs where id=%s", (jid,)).fetchone()
@@ -130,3 +130,14 @@ def test_cover_job_on_db(store):
     assert "밤바다" in w.calls[0]
     n = c.execute("select count(*) n, sum(cost_usd) s from cost_ledger where job_id=%s", (jid,)).fetchone()
     assert n["n"] == 4 and float(n["s"]) == pytest.approx(0.46, abs=0.001)  # 지시 1번 + 그림 3장, 바로 기록
+
+
+def test_cover_count_comes_from_request_and_is_clamped(store):
+    c = store.conn
+    sid = c.execute(
+        "insert into series (slug, title, genre, brief) values (%s, '장 수 시험', '코믹', %s) returning id",
+        (f"c-{uuid.uuid4().hex[:8]}", Jsonb({"tone": "", "ageRating": "all", "audience": "", "memo": ""})),
+    ).fetchone()["id"]
+    for payload, want in (({"count": 4}, 4), ({"count": 9}, 4), ({}, 2), ({"count": "x"}, 2)):
+        job = {"id": uuid.uuid4(), "series_id": sid, "payload": payload}
+        assert store.cover_context(job, Media())["count"] == want

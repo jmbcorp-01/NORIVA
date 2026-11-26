@@ -10,6 +10,8 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from .cover import COVER_COUNT
+
 STAGE_LABEL_KO = {
     "concept": "기획안",
     "story": "스토리",
@@ -348,6 +350,10 @@ class Store:
         ctx["reference"] = ref
         ctx["has_reference"] = bool(ref)
         ctx["direction"] = str((job.get("payload") or {}).get("direction") or "").strip()
+        try:
+            ctx["count"] = max(1, min(4, int((job.get("payload") or {}).get("count") or COVER_COUNT)))
+        except (TypeError, ValueError):
+            ctx["count"] = COVER_COUNT
         ctx["job_id"] = str(job["id"])
         ctx["seed"] = int(str(job["id"]).replace("-", "")[:6], 16)
         prev = ((ctx["series"].get("brief") or {}).get("coverAI") or {})

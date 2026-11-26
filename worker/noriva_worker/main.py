@@ -104,14 +104,15 @@ def _process(store: Store, job: dict, tools: Tools, cfg: Config, report) -> None
                 raise StageInputError("작품을 찾지 못했어요 (지워졌을 수 있어요)")
             if not cctx["inputs"]:
                 raise StageInputError("승인한 기획안이 없어요. ① 기획안을 먼저 승인해 주세요.")
-            report("표지 그리는 중", len(cctx["saved"].get("images") or []), 3)
+            count = cctx["count"]
+            report("표지 그리는 중", len(cctx["saved"].get("images") or []), count)
             image = tools.images()
 
             def save(state):
                 store.save_cover(job, state)
-                report("표지 그리는 중", len(state["images"]), 3)
+                report("표지 그리는 중", len(state["images"]), count)
 
-            state, costs = run_cover(cctx, tools.writer, image, tools.media, cctx["saved"], save)
+            state, costs = run_cover(cctx, tools.writer, image, tools.media, cctx["saved"], save, count)
             store.finish_cover(job, state, costs)
             log.info("표지 후보 %s: %d장", job["series_id"], len(state["images"]))
         elif job["type"] == "episode_meta":

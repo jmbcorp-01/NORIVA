@@ -16,7 +16,7 @@ from .images import NoImageError
 from .scout import ROOT_RULES
 from .visual import _STR, _obj
 
-COVER_COUNT = 3
+COVER_COUNT = 2  # 대표가 1·2·4장 중 골라요 (기본 2장)
 
 SYSTEM = ROOT_RULES + """
 당신은 NORIVA의 표지 아트 디렉터예요. 승인된 기획 자료를 읽고, 그림 모델에게 줄 표지 그림 지시를 영어로 써요.

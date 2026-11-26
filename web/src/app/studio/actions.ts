@@ -955,8 +955,8 @@ export async function saveSeriesPublic(formData: FormData) {
 }
 
 /**
- * AI 표지 만들기: 승인한 기획·스토리·인물(웹툰은 화풍·주인공 시트도)로 표지 후보 3장을 그려요.
- * 그림 3장과 지시 쓰기로 약 $0.5가 들어요. 대표가 후보를 골라야 표지가 바뀌어요.
+ * AI 표지 만들기: 승인한 기획·스토리·인물(웹툰은 화풍·주인공 시트도)로 표지 후보 1·2·4장을 그려요.
+ * 한 장에 약 $0.15, 그림 지시 쓰기에 약 $0.05가 들어요. 대표가 후보를 골라야 표지가 바뀌어요.
  */
 export async function startCoverAI(formData: FormData) {
   await requireOwner();
@@ -981,7 +981,8 @@ export async function startCoverAI(formData: FormData) {
       .where(and(eq(schema.jobs.type, "cover"), eq(schema.jobs.seriesId, seriesId), inArray(schema.jobs.status, ["queued", "running"])));
     if (busy.length) throw new StudioError("표지를 그리는 중이에요. 몇 분 뒤 새로고침해 주세요");
     const direction = String(formData.get("direction") ?? "").trim().slice(0, 500);
-    await enqueueJob({ type: "cover", seriesId, payload: { direction } });
+    const count = [1, 2, 4].includes(Number(formData.get("count"))) ? Number(formData.get("count")) : 2;
+    await enqueueJob({ type: "cover", seriesId, payload: { direction, count } });
   } catch (e) {
     back(path, e);
   }
